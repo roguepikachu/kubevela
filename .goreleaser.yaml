@@ -30,6 +30,19 @@ builds:
     main: ./cmd/plugin/main.go
     ldflags:
       - -s -w -X github.com/oam-dev/kubevela/version.VelaVersion={{ .Version }} -X github.com/oam-dev/kubevela/version.GitRevision=git-{{.ShortCommit}}
+signs:
+- cmd: cosign
+  env:
+    - COSIGN_EXPERIMENTAL=1
+  certificate: '${artifact}.pem'
+  args:
+    - sign-blob
+    - --output-certificate=${certificate}
+    - --output-signature=${signature}
+    - ${artifact}
+    - --yes
+  artifacts: all
+  output: true
 
 archives:
   - format: tar.gz
