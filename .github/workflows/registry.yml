@@ -23,11 +23,9 @@ jobs:
       vela_core_image: ${{ steps.meta-vela-core.outputs.image }}
       vela_core_digest: ${{ steps.meta-vela-core.outputs.digest }}
       vela_core_dockerhub_image: ${{ steps.meta-vela-core.outputs.dockerhub_image }}
-      vela_core_dockerhub_digest: ${{ steps.meta-vela-core.outputs.dockerhub_digest }}
       vela_cli_image: ${{ steps.meta-vela-cli.outputs.image }}
       vela_cli_digest: ${{ steps.meta-vela-cli.outputs.digest }}
       vela_cli_dockerhub_image: ${{ steps.meta-vela-cli.outputs.dockerhub_image }}
-      vela_cli_dockerhub_digest: ${{ steps.meta-vela-cli.outputs.dockerhub_digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608
@@ -140,13 +138,11 @@ jobs:
           DOCKER_IMAGE=docker.io/ayushkumar8/vela-cli
           TAG=${{ steps.get_version.outputs.VERSION }}
 
-          GHCR_DIGEST=$(crane digest $GHCR_IMAGE:$TAG)
-          DOCKER_DIGEST=$(crane digest $DOCKER_IMAGE:$TAG)
+          DIGEST=$(crane digest $GHCR_IMAGE:$TAG)
 
           echo "image=$GHCR_IMAGE" >> $GITHUB_OUTPUT
-          echo "digest=$GHCR_DIGEST" >> $GITHUB_OUTPUT
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
           echo "dockerhub_image=$DOCKER_IMAGE" >> $GITHUB_OUTPUT
-          echo "dockerhub_digest=$DOCKER_DIGEST" >> $GITHUB_OUTPUT
 
       - name: Generate SBOM for Vela CLI Image
         id: generate_sbom
@@ -178,7 +174,7 @@ jobs:
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-cli.spdx.json --type spdx \
           docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
 
-  provenance-gchr:
+  provenance:
     name: Generate and Push Provenance to GCHR
     needs: publish-core-images
     if: startsWith(github.ref, 'refs/tags/')
@@ -188,6 +184,7 @@ jobs:
           # - name: "Vela Core Image"
           #   image: ${{ needs.publish-core-images.outputs.vela_core_image }}
           #   digest: ${{ needs.publish-core-images.outputs.vela_core_digest }}
+
           - name: 'Vela CLI Image'
             image: ${{ needs.publish-core-images.outputs.vela_cli_image }}
             digest: ${{ needs.publish-core-images.outputs.vela_cli_digest }}
@@ -211,10 +208,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: 'Vela Core Image (DockerHub)'
-            image: ${{ needs.publish-core-images.outputs.vela_core_dockerhub_image }}
-            digest: ${{ needs.publish-core-images.outputs.vela_core_dockerhub_digest }}
-
+          # - name: 'Vela Core Image'
+          #   image: ${{ needs.publish-core-images.outputs.vela_core_dockerhub_image }}
+          #   digest: ${{ needs.publish-core-images.outputs.vela_core_digest }}
+          - name: 'Vela CLI Image'
+            image: ${{ needs.publish-core-images.outputs.vela_cli_dockerhub_digest }}
+            digest: ${{ needs.publish-core-images.outputs.vela_cli_digest }}
     permissions:
       id-token: write
       contents: write
