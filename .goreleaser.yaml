@@ -32,7 +32,7 @@ builds:
       - -s -w -X github.com/oam-dev/kubevela/version.VelaVersion={{ .Version }} -X github.com/oam-dev/kubevela/version.GitRevision=git-{{.ShortCommit}}
 
 sboms:
-  - id: bins
+  - id: kubevela-binaries-sboms
     artifacts: binary
     documents:
       - "${artifact}-{{ .Version }}-{{ .Os }}-{{ .Arch }}.spdx.sbom.json"
