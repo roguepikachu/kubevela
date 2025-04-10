@@ -17,13 +17,17 @@ jobs:
     permissions:
       packages: write
       id-token: write
-      attestations: write  
+      attestations: write
     runs-on: ubuntu-22.04
     outputs:
       vela_core_image: ${{ steps.meta-vela-core.outputs.image }}
       vela_core_digest: ${{ steps.meta-vela-core.outputs.digest }}
+      vela_core_dockerhub_image: ${{ steps.meta-vela-core.outputs.dockerhub_image }}
+      vela_core_dockerhub_digest: ${{ steps.meta-vela-core.outputs.dockerhub_digest }}
       vela_cli_image: ${{ steps.meta-vela-cli.outputs.image }}
       vela_cli_digest: ${{ steps.meta-vela-cli.outputs.digest }}
+      vela_cli_dockerhub_image: ${{ steps.meta-vela-cli.outputs.dockerhub_image }}
+      vela_cli_dockerhub_digest: ${{ steps.meta-vela-cli.outputs.dockerhub_digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608
@@ -91,11 +95,17 @@ jobs:
       # - name: Get Vela Core Image Digest
       #   id: meta-vela-core
       #   run: |
-      #     IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-core
+      #     GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-core
+      #     DOCKER_IMAGE=docker.io/ayushkumar8/vela-core
       #     TAG=${{ steps.get_version.outputs.VERSION }}
-      #     DIGEST=$(crane digest $IMAGE:$TAG)
-      #     echo "image=$IMAGE" >> $GITHUB_OUTPUT
-      #     echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      #     GHCR_DIGEST=$(crane digest $GHCR_IMAGE:$TAG)
+      #     DOCKER_DIGEST=$(crane digest $DOCKER_IMAGE:$TAG)
+
+      #     echo "image=$GHCR_IMAGE" >> $GITHUB_OUTPUT
+      #     echo "digest=$GHCR_DIGEST" >> $GITHUB_OUTPUT
+      #     echo "dockerhub_image=$DOCKER_IMAGE" >> $GITHUB_OUTPUT
+      #     echo "dockerhub_digest=$DOCKER_DIGEST" >> $GITHUB_OUTPUT
 
       # - name: Sign Vela Core Image
       #   env:
@@ -126,11 +136,17 @@ jobs:
       - name: Get Vela CLI Image Digest
         id: meta-vela-cli
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli
+          GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli
+          DOCKER_IMAGE=docker.io/ayushkumar8/vela-cli
           TAG=${{ steps.get_version.outputs.VERSION }}
-          DIGEST=$(crane digest $IMAGE:$TAG)
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+          GHCR_DIGEST=$(crane digest $GHCR_IMAGE:$TAG)
+          DOCKER_DIGEST=$(crane digest $DOCKER_IMAGE:$TAG)
+
+          echo "image=$GHCR_IMAGE" >> $GITHUB_OUTPUT
+          echo "digest=$GHCR_DIGEST" >> $GITHUB_OUTPUT
+          echo "dockerhub_image=$DOCKER_IMAGE" >> $GITHUB_OUTPUT
+          echo "dockerhub_digest=$DOCKER_DIGEST" >> $GITHUB_OUTPUT
 
       - name: Generate SBOM for Vela CLI Image
         id: generate_sbom
@@ -142,7 +158,6 @@ jobs:
           format: spdx-json
           artifact-name: sbom-vela-cli.spdx.json
           output-file: ${{ github.workspace }}/sbom-vela-cli.spdx.json
-      
 
       - name: Publish SBOM for Vela CLI
         uses: anchore/sbom-action/publish-sbom@v0
@@ -153,38 +168,62 @@ jobs:
         run: |
           echo "Signing Vela CLI Image..."
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-          
+
           cosign sign --yes docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}      
-          
+
           echo "attesting SBOM against the image..."
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-cli.spdx.json --type spdx \
           ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-          
+
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-cli.spdx.json --type spdx \
           docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-          
-  provenance:
-      name: Generate and Push Provenance
-      needs: publish-core-images
-      if: startsWith(github.ref, 'refs/tags/')
-      strategy:
-        matrix:
-          include:
-            # - name: "Vela Core Image"
-            #   image: ${{ needs.publish-core-images.outputs.vela_core_image }}
-            #   digest: ${{ needs.publish-core-images.outputs.vela_core_digest }}
-            - name: "Vela CLI Image"
-              image: ${{ needs.publish-core-images.outputs.vela_cli_image }}
-              digest: ${{ needs.publish-core-images.outputs.vela_cli_digest }}
-      permissions:
-        id-token: write
-        contents: write
-        actions: read
-        packages: write
-      uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0 # has to be sem var
-      with:
-        image: ${{ matrix.image }}
-        digest: ${{ matrix.digest }}
-        registry-username: ${{ github.actor }}
-      secrets:
-        registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  provenance-gchr:
+    name: Generate and Push Provenance to GCHR
+    needs: publish-core-images
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        include:
+          # - name: "Vela Core Image"
+          #   image: ${{ needs.publish-core-images.outputs.vela_core_image }}
+          #   digest: ${{ needs.publish-core-images.outputs.vela_core_digest }}
+          - name: 'Vela CLI Image'
+            image: ${{ needs.publish-core-images.outputs.vela_cli_image }}
+            digest: ${{ needs.publish-core-images.outputs.vela_cli_digest }}
+    permissions:
+      id-token: write
+      contents: write
+      actions: read
+      packages: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0 # has to be sem var
+    with:
+      image: ${{ matrix.image }}
+      digest: ${{ matrix.digest }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+  provenance-dockerhub:
+    name: Generate and Push Provenance to DockerHub
+    needs: publish-core-images
+    if: startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        include:
+          - name: 'Vela Core Image (DockerHub)'
+            image: ${{ needs.publish-core-images.outputs.vela_core_dockerhub_image }}
+            digest: ${{ needs.publish-core-images.outputs.vela_core_dockerhub_digest }}
+
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0
+    with:
+      image: ${{ matrix.image }}
+      digest: ${{ matrix.digest }}
+      registry-username: ${{ secrets.DOCKER_USERNAME }}
+    secrets:
+      registry-password: ${{ secrets.DOCKER_PASSWORD }}
