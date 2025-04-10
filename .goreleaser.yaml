@@ -39,7 +39,7 @@ sboms:
 
 signs:
   - id: kubevela-cosign-keyless
-    artifacts: all
+    artifacts: checksum # sign the checksum file over individual artifacts
     signature: "${artifact}-keyless.sig"
     certificate: "${artifact}-keyless.pem"
     cmd: cosign

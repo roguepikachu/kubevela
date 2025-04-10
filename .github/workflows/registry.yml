@@ -75,8 +75,8 @@ jobs:
             VERSION=${{ steps.get_version.outputs.VERSION }}
             GOPROXY=https://proxy.golang.org
           tags: |
-            docker.io/oamdev/vela-core:${{ steps.get_version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/oamdev/vela-core:${{ steps.get_version.outputs.VERSION }}
+            docker.io/ayushkumar8/vela-core:${{ steps.get_version.outputs.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/ayushkumar8/vela-core:${{ steps.get_version.outputs.VERSION }}
       
       - uses: imjasonh/setup-crane@v0.1
         name: Installs Crane
@@ -84,7 +84,7 @@ jobs:
       - name: Get Vela Core Image Digest
         id: meta-vela-core
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-core
+          IMAGE=ghcr.io/${{ github.repository_owner }}/ayushkumar8/vela-core
           TAG=${{ steps.get_version.outputs.VERSION }}
           DIGEST=$(crane digest $IMAGE:$TAG)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
@@ -105,17 +105,43 @@ jobs:
             VERSION=${{ steps.get_version.outputs.VERSION }}
             GOPROXY=https://proxy.golang.org
           tags: |
-            docker.io/oamdev/vela-cli:${{ steps.get_version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli:${{ steps.get_version.outputs.VERSION }}
+            docker.io/ayushkumar8/vela-cli:${{ steps.get_version.outputs.VERSION }}
+            ghcr.io/${{ github.repository_owner }}/ayushkumar8/vela-cli:${{ steps.get_version.outputs.VERSION }}
 
       - name: Get Vela CLI Image Digest
         id: meta-vela-cli
         run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli
+          IMAGE=ghcr.io/${{ github.repository_owner }}/ayushkumar8/vela-cli
           TAG=${{ steps.get_version.outputs.VERSION }}
           DIGEST=$(crane digest $IMAGE:$TAG)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+  
+  sign-images:
+    name: Sign Images with Cosign (Keyless)
+    needs: publish-core-images
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-22.04
+    permissions:
+      id-token: write  # Required for keyless signing
+      contents: read
+    steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@main
+        with:
+          cosign-release: 'v2.5.0'
+
+      - name: Sign GHCR & DockerHub Images (Keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          echo "Signing Vela Core Images..."
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/ayushkumar8/vela-core@${{ needs.publish-core-images.outputs.vela_core_digest }}
+          cosign sign --yes docker.io/ayushkumar8/vela-core@${{ needs.publish-core-images.outputs.vela_core_digest }}
+
+          echo "Signing Vela CLI Images..."
+          cosign sign --yes ghcr.io/${{ github.repository_owner }}/ayushkumar8/vela-cli@${{ needs.publish-core-images.outputs.vela_cli_digest }}
+          cosign sign --yes docker.io/ayushkumar8/vela-cli@${{ needs.publish-core-images.outputs.vela_cli_digest }}
 
   provenance-vela-core:
     name: Generate Provenance for Vela Core
