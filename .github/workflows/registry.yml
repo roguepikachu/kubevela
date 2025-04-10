@@ -35,7 +35,7 @@ jobs:
         with:
           cosign-release: 'v2.5.0'
 
-      - name: Get the version
+      - name: Get the image version
         id: get_version
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
@@ -69,40 +69,40 @@ jobs:
         with:
           driver-opts: image=moby/buildkit:master
 
-      - uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
-        name: Build & Push Vela Core for Dockerhub, GHCR
-        with:
-          context: .
-          file: Dockerfile
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          build-args: |
-            GITVERSION=git-${{ steps.vars.outputs.git_revision }}
-            VERSION=${{ steps.get_version.outputs.VERSION }}
-            GOPROXY=https://proxy.golang.org
-          tags: |
-            docker.io/ayushkumar8/vela-core:${{ steps.get_version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/oamdev/vela-core:${{ steps.get_version.outputs.VERSION }}
+      # - uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+      #   name: Build & Push Vela Core for Dockerhub, GHCR
+      #   with:
+      #     context: .
+      #     file: Dockerfile
+      #     labels: |
+      #       org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      #       org.opencontainers.image.revision=${{ github.sha }}
+      #     platforms: linux/amd64,linux/arm64
+      #     push: ${{ github.event_name != 'pull_request' }}
+      #     build-args: |
+      #       GITVERSION=git-${{ steps.vars.outputs.git_revision }}
+      #       VERSION=${{ steps.get_version.outputs.VERSION }}
+      #       GOPROXY=https://proxy.golang.org
+      #     tags: |
+      #       docker.io/ayushkumar8/vela-core:${{ steps.get_version.outputs.VERSION }}
+      #       ghcr.io/${{ github.repository_owner }}/oamdev/vela-core:${{ steps.get_version.outputs.VERSION }}
 
-      - name: Get Vela Core Image Digest
-        id: meta-vela-core
-        run: |
-          IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-core
-          TAG=${{ steps.get_version.outputs.VERSION }}
-          DIGEST=$(crane digest $IMAGE:$TAG)
-          echo "image=$IMAGE" >> $GITHUB_OUTPUT
-          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+      # - name: Get Vela Core Image Digest
+      #   id: meta-vela-core
+      #   run: |
+      #     IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-core
+      #     TAG=${{ steps.get_version.outputs.VERSION }}
+      #     DIGEST=$(crane digest $IMAGE:$TAG)
+      #     echo "image=$IMAGE" >> $GITHUB_OUTPUT
+      #     echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
-      - name: Sign Vela Core Image
-        env:
-          COSIGN_EXPERIMENTAL: "true"
-        run: |
-          echo "Signing Vela Core Images..."
-          cosign sign --yes ghcr.io/${{ github.repository_owner }}/oamdev/vela-core@${{ steps.meta-vela-core.outputs.digest }}
-          cosign sign --yes docker.io/ayushkumar8/vela-core@${{ steps.meta-vela-core.outputs.digest }}
+      # - name: Sign Vela Core Image
+      #   env:
+      #     COSIGN_EXPERIMENTAL: "true"
+      #   run: |
+      #     echo "Signing Vela Core Images..."
+      #     cosign sign --yes ghcr.io/${{ github.repository_owner }}/oamdev/vela-core@${{ steps.meta-vela-core.outputs.digest }}
+      #     cosign sign --yes docker.io/ayushkumar8/vela-core@${{ steps.meta-vela-core.outputs.digest }}
 
       - uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4
         name: Build & Push Vela CLI for Dockerhub, GHCR
@@ -130,15 +130,32 @@ jobs:
           DIGEST=$(crane digest $IMAGE:$TAG)
           echo "image=$IMAGE" >> $GITHUB_OUTPUT
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+                      
+      - name: Generate SBOM for Vela CLI Image
+        id: generate_sbom
+        uses: anchore/sbom-action@v0.17.0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli:${{ steps.get_version.outputs.VERSION }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          artifact-name: sbom-vela-cli.spdx.json
+     
+      - name: Publish SBOM for Vela CLI
+        uses: anchore/sbom-action/publish-sbom@v0
 
-      - name: Sign Vela CLI Image
+      - name: Sign Vela CLI image and attest SBOM
         env:
           COSIGN_EXPERIMENTAL: 'true'
         run: |
           echo "Signing Vela CLI Images..."
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-          cosign sign --yes docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-
+          cosign sign --yes docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}    
+          
+          echo "attesting SBOM against the image..."
+          cosign attest --yes --predicate sbom-vela-cli.spdx.json --type spdx \
+          ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
+          
   provenance:
       name: Generate and Push Provenance
       needs: publish-core-images
@@ -146,9 +163,9 @@ jobs:
       strategy:
         matrix:
           include:
-            - name: "Vela Core Image"
-              image: ${{ needs.publish-core-images.outputs.vela_core_image }}
-              digest: ${{ needs.publish-core-images.outputs.vela_core_digest }}
+            # - name: "Vela Core Image"
+            #   image: ${{ needs.publish-core-images.outputs.vela_core_image }}
+            #   digest: ${{ needs.publish-core-images.outputs.vela_core_digest }}
             - name: "Vela CLI Image"
               image: ${{ needs.publish-core-images.outputs.vela_cli_image }}
               digest: ${{ needs.publish-core-images.outputs.vela_cli_digest }}
