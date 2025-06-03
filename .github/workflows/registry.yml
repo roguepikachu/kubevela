@@ -47,13 +47,11 @@ jobs:
             VERSION=latest
           fi
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
-
       - name: Get git revision
         id: vars
         shell: bash
         run: |
           echo "git_revision=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
       - name: Login to GHCR
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
@@ -91,22 +89,18 @@ jobs:
             VERSION=${{ steps.get_version.outputs.VERSION }}
             GOPROXY=https://proxy.golang.org
           tags: |
-            docker.io/oamdev/vela-core:${{ steps.get_version.outputs.VERSION }}
+            docker.io/ayushkumar8/vela-core:${{ steps.get_version.outputs.VERSION }}
             ghcr.io/${{ github.repository_owner }}/oamdev/vela-core:${{ steps.get_version.outputs.VERSION }}
-
       - name: Get Vela Core Image Digest
         id: meta-vela-core
         run: |
           GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-core
-          DOCKER_IMAGE=docker.io/oamdev/vela-core
+          DOCKER_IMAGE=docker.io/ayushkumar8/vela-core
           TAG=${{ steps.get_version.outputs.VERSION }}
-
           DIGEST=$(crane digest $GHCR_IMAGE:$TAG)
-
           echo "image=$GHCR_IMAGE" >> $GITHUB_OUTPUT
           echo "dockerhub_image=$DOCKER_IMAGE" >> $GITHUB_OUTPUT
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-
       - name: Generate SBOM for Vela Core Image
         id: generate_vela_core_sbom
         uses: anchore/sbom-action@v0.17.0
@@ -124,15 +118,12 @@ jobs:
         run: |
           echo "signing vela core images..."
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/oamdev/vela-core@${{ steps.meta-vela-core.outputs.digest }}
-          cosign sign --yes docker.io/oamdev/vela-core@${{ steps.meta-vela-core.outputs.digest }}
-
+          cosign sign --yes docker.io/ayushkumar8/vela-core@${{ steps.meta-vela-core.outputs.digest }}
           echo "attesting SBOM against the vela core image..."
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-core.spdx.json --type spdx \
           ghcr.io/${{ github.repository_owner }}/oamdev/vela-core@${{ steps.meta-vela-core.outputs.digest }}
-
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-core.spdx.json --type spdx \
-          docker.io/oamdev/vela-core@${{ steps.meta-vela-core.outputs.digest }}
-
+          docker.io/ayushkumar8/vela-core@${{ steps.meta-vela-core.outputs.digest }}
       - name: Build & Push Vela CLI for Dockerhub, GHCR
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
@@ -148,22 +139,18 @@ jobs:
             VERSION=${{ steps.get_version.outputs.VERSION }}
             GOPROXY=https://proxy.golang.org
           tags: |
-            docker.io/oamdev/vela-cli:${{ steps.get_version.outputs.VERSION }}
+            docker.io/ayushkumar8/vela-cli:${{ steps.get_version.outputs.VERSION }}
             ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli:${{ steps.get_version.outputs.VERSION }}
-
       - name: Get Vela CLI Image Digest
         id: meta-vela-cli
         run: |
           GHCR_IMAGE=ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli
-          DOCKER_IMAGE=docker.io/oamdev/vela-cli
+          DOCKER_IMAGE=docker.io/ayushkumar8/vela-cli
           TAG=${{ steps.get_version.outputs.VERSION }}
-
           DIGEST=$(crane digest $GHCR_IMAGE:$TAG)
-
           echo "image=$GHCR_IMAGE" >> $GITHUB_OUTPUT
           echo "dockerhub_image=$DOCKER_IMAGE" >> $GITHUB_OUTPUT
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
-
       - name: Generate SBOM for Vela CLI Image
         id: generate_sbom
         uses: anchore/sbom-action@v0.17.0
@@ -181,15 +168,12 @@ jobs:
         run: |
           echo "signing vela CLI images..."
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-          cosign sign --yes docker.io/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}      
-
+          cosign sign --yes docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}      
           echo "attesting SBOM against the vela cli image..."
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-cli.spdx.json --type spdx \
           ghcr.io/${{ github.repository_owner }}/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-
           cosign attest --yes --predicate ${{ github.workspace }}/sbom-vela-cli.spdx.json --type spdx \
-          docker.io/oamdev/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
-
+          docker.io/ayushkumar8/vela-cli@${{ steps.meta-vela-cli.outputs.digest }}
       - name: Publish SBOMs as release artifacts
         uses: anchore/sbom-action/publish-sbom@v0.17.0
 
