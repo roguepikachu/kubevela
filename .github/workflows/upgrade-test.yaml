@@ -20,6 +20,12 @@ env:
 jobs:
   upgrade-tests:
     runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        k8s-version: ['v1.29.8']
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.k8s-version }}
+      cancel-in-progress: true
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -39,11 +45,11 @@ jobs:
       - name: Get dependencies
         run: go get -v -t -d ./...
 
-      - name: Setup KinD with Kubernetes v1.29.8
+      - name: Setup KinD with Kubernetes ${{ matrix.k8s-version }}
         run: |
           go install sigs.k8s.io/kind@v0.24.0
           kind delete cluster || true
-          kind create cluster --image=kindest/node:v1.29.8
+          kind create cluster --image=kindest/node:${{ matrix.k8s-version }}
 
       - name: Get latest KubeVela release tag (no v prefix)
         id: get_latest_tag
@@ -51,6 +57,15 @@ jobs:
           TAG=$(curl -s https://api.github.com/repos/kubevela/kubevela/releases/latest | jq -r ".tag_name" | awk '{sub(/^v/, ""); print}')
           echo "LATEST_TAG=$TAG" >> $GITHUB_ENV
 
+      - name: Get Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo@v2.14.0
+
+      - name: Build vela CLI
+        run: make vela-cli
+    
+      - name: Install kustomize
+        run: make kustomize
+        
       - name: Add KubeVela Helm repo
         run: |
           helm repo add kubevela https://kubevela.github.io/charts
