@@ -24,9 +24,9 @@ ARG TARGETARCH
 ARG VERSION
 ARG GITVERSION
 
-RUN  apk add gcc musl-dev libc-dev ;\
+RUN apk add gcc musl-dev libc-dev ;\
     GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
-    go test -c -o manager-${TARGETARCH}  -cover -covermode=atomic -coverpkg ./... .
+    go build -o manager-${TARGETARCH} ./cmd/core
 
 # Use alpine as base image due to the discussion in issue #1448
 # You can replace distroless as minimal base image to package the manager binary
