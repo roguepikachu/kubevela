@@ -475,6 +475,9 @@ func (r *Reconciler) writeStatusByMethod(ctx context.Context, method method, app
 		executor.StepStatusCache.Store(fmt.Sprintf("%s-%s", app.Name, app.Namespace), -1)
 		return err
 	}
+	if feature.DefaultMutableFeatureGate.Enabled(features.EnableApplicationStatusMetrics) {
+		r.updateMetricsAndLog(ctx, app)
+	}
 	return nil
 }
 
@@ -591,6 +594,9 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // Setup adds a controller that reconciles App.
 func Setup(mgr ctrl.Manager, args core.Args) error {
+	// Register application status metrics after feature gates are initialized
+	metrics.RegisterApplicationStatusMetrics()
+
 	reconciler := Reconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -694,12 +700,14 @@ func evalStatus(ctx monitorContext.Context, handler *AppHandler, appFile *appfil
 	if !hasHealthCheckPolicy(appFile.ParsedPolicies) {
 		for idx, svc := range handler.services {
 			for _, component := range handler.app.Spec.Components {
-				healthy, status, _, _, err := healthCheck(ctx, component, nil, svc.Cluster, svc.Namespace)
+				_, status, _, _, err := healthCheck(ctx, component, nil, svc.Cluster, svc.Namespace)
 				if err != nil {
 					ctx.Error(err, "Failed to collect health status")
 				} else if status != nil {
-					handler.services[idx].Healthy = healthy
+					handler.services[idx].Healthy = status.Healthy
 					handler.services[idx].Message = status.Message
+					handler.services[idx].Details = status.Details
+					handler.services[idx].Traits = status.Traits
 				}
 			}
 		}
