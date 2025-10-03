@@ -9,7 +9,7 @@ spec:
       matchLabels:
         os: linux
         arch: amd64
-    {{addURIAndSha "https://github.com/oam-dev/kubevela/releases/download/{{ .TagName }}/kubectl-vela-{{ .TagName }}-linux-amd64.tar.gz" .TagName }}
+    {{addURIAndSha "https://github.com/roguepikachu/kubevela/releases/download/{{ .TagName }}/kubectl-vela-{{ .TagName }}-linux-amd64.tar.gz" .TagName }}
     files:
     - from: "*/kubectl-vela"
       to: "."
@@ -20,7 +20,7 @@ spec:
       matchLabels:
         os: darwin
         arch: amd64
-    {{addURIAndSha "https://github.com/oam-dev/kubevela/releases/download/{{ .TagName }}/kubectl-vela-{{ .TagName }}-darwin-amd64.tar.gz" .TagName }}
+    {{addURIAndSha "https://github.com/roguepikachu/kubevela/releases/download/{{ .TagName }}/kubectl-vela-{{ .TagName }}-darwin-amd64.tar.gz" .TagName }}
     files:
     - from: "*/kubectl-vela"
       to: "."
@@ -31,7 +31,7 @@ spec:
       matchLabels:
         os: windows
         arch: amd64
-    {{addURIAndSha "https://github.com/oam-dev/kubevela/releases/download/{{ .TagName }}/kubectl-vela-{{ .TagName }}-windows-amd64.zip" .TagName }}
+    {{addURIAndSha "https://github.com/roguepikachu/kubevela/releases/download/{{ .TagName }}/kubectl-vela-{{ .TagName }}-windows-amd64.zip" .TagName }}
     files:
     - from: "*/kubectl-vela.exe"
       to: "."
