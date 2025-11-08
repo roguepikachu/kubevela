@@ -50,6 +50,8 @@ import (
 	"github.com/oam-dev/kubevela/cmd/core/app/config"
 	"github.com/oam-dev/kubevela/cmd/core/app/hooks"
 	"github.com/oam-dev/kubevela/cmd/core/app/hooks/crdvalidation"
+	"github.com/oam-dev/kubevela/cmd/core/app/hooks/featuregate"
+	"github.com/oam-dev/kubevela/cmd/core/app/hooks/schema"
 	"github.com/oam-dev/kubevela/cmd/core/app/options"
 	"github.com/oam-dev/kubevela/pkg/auth"
 	"github.com/oam-dev/kubevela/pkg/cache"
@@ -480,7 +482,11 @@ func prepareRun(ctx context.Context, manager manager.Manager, coreOptions *optio
 	}
 
 	klog.InfoS("Starting vela controller manager with pre-start validation")
-	for _, hook := range []hooks.PreStartHook{crdvalidation.NewHook()} {
+	for _, hook := range []hooks.PreStartHook{
+		crdvalidation.NewHook(),
+		featuregate.NewHook(),
+		schema.NewHook(),
+	} {
 		hookName := hook.Name()
 		klog.InfoS("Running pre-start hook", "hook", hookName)
 		if err := hook.Run(ctx); err != nil {
