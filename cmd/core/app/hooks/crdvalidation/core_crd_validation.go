@@ -39,6 +39,7 @@ type CoreCRDInfo struct {
 	Name           string
 	Group          string
 	Version        string
+	Namespaced     bool
 	RequiredFields []string
 	CreateTestFunc func(name, namespace string) (client.Object, error)
 }
@@ -51,9 +52,10 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 
 	coreCRDs := []CoreCRDInfo{
 		{
-			Name:    "applications.core.oam.dev",
-			Group:   "core.oam.dev",
-			Version: "v1beta1",
+			Name:       "applications.core.oam.dev",
+			Group:      "core.oam.dev",
+			Version:    "v1beta1",
+			Namespaced: true,
 			RequiredFields: []string{
 				"spec.components",
 				"spec.workflow",
@@ -63,9 +65,10 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 			CreateTestFunc: h.createTestApplication,
 		},
 		{
-			Name:    "traitdefinitions.core.oam.dev",
-			Group:   "core.oam.dev",
-			Version: "v1beta1",
+			Name:       "traitdefinitions.core.oam.dev",
+			Group:      "core.oam.dev",
+			Version:    "v1beta1",
+			Namespaced: false,
 			RequiredFields: []string{
 				"spec.schematic",
 				"spec.appliesToWorkloads",
@@ -75,9 +78,10 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 			CreateTestFunc: h.createTestTraitDefinition,
 		},
 		{
-			Name:    "policydefinitions.core.oam.dev",
-			Group:   "core.oam.dev",
-			Version: "v1beta1",
+			Name:       "policydefinitions.core.oam.dev",
+			Group:      "core.oam.dev",
+			Version:    "v1beta1",
+			Namespaced: false,
 			RequiredFields: []string{
 				"spec.schematic",
 				"spec.definitionRef",
@@ -86,9 +90,10 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 			CreateTestFunc: h.createTestPolicyDefinition,
 		},
 		{
-			Name:    "workflowstepdefinitions.core.oam.dev",
-			Group:   "core.oam.dev",
-			Version: "v1beta1",
+			Name:       "workflowstepdefinitions.core.oam.dev",
+			Group:      "core.oam.dev",
+			Version:    "v1beta1",
+			Namespaced: false,
 			RequiredFields: []string{
 				"spec.schematic",
 				"spec.reference",
@@ -263,9 +268,12 @@ func (h *Hook) checkFieldPath(properties map[string]apiextensionsv1.JSONSchemaPr
 // performCRDRoundTripTest creates a test resource and validates it can be stored and retrieved
 func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) error {
 	testName := fmt.Sprintf("%s-pre-check.%d", info.Name[:4], time.Now().UnixNano())
-	namespace := k8s.GetRuntimeNamespace()
+	namespace := ""
+	if info.Namespaced {
+		namespace = k8s.GetRuntimeNamespace()
+	}
 
-	klog.V(2).InfoS("Performing round-trip test", "crd", info.Name, "testName", testName)
+	klog.V(2).InfoS("Performing round-trip test", "crd", info.Name, "testName", testName, "namespaced", info.Namespaced)
 
 	// Create test object
 	testObj, err := info.CreateTestFunc(testName, namespace)
@@ -275,28 +283,28 @@ func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) er
 
 	// Set cleanup label
 	testObj.SetLabels(map[string]string{oam.LabelPreCheck: types.VelaCoreName})
+	if info.Namespaced {
+		testObj.SetNamespace(namespace)
+	}
 
 	// Register cleanup
 	defer func() {
-		klog.V(2).InfoS("Cleaning up test resources", "crd", info.Name, "namespace", namespace)
+		klog.V(2).InfoS("Cleaning up test resources", "crd", info.Name, "namespaced", info.Namespaced)
+
+		opts := []client.DeleteAllOfOption{client.MatchingLabels{oam.LabelPreCheck: types.VelaCoreName}}
+		if info.Namespaced {
+			opts = append(opts, client.InNamespace(namespace))
+		}
 
 		switch info.Name {
 		case "applications.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.Application{},
-				client.InNamespace(namespace),
-				client.MatchingLabels{oam.LabelPreCheck: types.VelaCoreName})
+			h.Client.DeleteAllOf(ctx, &v1beta1.Application{}, opts...)
 		case "traitdefinitions.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.TraitDefinition{},
-				client.InNamespace(namespace),
-				client.MatchingLabels{oam.LabelPreCheck: types.VelaCoreName})
+			h.Client.DeleteAllOf(ctx, &v1beta1.TraitDefinition{}, opts...)
 		case "policydefinitions.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.PolicyDefinition{},
-				client.InNamespace(namespace),
-				client.MatchingLabels{oam.LabelPreCheck: types.VelaCoreName})
+			h.Client.DeleteAllOf(ctx, &v1beta1.PolicyDefinition{}, opts...)
 		case "workflowstepdefinitions.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.WorkflowStepDefinition{},
-				client.InNamespace(namespace),
-				client.MatchingLabels{oam.LabelPreCheck: types.VelaCoreName})
+			h.Client.DeleteAllOf(ctx, &v1beta1.WorkflowStepDefinition{}, opts...)
 		}
 	}()
 
@@ -308,7 +316,10 @@ func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) er
 
 	// Read back the resource
 	readObj := testObj.DeepCopyObject().(client.Object)
-	key := client.ObjectKey{Name: testName, Namespace: namespace}
+	key := client.ObjectKey{Name: testName}
+	if info.Namespaced {
+		key.Namespace = namespace
+	}
 	if err := h.Client.Get(ctx, key, readObj); err != nil {
 		return fmt.Errorf("failed to read back test resource: %w", err)
 	}
@@ -344,7 +355,7 @@ func (h *Hook) createTestApplication(name, namespace string) (client.Object, err
 func (h *Hook) createTestTraitDefinition(name, namespace string) (client.Object, error) {
 	td := &v1beta1.TraitDefinition{}
 	td.Name = name
-	td.Namespace = namespace
+	// TraitDefinition is cluster-scoped, no namespace
 	td.Spec.Schematic = &common.Schematic{
 		CUE: &common.CUE{
 			Template: `
@@ -364,7 +375,7 @@ func (h *Hook) createTestTraitDefinition(name, namespace string) (client.Object,
 func (h *Hook) createTestPolicyDefinition(name, namespace string) (client.Object, error) {
 	pd := &v1beta1.PolicyDefinition{}
 	pd.Name = name
-	pd.Namespace = namespace
+	// PolicyDefinition is cluster-scoped, no namespace
 	pd.Spec.Schematic = &common.Schematic{
 		CUE: &common.CUE{
 			Template: `
@@ -380,7 +391,7 @@ func (h *Hook) createTestPolicyDefinition(name, namespace string) (client.Object
 func (h *Hook) createTestWorkflowStepDefinition(name, namespace string) (client.Object, error) {
 	wsd := &v1beta1.WorkflowStepDefinition{}
 	wsd.Name = name
-	wsd.Namespace = namespace
+	// WorkflowStepDefinition is cluster-scoped, no namespace
 	wsd.Spec.Schematic = &common.Schematic{
 		CUE: &common.CUE{
 			Template: `

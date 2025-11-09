@@ -185,15 +185,14 @@ func (h *Hook) validateApplicationRevisionCRD(ctx context.Context, zstdEnabled, 
 // ResourceTracker CRD supports compression fields
 func (h *Hook) validateResourceTrackerCRD(ctx context.Context, zstdEnabled, gzipEnabled bool) error {
 	testName := fmt.Sprintf("rt-pre-check.%d", time.Now().UnixNano())
-	namespace := k8s.GetRuntimeNamespace()
+	namespace := k8s.GetRuntimeNamespace() // Used for the ConfigMap reference in ManagedResource
 
-	klog.V(2).InfoS("Creating test ResourceTracker for CRD validation",
-		"name", testName,
-		"namespace", namespace)
+	klog.V(2).InfoS("Creating test ResourceTracker for CRD validation (cluster-scoped)",
+		"name", testName)
 
 	rt := &v1beta1.ResourceTracker{}
 	rt.Name = testName
-	rt.Namespace = namespace
+	// ResourceTracker is cluster-scoped, no namespace
 	rt.SetLabels(map[string]string{
 		oam.LabelPreCheck:    types.VelaCoreName,
 		oam.LabelAppName:     testName,
@@ -237,15 +236,13 @@ func (h *Hook) validateResourceTrackerCRD(ctx context.Context, zstdEnabled, gzip
 
 	// Register cleanup function
 	defer func() {
-		klog.V(2).InfoS("Cleaning up test ResourceTrackers",
-			"namespace", namespace,
+		klog.V(2).InfoS("Cleaning up test ResourceTrackers (cluster-scoped)",
 			"label", oam.LabelPreCheck)
 
+		// ResourceTracker is cluster-scoped, so no namespace option
 		if err := h.Client.DeleteAllOf(ctx, &v1beta1.ResourceTracker{},
-			client.InNamespace(namespace),
 			client.MatchingLabels{oam.LabelPreCheck: types.VelaCoreName}); err != nil {
-			klog.ErrorS(err, "Failed to clean up test ResourceTracker resources",
-				"namespace", namespace)
+			klog.ErrorS(err, "Failed to clean up test ResourceTracker resources")
 		} else {
 			klog.V(3).InfoS("Successfully cleaned up test ResourceTracker resources")
 		}
@@ -255,8 +252,7 @@ func (h *Hook) validateResourceTrackerCRD(ctx context.Context, zstdEnabled, gzip
 	klog.V(2).InfoS("Writing test ResourceTracker to cluster")
 	if err := h.Client.Create(ctx, rt); err != nil {
 		klog.ErrorS(err, "Failed to create test ResourceTracker",
-			"name", testName,
-			"namespace", namespace)
+			"name", testName)
 		return fmt.Errorf("failed to create test ResourceTracker: %w", err)
 	}
 	klog.V(3).InfoS("Test ResourceTracker created successfully")

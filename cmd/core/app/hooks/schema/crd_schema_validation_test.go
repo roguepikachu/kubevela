@@ -24,6 +24,7 @@ import (
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -36,6 +37,14 @@ func TestCRDSchemaValidation(t *testing.T) {
 }
 
 var _ = Describe("CRD schema validation hook", func() {
+	var scheme *runtime.Scheme
+
+	BeforeEach(func() {
+		// Create scheme with apiextensions types registered
+		scheme = runtime.NewScheme()
+		Expect(apiextensionsv1.AddToScheme(scheme)).Should(Succeed())
+	})
+
 	Context("with valid CRDs", func() {
 		It("should succeed when all required CRDs exist with proper schemas", func() {
 			// This test requires actual CRDs to be loaded
@@ -49,7 +58,9 @@ var _ = Describe("CRD schema validation hook", func() {
 			ctx := context.Background()
 
 			// Create a fake client with no CRDs
-			fakeClient := fake.NewClientBuilder().Build()
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				Build()
 
 			hook := &schema.SchemaValidator{
 				Client: fakeClient,
@@ -77,6 +88,7 @@ var _ = Describe("CRD schema validation hook", func() {
 			}
 
 			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
 				WithObjects(criticalCRDs...).
 				Build()
 
@@ -119,6 +131,7 @@ var _ = Describe("CRD schema validation hook", func() {
 			}
 
 			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
 				WithObjects(invalidCRD).
 				Build()
 
@@ -140,6 +153,7 @@ var _ = Describe("CRD schema validation hook", func() {
 			crdDef.Spec.Versions[0].Served = false
 
 			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
 				WithObjects(crd).
 				Build()
 
