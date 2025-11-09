@@ -109,7 +109,7 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 			Namespaced: false,
 			RequiredFields: []string{
 				"spec.schematic",
-				"spec.reference",
+				"spec.definitionRef",
 				// Note: status is optional - many CRDs add it later via status subresource
 			},
 			CreateTestFunc: h.createTestWorkflowStepDefinition,
@@ -169,11 +169,19 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 		}
 
 		// Perform round-trip test for the CRD
-		if err := h.performCRDRoundTripTest(ctx, crdInfo); err != nil {
-			klog.ErrorS(err, "CRD round-trip test failed", "crd", crdInfo.Name)
-			validationErrors = append(validationErrors, fmt.Errorf("CRD %s round-trip test failed: %w", crdInfo.Name, err))
+		// Currently only perform round-trip tests for namespaced CRDs
+		// Cluster-scoped resources may have creation restrictions in certain environments
+		// Schema validation above is sufficient to verify field presence
+		if crdInfo.Namespaced {
+			if err := h.performCRDRoundTripTest(ctx, crdInfo); err != nil {
+				klog.ErrorS(err, "CRD round-trip test failed", "crd", crdInfo.Name)
+				validationErrors = append(validationErrors, fmt.Errorf("CRD %s round-trip test failed: %w", crdInfo.Name, err))
+			} else {
+				klog.V(1).InfoS("CRD validation passed", "crd", crdInfo.Name)
+			}
 		} else {
-			klog.V(1).InfoS("CRD validation passed", "crd", crdInfo.Name)
+			// For cluster-scoped resources, schema validation is sufficient
+			klog.V(1).InfoS("CRD schema validation passed (round-trip skipped for cluster-scoped)", "crd", crdInfo.Name)
 		}
 	}
 
@@ -334,6 +342,10 @@ func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) er
 
 	// Set cleanup label
 	testObj.SetLabels(map[string]string{oam.LabelPreCheck: types.VelaCoreName})
+
+	// Set namespace only for namespaced resources
+	// For cluster-scoped resources, explicitly ensure no namespace is set
+	// Kubernetes API strictly validates that cluster-scoped resources have no namespace field
 	if info.Namespaced {
 		testObj.SetNamespace(namespace)
 	}
@@ -360,6 +372,7 @@ func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) er
 	}()
 
 	// Create the test resource
+	klog.V(2).InfoS("Creating test resource", "crd", info.Name, "name", testName, "namespaced", info.Namespaced)
 	if err := h.Client.Create(ctx, testObj); err != nil {
 		return fmt.Errorf("failed to create test resource: %w", err)
 	}

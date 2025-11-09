@@ -30,7 +30,7 @@ spec:
             properties:
               schematic:
                 type: object
-              reference:
+              definitionRef:
                 type: object
           status:
             type: object

@@ -19,7 +19,6 @@ package crdvalidation_test
 import (
 	"context"
 	"fmt"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -39,10 +38,8 @@ import (
 	"github.com/oam-dev/kubevela/pkg/oam"
 )
 
-func TestCompressionCRDValidation(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Compression CRD Validation Suite")
-}
+// Test suite is defined in crd_validation_test.go
+// All tests in this file run under the main CRD Validation Hook Suite
 
 var _ = Describe("Compression CRD Validation", func() {
 	var (

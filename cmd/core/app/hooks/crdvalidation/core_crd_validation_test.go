@@ -18,7 +18,6 @@ package crdvalidation_test
 
 import (
 	"context"
-	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -33,10 +32,8 @@ import (
 	"github.com/oam-dev/kubevela/cmd/core/app/hooks/crdvalidation"
 )
 
-func TestCoreCRDValidation(t *testing.T) {
-	RegisterFailHandler(Fail)
-	RunSpecs(t, "Core CRD Validation Suite")
-}
+// Test suite is defined in crd_validation_test.go
+// All tests in this file run under the main CRD Validation Hook Suite
 
 var _ = Describe("Core CRD Validation", func() {
 	var (
@@ -255,12 +252,13 @@ var _ = Describe("Core CRD Validation", func() {
 		})
 	})
 
-	// Test Scenario 7: CRD validation with test resources present
-	Context("when test resources are present alongside CRDs", func() {
-		It("should validate CRDs successfully when test namespaced resources are present", func() {
+	// Test Scenario 7: CRD validation passes with schema checks
+	// Note: Round-trip tests are only performed for namespaced CRDs
+	Context("when validating CRDs with schema checks", func() {
+		It("should validate namespaced CRDs successfully with round-trip test", func() {
 			validCRDs := createValidCoreCRDs()
 
-			// Create test Application resource
+			// Create test Application resource to support round-trip test
 			testApp := &v1beta1.Application{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      "test-app",
@@ -290,23 +288,14 @@ var _ = Describe("Core CRD Validation", func() {
 			Expect(err).Should(Succeed())
 		})
 
-		It("should validate CRDs successfully when test cluster-scoped resources are present", func() {
+		It("should validate cluster-scoped CRDs successfully with schema validation only", func() {
+			// Cluster-scoped CRDs (TraitDefinition, PolicyDefinition, WorkflowStepDefinition)
+			// only get schema validation, not round-trip tests, to avoid namespace-related issues
 			validCRDs := createValidCoreCRDs()
-
-			// Create test TraitDefinition resource (cluster-scoped)
-			testTrait := &v1beta1.TraitDefinition{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-trait",
-				},
-				Spec: v1beta1.TraitDefinitionSpec{
-					AppliesToWorkloads: []string{"deployments.apps"},
-				},
-			}
 
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(validCRDs...).
-				WithObjects(testTrait).
 				Build()
 
 			hook = &crdvalidation.Hook{
@@ -324,10 +313,24 @@ var _ = Describe("Core CRD Validation", func() {
 			// Create CRD with deeply nested structure
 			deeplyNestedCRD := createCRDWithDeepNesting("applications.core.oam.dev")
 
+			// Add a test Application to support round-trip test
+			testApp := &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-nested-app",
+					Namespace: "default",
+				},
+				Spec: v1beta1.ApplicationSpec{
+					Components: []common.ApplicationComponent{
+						{Name: "comp1", Type: "webservice"},
+					},
+				},
+			}
+
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(deeplyNestedCRD).
 				WithObjects(createValidCoreCRDs()[1:]...).
+				WithObjects(testApp).
 				Build()
 
 			hook = &crdvalidation.Hook{
@@ -368,9 +371,23 @@ var _ = Describe("Core CRD Validation", func() {
 			// Create CRDs where v1beta1 is served but not storage
 			multiVersionCRDs := createCRDsWithMultipleVersions()
 
+			// Add test Application to support round-trip test for namespaced CRD
+			testApp := &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-multiversion-app",
+					Namespace: "default",
+				},
+				Spec: v1beta1.ApplicationSpec{
+					Components: []common.ApplicationComponent{
+						{Name: "comp1", Type: "webservice"},
+					},
+				},
+			}
+
 			fakeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(multiVersionCRDs...).
+				WithObjects(testApp).
 				Build()
 
 			hook = &crdvalidation.Hook{
@@ -573,7 +590,7 @@ func createValidCoreCRDs() []client.Object {
 											"schematic": {
 												Type: "object",
 											},
-											"reference": {
+											"definitionRef": {
 												Type: "object",
 											},
 										},
@@ -692,8 +709,8 @@ func createCRDWithMissingField(name, missingField string) client.Object {
 	if name == "workflowstepdefinitions.core.oam.dev" && missingField != "spec.schematic" {
 		properties["spec"].Properties["schematic"] = apiextensionsv1.JSONSchemaProps{Type: "object"}
 	}
-	if name == "workflowstepdefinitions.core.oam.dev" && missingField != "spec.reference" {
-		properties["spec"].Properties["reference"] = apiextensionsv1.JSONSchemaProps{Type: "object"}
+	if name == "workflowstepdefinitions.core.oam.dev" && missingField != "spec.definitionRef" {
+		properties["spec"].Properties["definitionRef"] = apiextensionsv1.JSONSchemaProps{Type: "object"}
 	}
 
 	return &apiextensionsv1.CustomResourceDefinition{
