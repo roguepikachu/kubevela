@@ -208,6 +208,29 @@ func (v *SchemaValidator) Run(ctx context.Context) error {
 func (v *SchemaValidator) validateSchema(crd *apiextensionsv1.CustomResourceDefinition, check CRDSchemaCheck) []string {
 	issues := []string{}
 
+	// Validate versions and schemas
+	versionIssues := v.validateVersions(crd, check)
+	issues = append(issues, versionIssues...)
+
+	// Check PreserveUnknownFields (informational)
+	v.checkPreserveUnknownFields(crd, check)
+
+	// Check printer columns (informational)
+	v.checkPrinterColumns(crd, check)
+
+	// Check subresources (informational)
+	v.checkSubresources(crd, check)
+
+	// Check for deprecated versions (informational)
+	v.checkDeprecatedVersions(crd, check)
+
+	return issues
+}
+
+// validateVersions checks version configuration and OpenAPI schemas
+func (v *SchemaValidator) validateVersions(crd *apiextensionsv1.CustomResourceDefinition, check CRDSchemaCheck) []string {
+	issues := []string{}
+
 	// Check for at least one served version
 	hasServedVersion := false
 	hasStorageVersion := false
@@ -229,7 +252,7 @@ func (v *SchemaValidator) validateSchema(crd *apiextensionsv1.CustomResourceDefi
 				if schema.Type == "" {
 					issues = append(issues, fmt.Sprintf("version %s schema missing type field", version.Name))
 				}
-				if schema.Properties == nil || len(schema.Properties) == 0 {
+				if len(schema.Properties) == 0 {
 					issues = append(issues, fmt.Sprintf("version %s schema has no properties defined", version.Name))
 				}
 			}
@@ -243,59 +266,75 @@ func (v *SchemaValidator) validateSchema(crd *apiextensionsv1.CustomResourceDefi
 		issues = append(issues, "no storage version defined")
 	}
 
-	// Check PreserveUnknownFields
-	if check.CheckPreserveUnknownFields {
-		if crd.Spec.PreserveUnknownFields {
-			klog.V(2).InfoS("CRD has global PreserveUnknownFields enabled",
-				"crd", check.Name,
-				"recommendation", "Consider using per-field preservation instead")
-		}
+	return issues
+}
 
-		// Check for PreserveUnknownFields in schema
-		for _, version := range crd.Spec.Versions {
-			if version.Schema != nil && version.Schema.OpenAPIV3Schema != nil {
-				preserveCount := v.countPreserveUnknownFields(version.Schema.OpenAPIV3Schema)
-				if preserveCount > 0 {
-					klog.V(2).InfoS("CRD uses PreserveUnknownFields markers",
-						"crd", check.Name,
-						"version", version.Name,
-						"count", preserveCount)
-				}
-			}
-		}
+// checkPreserveUnknownFields logs information about PreserveUnknownFields usage
+func (v *SchemaValidator) checkPreserveUnknownFields(crd *apiextensionsv1.CustomResourceDefinition, check CRDSchemaCheck) {
+	if !check.CheckPreserveUnknownFields {
+		return
 	}
 
-	// Check printer columns (informational only - logs but doesn't fail validation)
-	// Printer columns improve CLI user experience but are not required for functionality
-	if check.CheckPrinterColumns {
-		hasAgeColumn := false
-		for _, version := range crd.Spec.Versions {
-			if version.AdditionalPrinterColumns != nil {
-				for _, col := range version.AdditionalPrinterColumns {
-					if col.Name == "AGE" || col.Type == "date" {
-						hasAgeColumn = true
-					}
-				}
-			}
-		}
-		if !hasAgeColumn {
-			klog.V(3).InfoS("CRD missing AGE printer column (informational)", "crd", check.Name)
-		}
+	if crd.Spec.PreserveUnknownFields {
+		klog.V(2).InfoS("CRD has global PreserveUnknownFields enabled",
+			"crd", check.Name,
+			"recommendation", "Consider using per-field preservation instead")
 	}
 
-	// Check subresources (informational only - logs but doesn't fail validation)
-	// Status subresources enable kubectl scale and improve status management but are optional
-	if check.CheckSubresources {
-		for _, version := range crd.Spec.Versions {
-			if version.Subresources == nil || version.Subresources.Status == nil {
-				klog.V(2).InfoS("CRD version missing status subresource (informational)",
+	// Check for PreserveUnknownFields in schema
+	for _, version := range crd.Spec.Versions {
+		if version.Schema != nil && version.Schema.OpenAPIV3Schema != nil {
+			preserveCount := v.countPreserveUnknownFields(version.Schema.OpenAPIV3Schema)
+			if preserveCount > 0 {
+				klog.V(2).InfoS("CRD uses PreserveUnknownFields markers",
 					"crd", check.Name,
-					"version", version.Name)
+					"version", version.Name,
+					"count", preserveCount)
 			}
 		}
 	}
+}
 
-	// Check for deprecated versions
+// checkPrinterColumns logs information about printer columns (informational only)
+func (v *SchemaValidator) checkPrinterColumns(crd *apiextensionsv1.CustomResourceDefinition, check CRDSchemaCheck) {
+	if !check.CheckPrinterColumns {
+		return
+	}
+
+	// Printer columns improve CLI user experience but are not required for functionality
+	hasAgeColumn := false
+	for _, version := range crd.Spec.Versions {
+		if version.AdditionalPrinterColumns != nil {
+			for _, col := range version.AdditionalPrinterColumns {
+				if col.Name == "AGE" || col.Type == "date" {
+					hasAgeColumn = true
+				}
+			}
+		}
+	}
+	if !hasAgeColumn {
+		klog.V(3).InfoS("CRD missing AGE printer column (informational)", "crd", check.Name)
+	}
+}
+
+// checkSubresources logs information about status subresources (informational only)
+func (v *SchemaValidator) checkSubresources(crd *apiextensionsv1.CustomResourceDefinition, check CRDSchemaCheck) {
+	if !check.CheckSubresources {
+		return
+	}
+
+	// Status subresources enable kubectl scale and improve status management but are optional
+	for _, version := range crd.Spec.Versions {
+		if version.Subresources == nil || version.Subresources.Status == nil {
+			klog.V(2).InfoS("CRD version missing status subresource (informational)",
+				"crd", check.Name,
+				"version", version.Name)
+		}
+	}
+}
+
+// checkDeprecatedVersions logs information about deprecated CRD versions
+func (v *SchemaValidator) checkDeprecatedVersions(crd *apiextensionsv1.CustomResourceDefinition, check CRDSchemaCheck) {
 	for _, version := range crd.Spec.Versions {
 		if version.Deprecated {
 			klog.V(1).InfoS("CRD has deprecated version",
@@ -304,8 +343,6 @@ func (v *SchemaValidator) validateSchema(crd *apiextensionsv1.CustomResourceDefi
 				"deprecationWarning", version.DeprecationWarning)
 		}
 	}
-
-	return issues
 }
 
 // countPreserveUnknownFields recursively counts PreserveUnknownFields markers in schema

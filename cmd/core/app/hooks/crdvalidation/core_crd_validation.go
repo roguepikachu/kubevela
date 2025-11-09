@@ -359,15 +359,23 @@ func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) er
 			opts = append(opts, client.InNamespace(namespace))
 		}
 
+		var cleanupErr error
 		switch info.Name {
 		case "applications.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.Application{}, opts...)
+			cleanupErr = h.Client.DeleteAllOf(ctx, &v1beta1.Application{}, opts...)
 		case "traitdefinitions.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.TraitDefinition{}, opts...)
+			cleanupErr = h.Client.DeleteAllOf(ctx, &v1beta1.TraitDefinition{}, opts...)
 		case "policydefinitions.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.PolicyDefinition{}, opts...)
+			cleanupErr = h.Client.DeleteAllOf(ctx, &v1beta1.PolicyDefinition{}, opts...)
 		case "workflowstepdefinitions.core.oam.dev":
-			h.Client.DeleteAllOf(ctx, &v1beta1.WorkflowStepDefinition{}, opts...)
+			cleanupErr = h.Client.DeleteAllOf(ctx, &v1beta1.WorkflowStepDefinition{}, opts...)
+		}
+
+		if cleanupErr != nil {
+			klog.ErrorS(cleanupErr, "Failed to clean up test resources",
+				"crd", info.Name, "namespaced", info.Namespaced)
+		} else {
+			klog.V(3).InfoS("Successfully cleaned up test resources", "crd", info.Name)
 		}
 	}()
 

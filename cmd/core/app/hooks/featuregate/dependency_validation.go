@@ -98,7 +98,7 @@ func (v *DependencyValidator) Run(ctx context.Context) error {
 					warnings = append(warnings, errMsg)
 				} else {
 					klog.ErrorS(nil, errMsg)
-					validationErrors = append(validationErrors, fmt.Errorf(errMsg))
+					validationErrors = append(validationErrors, fmt.Errorf("%s", errMsg))
 				}
 			} else {
 				klog.V(2).InfoS("Required dependency satisfied",
@@ -118,7 +118,7 @@ func (v *DependencyValidator) Run(ctx context.Context) error {
 					warnings = append(warnings, errMsg)
 				} else {
 					klog.ErrorS(nil, errMsg)
-					validationErrors = append(validationErrors, fmt.Errorf(errMsg))
+					validationErrors = append(validationErrors, fmt.Errorf("%s", errMsg))
 				}
 			} else {
 				klog.V(3).InfoS("No conflict detected",
