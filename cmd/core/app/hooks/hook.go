@@ -24,9 +24,10 @@ import "context"
 //
 // Implementations should:
 // - Be idempotent (safe to run multiple times)
-// - Fail fast with clear error messages
+// - Fail fast with clear error messages on configuration errors
 // - Log their progress using klog
-// - Clean up any test resources they create
+// - Perform initialization tasks like cache synchronization and validation checks
+// - Clean up any temporary validation resources created during the hook execution
 type PreStartHook interface {
 	// Run executes the hook's logic. If an error is returned, the controller
 	// startup will be aborted.

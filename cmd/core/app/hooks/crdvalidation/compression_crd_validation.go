@@ -38,6 +38,19 @@ import (
 
 // ValidateCompressionCRDs validates that compression-related CRDs are compatible
 // with enabled feature gates. This includes ApplicationRevision and ResourceTracker.
+//
+// Compression validation is critical because:
+// 1. Compression features (Zstd, Gzip) require CRD schema support for compression fields
+// 2. Without proper CRD support, compressed data will be lost or corrupted
+// 3. The controller expects specific compression field structure when features are enabled
+// 4. Different compression types have different priorities (Zstd > Gzip)
+//
+// This function:
+// - Checks which compression feature gates are enabled
+// - Validates ApplicationRevision CRD if its compression features are enabled
+// - Validates ResourceTracker CRD if its compression features are enabled
+// - Logs priority information when multiple compression types are enabled
+// - Skips validation entirely if no compression features are enabled
 func (h *Hook) ValidateCompressionCRDs(ctx context.Context) error {
 	klog.InfoS("Starting compression CRD validation")
 
@@ -96,6 +109,20 @@ func (h *Hook) ValidateCompressionCRDs(ctx context.Context) error {
 
 // validateApplicationRevisionCRD performs a round-trip test to ensure the
 // ApplicationRevision CRD supports compression fields
+//
+// This validation is essential because ApplicationRevision stores snapshots of applications
+// and their definitions. With compression enabled, these snapshots can be significantly
+// reduced in size (up to 10x compression ratio for large applications).
+//
+// The function:
+// 1. Creates a test ApplicationRevision with compression type set (Zstd or Gzip)
+// 2. Stores it in the cluster to test CRD field support
+// 3. Retrieves it back to verify data integrity
+// 4. Checks that the application name is preserved (indicates proper field storage)
+// 5. Cleans up test resources using label selectors
+//
+// If validation fails, it means the CRD doesn't have the compression field in its schema,
+// and enabling compression would result in data loss.
 func (h *Hook) validateApplicationRevisionCRD(ctx context.Context, zstdEnabled, gzipEnabled bool) error {
 	testName := fmt.Sprintf("apprev-pre-check.%d", time.Now().UnixNano())
 	namespace := k8s.GetRuntimeNamespace()
@@ -183,6 +210,24 @@ func (h *Hook) validateApplicationRevisionCRD(ctx context.Context, zstdEnabled, 
 
 // validateResourceTrackerCRD performs a round-trip test to ensure the
 // ResourceTracker CRD supports compression fields
+//
+// ResourceTracker is critical for tracking all resources created by an application.
+// It stores the full manifest of each resource, which can be very large for complex
+// applications with many components. Compression can reduce storage by 80-90%.
+//
+// The function:
+// 1. Creates a test ResourceTracker with a ManagedResource containing a ConfigMap
+// 2. Sets the compression type based on enabled features (Zstd takes priority)
+// 3. Stores the ResourceTracker in the cluster (cluster-scoped resource)
+// 4. Retrieves it back and validates:
+//    - The ManagedResources array is preserved (not empty)
+//    - The resource name in ManagedResource matches the original
+// 5. Cleans up test resources using label selectors
+//
+// Validation failure indicates the CRD lacks compression support, which would cause:
+// - Loss of tracked resources
+// - Inability to properly garbage collect resources
+// - Broken application lifecycle management
 func (h *Hook) validateResourceTrackerCRD(ctx context.Context, zstdEnabled, gzipEnabled bool) error {
 	testName := fmt.Sprintf("rt-pre-check.%d", time.Now().UnixNano())
 	namespace := k8s.GetRuntimeNamespace() // Used for the ConfigMap reference in ManagedResource

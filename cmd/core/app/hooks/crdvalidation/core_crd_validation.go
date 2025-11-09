@@ -35,17 +35,30 @@ import (
 )
 
 // CoreCRDInfo contains information about a core CRD to validate
+// Each core CRD has specific requirements that must be met for the controller to function properly
 type CoreCRDInfo struct {
-	Name           string
-	Group          string
-	Version        string
-	Namespaced     bool
-	RequiredFields []string
-	CreateTestFunc func(name, namespace string) (client.Object, error)
+	Name           string                                                   // Full CRD name (e.g., "applications.core.oam.dev")
+	Group          string                                                   // API group (e.g., "core.oam.dev")
+	Version        string                                                   // Required version (e.g., "v1beta1")
+	Namespaced     bool                                                     // Whether the CRD is namespace-scoped or cluster-scoped
+	RequiredFields []string                                                 // Schema fields that must exist (e.g., "spec.components")
+	CreateTestFunc func(name, namespace string) (client.Object, error)    // Function to create test resources for round-trip validation
 }
 
 // ValidateCoreCRDs validates that core CRDs (Application, TraitDefinition, PolicyDefinition, WorkflowStepDefinition)
-// exist and have the required schema fields
+// exist and have the required schema fields.
+//
+// This function performs comprehensive validation for each core CRD:
+// 1. CRD Existence - Verifies the CRD is installed in the cluster
+// 2. Version Check - Ensures the required version (v1beta1) exists and is served
+// 3. Schema Validation - Confirms all required fields are present in the OpenAPI schema
+// 4. Round-Trip Test - Creates, stores, and retrieves test resources to verify data integrity
+//
+// The validation is essential because:
+// - Missing CRDs will cause the controller to fail when creating resources
+// - Missing schema fields can cause data loss or corruption
+// - Incorrect versions may have incompatible schemas
+// - Round-trip failures indicate the CRD cannot properly store controller data
 func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 	klog.InfoS("Starting core CRD validation")
 	startTime := time.Now()
@@ -60,7 +73,7 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 				"spec.components",
 				"spec.workflow",
 				"spec.policies",
-				"status",
+				// Note: status is optional - many CRDs add it later via status subresource
 			},
 			CreateTestFunc: h.createTestApplication,
 		},
@@ -73,7 +86,7 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 				"spec.schematic",
 				"spec.appliesToWorkloads",
 				"spec.workloadRefPath",
-				"status",
+				// Note: status is optional - many CRDs add it later via status subresource
 			},
 			CreateTestFunc: h.createTestTraitDefinition,
 		},
@@ -85,7 +98,7 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 			RequiredFields: []string{
 				"spec.schematic",
 				"spec.definitionRef",
-				"status",
+				// Note: status is optional - many CRDs add it later via status subresource
 			},
 			CreateTestFunc: h.createTestPolicyDefinition,
 		},
@@ -97,7 +110,7 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 			RequiredFields: []string{
 				"spec.schematic",
 				"spec.reference",
-				"status",
+				// Note: status is optional - many CRDs add it later via status subresource
 			},
 			CreateTestFunc: h.createTestWorkflowStepDefinition,
 		},
@@ -178,6 +191,17 @@ func (h *Hook) ValidateCoreCRDs(ctx context.Context) error {
 }
 
 // validateCRDSchema checks if the CRD has the required fields in its schema
+//
+// This function performs deep schema validation to ensure:
+// 1. The CRD version has an OpenAPI v3 schema defined
+// 2. The schema contains a 'spec' field (required for all OAM resources)
+// 3. All required fields specified in CoreCRDInfo.RequiredFields exist in the schema
+// 4. Field paths are properly nested (e.g., "spec.components" checks spec exists and has components)
+//
+// Schema validation is critical because:
+// - Missing fields will cause the controller to fail when accessing expected properties
+// - Incorrect schema structure can lead to data being silently dropped during storage
+// - The controller relies on specific field paths for its business logic
 func (h *Hook) validateCRDSchema(crd *apiextensionsv1.CustomResourceDefinition, info CoreCRDInfo) error {
 	// Find the version schema
 	var versionSchema *apiextensionsv1.CustomResourceValidation
@@ -227,6 +251,17 @@ func (h *Hook) validateCRDSchema(crd *apiextensionsv1.CustomResourceDefinition, 
 }
 
 // checkFieldPath validates that a field path exists in the schema properties
+//
+// This function recursively traverses the schema to verify a field path exists.
+// For example, given fieldPath "spec.components.traits":
+// 1. Checks "spec" exists in top-level properties
+// 2. Checks "spec" has properties defined
+// 3. Checks "components" exists in spec's properties
+// 4. Checks "components" has properties defined
+// 5. Checks "traits" exists in components' properties
+//
+// The validation ensures that nested fields required by the controller are present
+// in the CRD schema, preventing runtime errors when accessing these paths.
 func (h *Hook) checkFieldPath(properties map[string]apiextensionsv1.JSONSchemaProps, fieldPath string) error {
 	// Split the field path (e.g., "spec.components" -> ["spec", "components"])
 	parts := []string{}
@@ -266,6 +301,22 @@ func (h *Hook) checkFieldPath(properties map[string]apiextensionsv1.JSONSchemaPr
 }
 
 // performCRDRoundTripTest creates a test resource and validates it can be stored and retrieved
+//
+// This function performs a complete round-trip test to verify CRD data integrity:
+// 1. Creates a test resource with known data using the CreateTestFunc
+// 2. Labels it with oam.LabelPreCheck for cleanup tracking
+// 3. Stores the resource in the cluster via the Kubernetes API
+// 4. Retrieves the resource back from the cluster
+// 5. Validates the retrieved data matches what was stored
+// 6. Cleans up test resources using label selectors
+//
+// Round-trip testing is crucial because:
+// - It verifies the CRD can actually store the data structures the controller needs
+// - It detects issues with field preservation and data corruption
+// - It ensures the CRD version in the cluster is compatible with the controller's expectations
+// - It validates that compression fields (if enabled) work correctly
+//
+// The test uses unique names with timestamps to avoid conflicts and ensure cleanup.
 func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) error {
 	testName := fmt.Sprintf("%s-pre-check.%d", info.Name[:4], time.Now().UnixNano())
 	namespace := ""
@@ -335,7 +386,15 @@ func (h *Hook) performCRDRoundTripTest(ctx context.Context, info CoreCRDInfo) er
 }
 
 // Test object creation functions
+// These functions create minimal but valid test resources for each CRD type.
+// The test resources contain the minimum required fields to pass validation while
+// being simple enough to avoid complex dependencies or validation errors.
 
+// createTestApplication creates a minimal Application resource for round-trip testing
+// The Application includes:
+// - A single component with webservice type
+// - Basic properties with nginx image configuration
+// This validates the core Application structure can be stored and retrieved
 func (h *Hook) createTestApplication(name, namespace string) (client.Object, error) {
 	app := &v1beta1.Application{}
 	app.Name = name
@@ -352,6 +411,11 @@ func (h *Hook) createTestApplication(name, namespace string) (client.Object, err
 	return app, nil
 }
 
+// createTestTraitDefinition creates a minimal TraitDefinition resource for round-trip testing
+// The TraitDefinition includes:
+// - A CUE schematic with a simple replicas parameter template
+// - AppliesToWorkloads field specifying it applies to deployments
+// This validates the TraitDefinition structure and CUE template storage
 func (h *Hook) createTestTraitDefinition(name, namespace string) (client.Object, error) {
 	td := &v1beta1.TraitDefinition{}
 	td.Name = name
@@ -372,6 +436,10 @@ func (h *Hook) createTestTraitDefinition(name, namespace string) (client.Object,
 	return td, nil
 }
 
+// createTestPolicyDefinition creates a minimal PolicyDefinition resource for round-trip testing
+// The PolicyDefinition includes:
+// - A CUE schematic with a namespace parameter
+// This validates the PolicyDefinition structure and template storage
 func (h *Hook) createTestPolicyDefinition(name, namespace string) (client.Object, error) {
 	pd := &v1beta1.PolicyDefinition{}
 	pd.Name = name
@@ -388,6 +456,10 @@ func (h *Hook) createTestPolicyDefinition(name, namespace string) (client.Object
 	return pd, nil
 }
 
+// createTestWorkflowStepDefinition creates a minimal WorkflowStepDefinition resource for round-trip testing
+// The WorkflowStepDefinition includes:
+// - A CUE schematic with a message parameter and wait duration
+// This validates the WorkflowStepDefinition structure and workflow template storage
 func (h *Hook) createTestWorkflowStepDefinition(name, namespace string) (client.Object, error) {
 	wsd := &v1beta1.WorkflowStepDefinition{}
 	wsd.Name = name

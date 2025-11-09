@@ -1,0 +1,179 @@
+# ResourceTracker CRD with compression support
+# This CRD is used to test compression validation for ResourceTracker
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: resourcetrackers.core.oam.dev
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: ResourceTracker
+    listKind: ResourceTrackerList
+    plural: resourcetrackers
+    shortNames:
+    - rt
+    singular: resourcetracker
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .metadata.labels['app\.oam\.dev\/name']
+      name: APP
+      type: string
+    - jsonPath: .metadata.labels['app\.oam\.dev\/namespace']
+      name: APP-NS
+      type: string
+    - jsonPath: .spec.type
+      name: TYPE
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: ResourceTracker tracks resources created by an Application
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ResourceTrackerSpec defines the spec of ResourceTracker
+            properties:
+              applicationGeneration:
+                description: ApplicationGeneration records the application generation
+                format: int64
+                type: integer
+              compression:
+                description: Compression configuration for the tracker
+                properties:
+                  type:
+                    description: 'Type of compression: none, gzip, zstd'
+                    enum:
+                    - none
+                    - gzip
+                    - zstd
+                    type: string
+                type: object
+              managedResources:
+                description: ManagedResources records the resources managed by the tracker
+                items:
+                  description: ManagedResource represents a resource managed by the tracker
+                  properties:
+                    apiVersion:
+                      description: APIVersion is the API version of the resource
+                      type: string
+                    cluster:
+                      description: Cluster records the cluster of the resource
+                      type: string
+                    component:
+                      description: Component records the component that created this resource
+                      type: string
+                    creator:
+                      description: Creator records the creator type (component, trait, policy)
+                      type: string
+                    data:
+                      description: Data stores the raw data of the resource
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    deleted:
+                      description: Deleted marks if the resource is deleted
+                      type: boolean
+                    env:
+                      description: Env records the environment of the resource
+                      type: string
+                    kind:
+                      description: Kind is the kind of the resource
+                      type: string
+                    name:
+                      description: Name is the name of the resource
+                      type: string
+                    namespace:
+                      description: Namespace is the namespace of the resource
+                      type: string
+                    oamObject:
+                      description: OAMObjectReference records OAM object info
+                      properties:
+                        component:
+                          type: string
+                        env:
+                          type: string
+                        trait:
+                          type: string
+                      type: object
+                    policy:
+                      description: Policy records the policy that created this resource
+                      type: string
+                    raw:
+                      description: Raw stores the raw object data
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    skipGC:
+                      description: SkipGC marks if the resource should skip garbage collection
+                      type: boolean
+                    trait:
+                      description: Trait records the trait that created this resource
+                      type: string
+                    uid:
+                      description: UID is the UID of the resource
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                type: array
+              type:
+                description: Type of ResourceTracker (root, versioned, realtime)
+                enum:
+                - root
+                - versioned
+                - realtime
+                type: string
+            required:
+            - type
+            type: object
+          status:
+            description: ResourceTrackerStatus defines the status of ResourceTracker
+            properties:
+              conditions:
+                description: Conditions represents the latest state transitions
+                items:
+                  description: Condition contains condition information
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              trackedResources:
+                description: TrackedResources records the number of resources being tracked
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

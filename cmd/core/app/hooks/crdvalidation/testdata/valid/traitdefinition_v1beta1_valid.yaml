@@ -1,0 +1,502 @@
+# Valid TraitDefinition CRD with v1beta1 version and all required fields
+# This CRD is used to test TraitDefinition validation scenarios
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: traitdefinitions.core.oam.dev
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: TraitDefinition
+    listKind: TraitDefinitionList
+    plural: traitdefinitions
+    shortNames:
+    - trait
+    singular: traitdefinition
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.definitionRef.name
+      name: DEFINITION-NAME
+      type: string
+    - jsonPath: .spec.appliesToWorkloads
+      name: APPLIES-TO
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: TraitDefinition defines the schema of a trait
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: TraitDefinitionSpec defines the desired state
+            properties:
+              appliesToWorkloads:
+                description: AppliesToWorkloads defines which workloads this trait applies to
+                items:
+                  type: string
+                type: array
+              conflictsWith:
+                description: ConflictsWith defines traits that conflict with this one
+                items:
+                  type: string
+                type: array
+              controlPlaneOnly:
+                description: ControlPlaneOnly defines if the trait is only for control plane
+                type: boolean
+              definitionRef:
+                description: DefinitionRef refers to the CustomResourceDefinition that defines this trait
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  version:
+                    type: string
+                type: object
+              extension:
+                description: Extension defines the extension mechanism for the trait
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              manageWorkload:
+                description: ManageWorkload defines if the trait will manage the workload
+                type: boolean
+              podDisruptive:
+                description: PodDisruptive defines if the trait will restart pods
+                type: boolean
+              revisionEnabled:
+                description: RevisionEnabled defines if the trait supports revisions
+                type: boolean
+              schematic:
+                description: Schematic defines the data model of the trait
+                properties:
+                  cue:
+                    description: CUE defines the CUE template
+                    properties:
+                      template:
+                        description: Template is the CUE template string
+                        type: string
+                    required:
+                    - template
+                    type: object
+                  helm:
+                    description: Helm defines the Helm chart template
+                    properties:
+                      release:
+                        properties:
+                          chart:
+                            properties:
+                              spec:
+                                properties:
+                                  chart:
+                                    type: string
+                                  interval:
+                                    default: 5m
+                                    type: string
+                                  reconcileStrategy:
+                                    default: ChartVersion
+                                    enum:
+                                    - ChartVersion
+                                    - Revision
+                                    type: string
+                                  sourceRef:
+                                    properties:
+                                      apiVersion:
+                                        type: string
+                                      kind:
+                                        enum:
+                                        - HelmRepository
+                                        - GitRepository
+                                        - Bucket
+                                        type: string
+                                      name:
+                                        maxLength: 253
+                                        minLength: 1
+                                        type: string
+                                      namespace:
+                                        maxLength: 63
+                                        minLength: 1
+                                        type: string
+                                    required:
+                                    - name
+                                    type: object
+                                  valuesFiles:
+                                    items:
+                                      type: string
+                                    type: array
+                                  version:
+                                    default: '*'
+                                    type: string
+                                required:
+                                - chart
+                                - sourceRef
+                                type: object
+                            required:
+                            - spec
+                            type: object
+                          install:
+                            properties:
+                              crds:
+                                enum:
+                                - Skip
+                                - Create
+                                - CreateReplace
+                                type: string
+                              createNamespace:
+                                type: boolean
+                              disableHooks:
+                                type: boolean
+                              disableOpenAPIValidation:
+                                type: boolean
+                              disableWait:
+                                type: boolean
+                              disableWaitForJobs:
+                                type: boolean
+                              keepHistory:
+                                type: boolean
+                              remediation:
+                                properties:
+                                  ignoreTestFailures:
+                                    type: boolean
+                                  remediateLastFailure:
+                                    type: boolean
+                                  retries:
+                                    type: integer
+                                type: object
+                              replace:
+                                type: boolean
+                              skipCRDs:
+                                type: boolean
+                              timeout:
+                                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                                type: string
+                            type: object
+                          interval:
+                            pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                            type: string
+                          kubeConfig:
+                            properties:
+                              secretRef:
+                                properties:
+                                  key:
+                                    type: string
+                                  name:
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                            required:
+                            - secretRef
+                            type: object
+                          releaseName:
+                            maxLength: 53
+                            minLength: 1
+                            type: string
+                          rollback:
+                            properties:
+                              cleanupOnFail:
+                                type: boolean
+                              disableHooks:
+                                type: boolean
+                              disableWait:
+                                type: boolean
+                              disableWaitForJobs:
+                                type: boolean
+                              force:
+                                type: boolean
+                              recreate:
+                                type: boolean
+                              timeout:
+                                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                                type: string
+                            type: object
+                          storageNamespace:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          suspend:
+                            type: boolean
+                          targetNamespace:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          test:
+                            properties:
+                              enable:
+                                type: boolean
+                              ignoreFailures:
+                                type: boolean
+                              timeout:
+                                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                                type: string
+                            type: object
+                          uninstall:
+                            properties:
+                              deletionPropagation:
+                                default: background
+                                enum:
+                                - background
+                                - foreground
+                                - orphan
+                                type: string
+                              disableHooks:
+                                type: boolean
+                              disableWait:
+                                type: boolean
+                              keepHistory:
+                                type: boolean
+                              timeout:
+                                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                                type: string
+                            type: object
+                          upgrade:
+                            properties:
+                              cleanupOnFail:
+                                type: boolean
+                              crds:
+                                enum:
+                                - Skip
+                                - Create
+                                - CreateReplace
+                                type: string
+                              disableHooks:
+                                type: boolean
+                              disableOpenAPIValidation:
+                                type: boolean
+                              disableWait:
+                                type: boolean
+                              disableWaitForJobs:
+                                type: boolean
+                              force:
+                                type: boolean
+                              preserveValues:
+                                type: boolean
+                              remediation:
+                                properties:
+                                  ignoreTestFailures:
+                                    type: boolean
+                                  remediateLastFailure:
+                                    type: boolean
+                                  retries:
+                                    type: integer
+                                  strategy:
+                                    enum:
+                                    - rollback
+                                    - uninstall
+                                    type: string
+                                type: object
+                              timeout:
+                                pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                                type: string
+                            type: object
+                          values:
+                            x-kubernetes-preserve-unknown-fields: true
+                          valuesFrom:
+                            items:
+                              properties:
+                                kind:
+                                  enum:
+                                  - Secret
+                                  - ConfigMap
+                                  type: string
+                                name:
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                optional:
+                                  type: boolean
+                                targetPath:
+                                  type: string
+                                valuesKey:
+                                  type: string
+                              required:
+                              - kind
+                              - name
+                              type: object
+                            type: array
+                        required:
+                        - chart
+                        type: object
+                      repository:
+                        properties:
+                          pullInterval:
+                            default: 600s
+                            pattern: ^([0-9]+(\.[0-9]+)?(ms|s|m|h))+$
+                            type: string
+                          secretRef:
+                            type: string
+                          url:
+                            type: string
+                        type: object
+                    required:
+                    - release
+                    type: object
+                  kube:
+                    description: Kube defines the Kubernetes resource template
+                    properties:
+                      parameters:
+                        items:
+                          description: KubeParameter defines a parameter mapping
+                          properties:
+                            description:
+                              type: string
+                            fieldPaths:
+                              items:
+                                type: string
+                              type: array
+                            name:
+                              type: string
+                            required:
+                              type: boolean
+                            type:
+                              enum:
+                              - string
+                              - number
+                              - boolean
+                              - object
+                              type: string
+                            valueFrom:
+                              properties:
+                                fieldPath:
+                                  type: string
+                              required:
+                              - fieldPath
+                              type: object
+                          required:
+                          - name
+                          type: object
+                        type: array
+                      template:
+                        type: string
+                    required:
+                    - template
+                    type: object
+                  terraform:
+                    description: Terraform defines the Terraform configuration
+                    properties:
+                      configuration:
+                        type: string
+                      customRegion:
+                        type: string
+                      deleteResource:
+                        type: boolean
+                      gitCredentialsSecretReference:
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        type: object
+                      jobEnv:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      path:
+                        type: string
+                      providerRef:
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            default: default
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type:
+                        default: hcl
+                        enum:
+                        - hcl
+                        - json
+                        - remote
+                        type: string
+                      writeConnectionSecretToRef:
+                        properties:
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                        required:
+                        - name
+                        type: object
+                    required:
+                    - configuration
+                    type: object
+                type: object
+              stage:
+                description: Stage defines the stage of the trait
+                type: string
+              workloadRefPath:
+                description: WorkloadRefPath defines the path to the workload reference in the trait
+                type: string
+            required:
+            - schematic
+            type: object
+          status:
+            description: TraitDefinitionStatus defines the observed state
+            properties:
+              conditions:
+                description: Conditions represents the latest state transitions
+                items:
+                  description: Condition contains condition information
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              configMapRef:
+                description: ConfigMapRef references the ConfigMap that contains the CUE template
+                type: string
+              latestRevision:
+                description: LatestRevision records the latest revision
+                properties:
+                  name:
+                    type: string
+                  revision:
+                    format: int64
+                    type: integer
+                  revisionHash:
+                    type: string
+                required:
+                - name
+                - revision
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

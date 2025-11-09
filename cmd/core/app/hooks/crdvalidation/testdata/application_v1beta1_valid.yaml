@@ -1,0 +1,485 @@
+# Valid Application CRD with v1beta1 version and all required fields
+# This CRD is used to test successful validation scenarios
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: applications.core.oam.dev
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: Application
+    listKind: ApplicationList
+    plural: applications
+    shortNames:
+    - app
+    singular: application
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.components[*].type
+      name: COMPONENT
+      type: string
+    - jsonPath: .status.status
+      name: STATUS
+      type: string
+    - jsonPath: .status.workflow.status
+      name: WORKFLOW
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: Application is the main CRD for KubeVela core
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation of an object'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this object represents'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ApplicationSpec represents the specification of an Application
+            properties:
+              components:
+                description: Components declares the components that this application contains
+                items:
+                  description: ApplicationComponent describes a component in an Application
+                  properties:
+                    name:
+                      description: Name is the unique name of a component
+                      type: string
+                    type:
+                      description: Type specifies the workload type for this component
+                      type: string
+                    properties:
+                      description: Properties holds the configuration data for the component
+                      x-kubernetes-preserve-unknown-fields: true
+                    traits:
+                      description: Traits define the traits to apply to this component
+                      items:
+                        description: ApplicationTrait represents a trait to attach to a component
+                        properties:
+                          type:
+                            description: Type is the trait type
+                            type: string
+                          properties:
+                            description: Properties holds trait configuration
+                            x-kubernetes-preserve-unknown-fields: true
+                        required:
+                        - type
+                        type: object
+                      type: array
+                    scopes:
+                      additionalProperties:
+                        type: string
+                      description: Scopes represents the component-level scopes
+                      type: object
+                    dependsOn:
+                      description: DependsOn defines dependency components
+                      items:
+                        type: string
+                      type: array
+                    inputs:
+                      description: StepInputs defines input parameters for the component
+                      items:
+                        description: InputItem defines an input parameter
+                        properties:
+                          from:
+                            type: string
+                          parameterKey:
+                            type: string
+                        type: object
+                      type: array
+                    outputs:
+                      description: StepOutputs defines output parameters from the component
+                      items:
+                        description: OutputItem defines an output parameter
+                        properties:
+                          name:
+                            type: string
+                          valueFrom:
+                            type: string
+                        type: object
+                      type: array
+                    externalRevision:
+                      description: ExternalRevision specifies the component revision from external source
+                      type: string
+                  required:
+                  - name
+                  - type
+                  type: object
+                type: array
+              workflow:
+                description: Workflow defines the workflow of the application
+                properties:
+                  mode:
+                    description: 'Mode controls the workflow execution mode. Available values: DAG, StepByStep'
+                    enum:
+                    - DAG
+                    - StepByStep
+                    -
+                    type: string
+                  subMode:
+                    description: SubMode controls workflow sub execution mode
+                    type: string
+                  steps:
+                    description: Steps defines workflow steps
+                    items:
+                      description: WorkflowStep defines a workflow step
+                      properties:
+                        name:
+                          description: Name is the unique step name
+                          type: string
+                        type:
+                          description: Type is the workflow step type
+                          type: string
+                        properties:
+                          description: Properties holds step configuration
+                          x-kubernetes-preserve-unknown-fields: true
+                        dependsOn:
+                          description: DependsOn defines dependency steps
+                          items:
+                            type: string
+                          type: array
+                        inputs:
+                          items:
+                            description: InputItem defines an input parameter
+                            properties:
+                              from:
+                                type: string
+                              parameterKey:
+                                type: string
+                            type: object
+                          type: array
+                        outputs:
+                          items:
+                            description: OutputItem defines an output parameter
+                            properties:
+                              name:
+                                type: string
+                              valueFrom:
+                                type: string
+                            type: object
+                          type: array
+                        if:
+                          description: If defines conditional expression for the step
+                          type: string
+                        timeout:
+                          description: Timeout defines timeout duration for the step
+                          type: string
+                        meta:
+                          additionalProperties:
+                            type: string
+                          description: Meta stores step metadata
+                          type: object
+                        subSteps:
+                          items:
+                            description: WorkflowSubStep defines a workflow sub-step
+                            properties:
+                              name:
+                                type: string
+                              type:
+                                type: string
+                              properties:
+                                x-kubernetes-preserve-unknown-fields: true
+                              dependsOn:
+                                items:
+                                  type: string
+                                type: array
+                              inputs:
+                                items:
+                                  description: InputItem defines an input parameter
+                                  properties:
+                                    from:
+                                      type: string
+                                    parameterKey:
+                                      type: string
+                                  type: object
+                                type: array
+                              outputs:
+                                items:
+                                  description: OutputItem defines an output parameter
+                                  properties:
+                                    name:
+                                      type: string
+                                    valueFrom:
+                                      type: string
+                                  type: object
+                                type: array
+                              if:
+                                type: string
+                              timeout:
+                                type: string
+                              meta:
+                                additionalProperties:
+                                  type: string
+                                type: object
+                            required:
+                            - name
+                            - type
+                            type: object
+                          type: array
+                      required:
+                      - name
+                      - type
+                      type: object
+                    type: array
+                  ref:
+                    description: Reference to external workflow template
+                    type: string
+                type: object
+              policies:
+                description: Policies defines the policies of the application
+                items:
+                  description: AppPolicy defines an application-level policy
+                  properties:
+                    name:
+                      description: Name is the unique name of a policy
+                      type: string
+                    type:
+                      description: Type is the policy type
+                      type: string
+                    properties:
+                      description: Properties holds policy configuration
+                      x-kubernetes-preserve-unknown-fields: true
+                  required:
+                  - name
+                  - type
+                  type: object
+                type: array
+            required:
+            - components
+            type: object
+          status:
+            description: ApplicationStatus represents the observed state of an Application
+            properties:
+              conditions:
+                description: Conditions represents the latest state transitions
+                items:
+                  description: Condition contains condition information
+                  properties:
+                    lastTransitionTime:
+                      description: LastTransitionTime is the last time the condition transitioned
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      description: LastUpdateTime is the last time the condition was updated
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message is a human-readable message about the condition
+                      type: string
+                    reason:
+                      description: Reason is a programmatic reason for the condition
+                      type: string
+                    status:
+                      description: Status is the status of the condition
+                      type: string
+                    type:
+                      description: Type is the type of the condition
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              latestRevision:
+                description: LatestRevision stores latest revision info
+                properties:
+                  name:
+                    description: Name is the revision name
+                    type: string
+                  revision:
+                    description: Revision is the revision number
+                    format: int64
+                    type: integer
+                  revisionHash:
+                    description: RevisionHash is the hash of the revision
+                    type: string
+                required:
+                - revision
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the most recent generation observed
+                format: int64
+                type: integer
+              phase:
+                description: Phase represents the current phase of the application
+                type: string
+              services:
+                description: Services stores component status
+                items:
+                  description: ApplicationComponentStatus represents status of a component
+                  properties:
+                    env:
+                      type: string
+                    healthy:
+                      type: boolean
+                    message:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    scopes:
+                      items:
+                        description: WorkloadScope represents scope reference of a workload
+                        properties:
+                          apiVersion:
+                            type: string
+                          kind:
+                            type: string
+                          name:
+                            type: string
+                          namespace:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - apiVersion
+                        - kind
+                        - name
+                        type: object
+                      type: array
+                    traits:
+                      items:
+                        description: ApplicationTraitStatus represents status of a trait
+                        properties:
+                          healthy:
+                            type: boolean
+                          message:
+                            type: string
+                          type:
+                            type: string
+                        type: object
+                      type: array
+                    workloadDefinition:
+                      description: WorkloadDefinition is the definition of a workload
+                      properties:
+                        apiVersion:
+                          type: string
+                        kind:
+                          type: string
+                        name:
+                          type: string
+                        namespace:
+                          type: string
+                      required:
+                      - apiVersion
+                      - kind
+                      type: object
+                  required:
+                  - name
+                  type: object
+                type: array
+              status:
+                description: Status is a keyword to describe how is the current health of the app
+                type: string
+              workflow:
+                description: Workflow represents workflow status
+                properties:
+                  appRevision:
+                    type: string
+                  contextBackend:
+                    description: ContextBackend stores context backend information
+                    properties:
+                      apiVersion:
+                        type: string
+                      kind:
+                        type: string
+                      name:
+                        type: string
+                      namespace:
+                        type: string
+                      uid:
+                        type: string
+                    type: object
+                  endTime:
+                    format: date-time
+                    type: string
+                  finished:
+                    type: boolean
+                  message:
+                    type: string
+                  mode:
+                    type: string
+                  startTime:
+                    format: date-time
+                    type: string
+                  status:
+                    type: string
+                  steps:
+                    items:
+                      description: WorkflowStepStatus represents status of a workflow step
+                      properties:
+                        firstExecuteTime:
+                          format: date-time
+                          type: string
+                        id:
+                          type: string
+                        lastExecuteTime:
+                          format: date-time
+                          type: string
+                        message:
+                          type: string
+                        name:
+                          type: string
+                        phase:
+                          type: string
+                        reason:
+                          type: string
+                        subSteps:
+                          items:
+                            description: WorkflowSubStepStatus represents status of a workflow sub-step
+                            properties:
+                              firstExecuteTime:
+                                format: date-time
+                                type: string
+                              id:
+                                type: string
+                              lastExecuteTime:
+                                format: date-time
+                                type: string
+                              message:
+                                type: string
+                              name:
+                                type: string
+                              phase:
+                                type: string
+                              reason:
+                                type: string
+                              type:
+                                type: string
+                            required:
+                            - id
+                            - name
+                            type: object
+                          type: array
+                        type:
+                          type: string
+                      required:
+                      - id
+                      - name
+                      type: object
+                    type: array
+                  suspend:
+                    type: boolean
+                  suspendState:
+                    type: string
+                  terminated:
+                    type: boolean
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

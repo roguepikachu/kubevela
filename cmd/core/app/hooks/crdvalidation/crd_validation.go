@@ -31,24 +31,49 @@ import (
 // Hook validates that CRDs installed in the cluster are compatible with
 // enabled feature gates. This prevents silent data corruption by failing
 // fast at startup if CRDs are out of date.
+//
+// The hook performs comprehensive validation including:
+// - CRD existence checks
+// - Schema field validation
+// - Version compatibility checks
+// - Round-trip tests to ensure data integrity
+//
+// This validation is critical because running the controller with incompatible
+// CRDs can lead to:
+// - Data loss when fields are not properly stored
+// - Runtime panics when expected fields are missing
+// - Incorrect behavior when CRD schemas don't match controller expectations
 type Hook struct {
 	client.Client
 }
 
 // NewHook creates a new CRD validation hook
+// Uses the singleton KubeClient for all Kubernetes API operations to ensure
+// consistent client configuration across the application
 func NewHook() hooks.PreStartHook {
 	klog.V(3).InfoS("Initializing CRD validation hook", "client", "singleton")
 	return &Hook{Client: singleton.KubeClient.Get()}
 }
 
 // Name returns the hook name for logging
+// This name appears in all log messages and error reports to help identify
+// which pre-start hook is executing or has failed
 func (h *Hook) Name() string {
 	return "CRDValidation"
 }
 
 // Run executes the CRD validation logic. It orchestrates multiple validation checks:
 // 1. Compression CRD validation (ApplicationRevision, ResourceTracker)
+//    - Only runs if compression feature gates are enabled
+//    - Validates CRDs support compression fields
+//    - Tests round-trip data integrity with compression
 // 2. Core CRD validation (Application, TraitDefinition, PolicyDefinition, WorkflowStepDefinition)
+//    - Always runs as these CRDs are required for basic functionality
+//    - Validates all required fields exist in schemas
+//    - Tests round-trip data integrity for each CRD type
+//
+// The validation runs all checks and collects errors before failing, allowing
+// operators to see all issues at once rather than fixing them one at a time.
 func (h *Hook) Run(ctx context.Context) error {
 	klog.InfoS("Starting CRD validation hook")
 	startTime := time.Now()

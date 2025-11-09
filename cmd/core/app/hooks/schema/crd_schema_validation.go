@@ -265,7 +265,8 @@ func (v *SchemaValidator) validateSchema(crd *apiextensionsv1.CustomResourceDefi
 		}
 	}
 
-	// Check printer columns
+	// Check printer columns (informational only - logs but doesn't fail validation)
+	// Printer columns improve CLI user experience but are not required for functionality
 	if check.CheckPrinterColumns {
 		hasAgeColumn := false
 		for _, version := range crd.Spec.Versions {
@@ -278,15 +279,16 @@ func (v *SchemaValidator) validateSchema(crd *apiextensionsv1.CustomResourceDefi
 			}
 		}
 		if !hasAgeColumn {
-			klog.V(3).InfoS("CRD missing AGE printer column", "crd", check.Name)
+			klog.V(3).InfoS("CRD missing AGE printer column (informational)", "crd", check.Name)
 		}
 	}
 
-	// Check subresources
+	// Check subresources (informational only - logs but doesn't fail validation)
+	// Status subresources enable kubectl scale and improve status management but are optional
 	if check.CheckSubresources {
 		for _, version := range crd.Spec.Versions {
 			if version.Subresources == nil || version.Subresources.Status == nil {
-				klog.V(2).InfoS("CRD version missing status subresource",
+				klog.V(2).InfoS("CRD version missing status subresource (informational)",
 					"crd", check.Name,
 					"version", version.Name)
 			}
