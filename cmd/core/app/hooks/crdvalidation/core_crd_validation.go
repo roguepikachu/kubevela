@@ -37,12 +37,12 @@ import (
 // CoreCRDInfo contains information about a core CRD to validate
 // Each core CRD has specific requirements that must be met for the controller to function properly
 type CoreCRDInfo struct {
-	Name           string                                                   // Full CRD name (e.g., "applications.core.oam.dev")
-	Group          string                                                   // API group (e.g., "core.oam.dev")
-	Version        string                                                   // Required version (e.g., "v1beta1")
-	Namespaced     bool                                                     // Whether the CRD is namespace-scoped or cluster-scoped
-	RequiredFields []string                                                 // Schema fields that must exist (e.g., "spec.components")
-	CreateTestFunc func(name, namespace string) (client.Object, error)    // Function to create test resources for round-trip validation
+	Name           string                                              // Full CRD name (e.g., "applications.core.oam.dev")
+	Group          string                                              // API group (e.g., "core.oam.dev")
+	Version        string                                              // Required version (e.g., "v1beta1")
+	Namespaced     bool                                                // Whether the CRD is namespace-scoped or cluster-scoped
+	RequiredFields []string                                            // Schema fields that must exist (e.g., "spec.components")
+	CreateTestFunc func(name, namespace string) (client.Object, error) // Function to create test resources for round-trip validation
 }
 
 // ValidateCoreCRDs validates that core CRDs (Application, TraitDefinition, PolicyDefinition, WorkflowStepDefinition)

@@ -20,9 +20,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/kubevela/pkg/util/compression"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/kubevela/pkg/util/compression"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -323,7 +323,7 @@ var _ = Describe("Compression CRD Validation", func() {
 				Build()
 
 			mockClient := &resourceCreationTrackingClient{
-				Client:          fakeClient,
+				Client:           fakeClient,
 				createdResources: &createdResources,
 			}
 
@@ -356,9 +356,9 @@ var _ = Describe("Compression CRD Validation", func() {
 
 			// Simulate ApplicationRevision success but ResourceTracker failure
 			mockClient := &selectiveFailureClient{
-				Client:                   fakeClient,
-				failResourceTracker:      true,
-				failApplicationRevision:  false,
+				Client:                  fakeClient,
+				failResourceTracker:     true,
+				failApplicationRevision: false,
 			}
 
 			hook = &crdvalidation.Hook{
@@ -384,9 +384,9 @@ var _ = Describe("Compression CRD Validation", func() {
 
 			// Simulate both failures
 			mockClient := &selectiveFailureClient{
-				Client:                   fakeClient,
-				failResourceTracker:      true,
-				failApplicationRevision:  true,
+				Client:                  fakeClient,
+				failResourceTracker:     true,
+				failApplicationRevision: true,
 			}
 
 			hook = &crdvalidation.Hook{
@@ -502,7 +502,7 @@ func createTestResourceTracker(name string, compressionType compression.Type) *v
 // Mock client that simulates successful round-trip with compression support
 // This mock wraps a real fake client and only overrides specific methods
 type roundTripSimulatorClient struct {
-	client.Client // Embed the full client interface
+	client.Client       // Embed the full client interface
 	simulateCompression bool
 }
 

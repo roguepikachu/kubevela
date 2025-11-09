@@ -220,8 +220,9 @@ func (h *Hook) validateApplicationRevisionCRD(ctx context.Context, zstdEnabled, 
 // 2. Sets the compression type based on enabled features (Zstd takes priority)
 // 3. Stores the ResourceTracker in the cluster (cluster-scoped resource)
 // 4. Retrieves it back and validates:
-//    - The ManagedResources array is preserved (not empty)
-//    - The resource name in ManagedResource matches the original
+//   - The ManagedResources array is preserved (not empty)
+//   - The resource name in ManagedResource matches the original
+//
 // 5. Cleans up test resources using label selectors
 //
 // Validation failure indicates the CRD lacks compression support, which would cause:

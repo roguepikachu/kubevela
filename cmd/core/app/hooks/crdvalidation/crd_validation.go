@@ -64,13 +64,14 @@ func (h *Hook) Name() string {
 
 // Run executes the CRD validation logic. It orchestrates multiple validation checks:
 // 1. Compression CRD validation (ApplicationRevision, ResourceTracker)
-//    - Only runs if compression feature gates are enabled
-//    - Validates CRDs support compression fields
-//    - Tests round-trip data integrity with compression
+//   - Only runs if compression feature gates are enabled
+//   - Validates CRDs support compression fields
+//   - Tests round-trip data integrity with compression
+//
 // 2. Core CRD validation (Application, TraitDefinition, PolicyDefinition, WorkflowStepDefinition)
-//    - Always runs as these CRDs are required for basic functionality
-//    - Validates all required fields exist in schemas
-//    - Tests round-trip data integrity for each CRD type
+//   - Always runs as these CRDs are required for basic functionality
+//   - Validates all required fields exist in schemas
+//   - Tests round-trip data integrity for each CRD type
 //
 // The validation runs all checks and collects errors before failing, allowing
 // operators to see all issues at once rather than fixing them one at a time.

@@ -676,7 +676,7 @@ func createCRDWithMissingField(name, missingField string) client.Object {
 	// Create base properties without the missing field
 	properties := map[string]apiextensionsv1.JSONSchemaProps{
 		"spec": {
-			Type: "object",
+			Type:       "object",
 			Properties: map[string]apiextensionsv1.JSONSchemaProps{
 				// Add fields based on CRD type but skip the missing field
 			},

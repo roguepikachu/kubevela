@@ -49,12 +49,12 @@ func (v *SchemaValidator) Name() string {
 
 // CRDSchemaCheck defines schema validation requirements for a CRD
 type CRDSchemaCheck struct {
-	Name                      string
+	Name                       string
 	CheckPreserveUnknownFields bool
-	RequireOpenAPISchema      bool
-	CheckPrinterColumns       bool
-	CheckSubresources         bool
-	WarnOnly                  bool
+	RequireOpenAPISchema       bool
+	CheckPrinterColumns        bool
+	CheckSubresources          bool
+	WarnOnly                   bool
 }
 
 // Run executes the CRD schema validation
@@ -65,59 +65,59 @@ func (v *SchemaValidator) Run(ctx context.Context) error {
 	// Define CRDs to validate
 	crdChecks := []CRDSchemaCheck{
 		{
-			Name:                      "applications.core.oam.dev",
-			RequireOpenAPISchema:      true,
-			CheckPrinterColumns:       true,
-			CheckSubresources:         true,
+			Name:                       "applications.core.oam.dev",
+			RequireOpenAPISchema:       true,
+			CheckPrinterColumns:        true,
+			CheckSubresources:          true,
 			CheckPreserveUnknownFields: true,
 		},
 		{
-			Name:                      "applicationrevisions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "applicationrevisions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
-			Name:                      "resourcetrackers.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "resourcetrackers.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         false, // ResourceTracker doesn't need status subresource
+			CheckSubresources:          false, // ResourceTracker doesn't need status subresource
 		},
 		{
-			Name:                      "definitionrevisions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "definitionrevisions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
-			Name:                      "componentdefinitions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "componentdefinitions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
-			Name:                      "traitdefinitions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "traitdefinitions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
-			Name:                      "policydefinitions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "policydefinitions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
-			Name:                      "workflowstepdefinitions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "workflowstepdefinitions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
-			Name:                      "workloaddefinitions.core.oam.dev",
-			RequireOpenAPISchema:      true,
+			Name:                       "workloaddefinitions.core.oam.dev",
+			RequireOpenAPISchema:       true,
 			CheckPreserveUnknownFields: true,
-			CheckSubresources:         true,
+			CheckSubresources:          true,
 		},
 		{
 			Name:                 "workflows.core.oam.dev",

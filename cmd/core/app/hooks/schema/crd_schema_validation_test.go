@@ -115,8 +115,8 @@ var _ = Describe("CRD schema validation hook", func() {
 					Group: "core.oam.dev",
 					Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
 						{
-							Name:   "v1beta1",
-							Served: true,
+							Name:    "v1beta1",
+							Served:  true,
 							Storage: true,
 							// Missing Schema field
 						},
