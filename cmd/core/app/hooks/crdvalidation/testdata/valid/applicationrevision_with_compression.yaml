@@ -1,0 +1,198 @@
+# ApplicationRevision CRD with compression support
+# This CRD is used to test compression validation scenarios
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: applicationrevisions.core.oam.dev
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: ApplicationRevision
+    listKind: ApplicationRevisionList
+    plural: applicationrevisions
+    shortNames:
+    - apprev
+    singular: applicationrevision
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.application.spec.components[*].type
+      name: COMPONENT
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: ApplicationRevision is a snapshot of an Application
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ApplicationRevisionSpec represents the spec of ApplicationRevision
+            properties:
+              application:
+                description: Application is the snapshot of the application
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  metadata:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  spec:
+                    description: ApplicationSpec embedded
+                    properties:
+                      components:
+                        description: Components declares the components
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        type: array
+                      workflow:
+                        description: Workflow defines the workflow
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      policies:
+                        description: Policies defines the policies
+                        items:
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        type: array
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  status:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                required:
+                - spec
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              applicationRevisionNum:
+                description: ApplicationRevisionNum is the revision number
+                format: int64
+                type: integer
+              componentDefinitions:
+                additionalProperties:
+                  description: ComponentDefinition snapshot
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: ComponentDefinitions records the snapshot of componentdefinitions
+                type: object
+              compression:
+                description: Compression configuration for the revision
+                properties:
+                  type:
+                    description: 'Type of compression: none, gzip, zstd'
+                    enum:
+                    - none
+                    - gzip
+                    - zstd
+                    type: string
+                type: object
+              policyDefinitions:
+                additionalProperties:
+                  description: PolicyDefinition snapshot
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: PolicyDefinitions records the snapshot of policydefinitions
+                type: object
+              referredObjects:
+                description: ReferredObjects records the referred objects
+                items:
+                  description: ReferredObject represents a referred object
+                  properties:
+                    apiVersion:
+                      type: string
+                    kind:
+                      type: string
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    uid:
+                      type: string
+                  type: object
+                type: array
+              resourceTracker:
+                description: ResourceTracker records the reference of resourcetracker
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+                  uid:
+                    type: string
+                type: object
+              traitDefinitions:
+                additionalProperties:
+                  description: TraitDefinition snapshot
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: TraitDefinitions records the snapshot of traitdefinitions
+                type: object
+              workflow:
+                description: Workflow records the external workflow template
+                type: object
+                x-kubernetes-preserve-unknown-fields: true
+              workflowStepDefinitions:
+                additionalProperties:
+                  description: WorkflowStepDefinition snapshot
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: WorkflowStepDefinitions records the snapshot of workflowstepdefinitions
+                type: object
+            required:
+            - application
+            type: object
+          status:
+            description: ApplicationRevisionStatus represents the observed state
+            properties:
+              conditions:
+                items:
+                  description: Condition contains condition information
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    lastUpdateTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - status
+                  - type
+                  type: object
+                type: array
+              succeeded:
+                description: Succeeded indicates if the revision was successful
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
