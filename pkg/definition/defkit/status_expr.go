@@ -783,7 +783,7 @@ func (r *resourceTypeSwitchStatusExpr) BuildFull() string {
 		func(c resourceStatusCase) string {
 			preamble := c.expr.Preamble()
 			if preamble != "" {
-				return preamble + "\n\tmessage: " + c.expr.ToCUE()
+				return preamble + "\nmessage: " + c.expr.ToCUE()
 			}
 			return "message: " + c.expr.ToCUE()
 		},

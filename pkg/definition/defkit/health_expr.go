@@ -377,7 +377,7 @@ func (r *resourceTypeSwitchHealthExpr) BuildFull() string {
 		func(c resourceHealthCase) string {
 			preamble := c.expr.Preamble()
 			if preamble != "" {
-				return preamble + "\n\tisHealth: " + c.expr.ToCUE()
+				return preamble + "\nisHealth: " + c.expr.ToCUE()
 			}
 			return "isHealth: " + c.expr.ToCUE()
 		},
