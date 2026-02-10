@@ -801,6 +801,7 @@ type StructField struct {
 	nested       *StructParam // for nested structs
 	schemaRef    string       // reference to a helper definition (e.g., "HealthProbe")
 	enumValues   []string     // allowed enum values for string fields
+	schema       string       // raw CUE schema (e.g., "[string]: string")
 }
 
 // Field creates a new struct field definition.
@@ -863,6 +864,16 @@ func (f *StructField) GetDescription() string { return f.description }
 // GetNested returns the nested struct definition, if any.
 func (f *StructField) GetNested() *StructParam { return f.nested }
 
+// WithSchema sets a raw CUE schema for this field.
+// This allows specifying complex CUE types like "[string]: string".
+func (f *StructField) WithSchema(schema string) *StructField {
+	f.schema = schema
+	return f
+}
+
+// GetSchema returns the raw CUE schema for this field.
+func (f *StructField) GetSchema() string { return f.schema }
+
 // WithSchemaRef sets a reference to a helper type definition (e.g., "#RuleSelector").
 // This is used when the field type is defined elsewhere as a helper definition.
 func (f *StructField) WithSchemaRef(ref string) *StructField {
@@ -888,6 +899,7 @@ type StructParam struct {
 	baseParam
 	fields    []*StructField
 	schemaRef string // reference to a helper definition (e.g., "HealthProbe")
+	isOpen    bool   // when true, generates open struct with ... (allows extra fields)
 }
 
 // Struct creates a new struct parameter with the given name.
@@ -906,6 +918,16 @@ func (p *StructParam) Fields(fields ...*StructField) *StructParam {
 	p.fields = append(p.fields, fields...)
 	return p
 }
+
+// Open marks this struct as open (allows extra fields beyond those defined).
+// This generates CUE with `...` at the end of the struct body.
+func (p *StructParam) Open() *StructParam {
+	p.isOpen = true
+	return p
+}
+
+// IsOpen returns true if this struct allows extra fields.
+func (p *StructParam) IsOpen() bool { return p.isOpen }
 
 // Required marks the parameter as required.
 func (p *StructParam) Required() *StructParam {

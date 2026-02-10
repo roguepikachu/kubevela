@@ -255,7 +255,19 @@ func (g *CUEGenerator) GenerateFullDefinition(c *ComponentDefinition) string {
 	sb.WriteString(fmt.Sprintf("%s: {\n", name))
 	sb.WriteString(fmt.Sprintf("%stype: \"component\"\n", g.indent))
 	sb.WriteString(fmt.Sprintf("%sannotations: {}\n", g.indent))
-	sb.WriteString(fmt.Sprintf("%slabels: {}\n", g.indent))
+
+	// Write labels - use dynamic labels if set, otherwise empty
+	labels := c.GetLabels()
+	if len(labels) > 0 {
+		sb.WriteString(fmt.Sprintf("%slabels: {\n", g.indent))
+		for k, v := range labels {
+			sb.WriteString(fmt.Sprintf("%s%s%q: %q\n", g.indent, g.indent, k, v))
+		}
+		sb.WriteString(fmt.Sprintf("%s}\n", g.indent))
+	} else {
+		sb.WriteString(fmt.Sprintf("%slabels: {}\n", g.indent))
+	}
+
 	sb.WriteString(fmt.Sprintf("%sdescription: %q\n", g.indent, c.GetDescription()))
 
 	// Write attributes
@@ -312,7 +324,9 @@ func (g *CUEGenerator) GenerateTemplate(c *ComponentDefinition) string {
 	}
 
 	// Generate output block
-	if output := tpl.GetOutput(); output != nil {
+	if tpl.HasOutputPassthrough() {
+		g.writeArrayPassthroughOutput(&sb, tpl.GetOutputPassthrough(), 1)
+	} else if output := tpl.GetOutput(); output != nil {
 		g.writeResourceOutput(&sb, "output", output, nil, 1)
 	}
 
@@ -323,7 +337,9 @@ func (g *CUEGenerator) GenerateTemplate(c *ComponentDefinition) string {
 	}
 
 	// Generate outputs block for auxiliary resources
-	if outputs := tpl.GetOutputs(); len(outputs) > 0 {
+	if tpl.HasOutputsForEach() {
+		g.writeArrayForEachOutputs(&sb, tpl.GetOutputsForEach(), 1)
+	} else if outputs := tpl.GetOutputs(); len(outputs) > 0 {
 		sb.WriteString(fmt.Sprintf("%soutputs: {\n", g.indent))
 		for name, res := range outputs {
 			g.writeResourceOutput(&sb, name, res, res.outputCondition, 2)
@@ -383,6 +399,10 @@ func (g *CUEGenerator) writeHelperDefFromParam(sb *strings.Builder, param Param,
 			sb.WriteString("{\n")
 			for _, field := range fields {
 				g.writeStructFieldForHelper(sb, field, depth+1)
+			}
+			// Add ... for open structs (allows extra fields)
+			if p.IsOpen() {
+				sb.WriteString(fmt.Sprintf("%s...\n", strings.Repeat(g.indent, depth+1)))
 			}
 			sb.WriteString(fmt.Sprintf("%s}\n", strings.Repeat(g.indent, depth)))
 		} else {
@@ -461,6 +481,12 @@ func (g *CUEGenerator) writeStructFieldForHelper(sb *strings.Builder, f *StructF
 			g.writeStructFieldForHelper(sb, nestedField, depth+1)
 		}
 		sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		return
+	}
+
+	// Check for raw CUE schema (e.g., "[string]: string")
+	if schema := f.GetSchema(); schema != "" {
+		sb.WriteString(fmt.Sprintf("%s%s%s: %s\n", indent, name, optional, schema))
 		return
 	}
 
@@ -819,6 +845,57 @@ func (g *CUEGenerator) fieldConditionToCUE(cond Condition) string {
 	default:
 		return g.conditionToCUE(cond)
 	}
+}
+
+// writeArrayPassthroughOutput writes an output block that passes through an array element.
+// This generates:
+//
+//	output: {
+//	    if len(parameter.objects) > 0 {
+//	        parameter.objects[0]
+//	    }
+//	    ...
+//	}
+func (g *CUEGenerator) writeArrayPassthroughOutput(sb *strings.Builder, pt *ArrayPassthroughOutput, depth int) {
+	indent := strings.Repeat(g.indent, depth)
+	innerIndent := strings.Repeat(g.indent, depth+1)
+	deepIndent := strings.Repeat(g.indent, depth+2)
+
+	paramRef := "parameter." + pt.param.Name()
+
+	sb.WriteString(fmt.Sprintf("%soutput: {\n", indent))
+	sb.WriteString(fmt.Sprintf("%sif len(%s) > 0 {\n", innerIndent, paramRef))
+	sb.WriteString(fmt.Sprintf("%s%s[%d]\n", deepIndent, paramRef, pt.index))
+	sb.WriteString(fmt.Sprintf("%s}\n", innerIndent))
+	sb.WriteString(fmt.Sprintf("%s...\n", innerIndent))
+	sb.WriteString(fmt.Sprintf("%s}\n", indent))
+}
+
+// writeArrayForEachOutputs writes an outputs block that iterates over a parameter array.
+// This generates:
+//
+//	outputs: {
+//	    for i, v in parameter.objects {
+//	        if i > 0 {
+//	            "objects-\(i)": v
+//	        }
+//	    }
+//	}
+func (g *CUEGenerator) writeArrayForEachOutputs(sb *strings.Builder, fe *ArrayForEachOutputs, depth int) {
+	indent := strings.Repeat(g.indent, depth)
+	innerIndent := strings.Repeat(g.indent, depth+1)
+	deepIndent := strings.Repeat(g.indent, depth+2)
+	deeperIndent := strings.Repeat(g.indent, depth+3)
+
+	paramRef := "parameter." + fe.param.Name()
+
+	sb.WriteString(fmt.Sprintf("%soutputs: {\n", indent))
+	sb.WriteString(fmt.Sprintf("%sfor i, v in %s {\n", innerIndent, paramRef))
+	sb.WriteString(fmt.Sprintf("%sif i > %d {\n", deepIndent, fe.startIndex-1))
+	sb.WriteString(fmt.Sprintf("%s\"%s\\(i)\": v\n", deeperIndent, fe.prefix))
+	sb.WriteString(fmt.Sprintf("%s}\n", deepIndent))
+	sb.WriteString(fmt.Sprintf("%s}\n", innerIndent))
+	sb.WriteString(fmt.Sprintf("%s}\n", indent))
 }
 
 // writeResourceOutput writes a resource as a CUE output block.

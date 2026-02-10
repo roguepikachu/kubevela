@@ -36,6 +36,10 @@ type HealthExpression interface {
 
 // HealthPolicy wraps a HealthExpression and generates the complete healthPolicy CUE block.
 func HealthPolicy(expr HealthExpression) string {
+	// Check for composite expressions that generate complete multi-block policies
+	if composite, ok := expr.(CompositeHealthExpression); ok {
+		return composite.BuildFull()
+	}
 	preamble := expr.Preamble()
 	if preamble != "" {
 		return preamble + "\nisHealth: " + expr.ToCUE()
@@ -337,6 +341,154 @@ func (a *alwaysExpr) Preamble() string {
 
 func (a *alwaysExpr) ToCUE() string {
 	return "true"
+}
+
+// --- CompositeHealthExpression for resource-type switching ---
+
+// CompositeHealthExpression generates complete multi-block health policies
+// that include conditional blocks based on resource type (apiVersion/kind).
+type CompositeHealthExpression interface {
+	HealthExpression
+	// BuildFull returns the complete health policy CUE including all conditional blocks.
+	BuildFull() string
+}
+
+// resourceTypeSwitchHealthExpr implements CompositeHealthExpression for switching
+// health behavior based on the resource's apiVersion and kind.
+type resourceTypeSwitchHealthExpr struct {
+	cases        []resourceHealthCase
+	defaultExpr  HealthExpression
+}
+
+type resourceHealthCase struct {
+	apiVersion string
+	kind       string
+	expr       HealthExpression
+}
+
+func (r *resourceTypeSwitchHealthExpr) Preamble() string { return "" }
+
+func (r *resourceTypeSwitchHealthExpr) ToCUE() string { return "" }
+
+func (r *resourceTypeSwitchHealthExpr) BuildFull() string {
+	return buildResourceSwitchCases(r.cases, r.defaultExpr, "isHealth",
+		func(c resourceHealthCase) string { return c.apiVersion },
+		func(c resourceHealthCase) string { return c.kind },
+		func(c resourceHealthCase) string {
+			preamble := c.expr.Preamble()
+			if preamble != "" {
+				return preamble + "\n\tisHealth: " + c.expr.ToCUE()
+			}
+			return "isHealth: " + c.expr.ToCUE()
+		},
+		func(expr HealthExpression) string {
+			return "isHealth: " + expr.ToCUE()
+		},
+	)
+}
+
+// ResourceTypeHealthSwitchBuilder builds a resource-type based health switch.
+type ResourceTypeHealthSwitchBuilder struct {
+	cases       []resourceHealthCase
+	defaultExpr HealthExpression
+}
+
+// When adds a case for a specific apiVersion and kind.
+func (b *ResourceTypeHealthSwitchBuilder) When(apiVersion, kind string, expr HealthExpression) *ResourceTypeHealthSwitchBuilder {
+	b.cases = append(b.cases, resourceHealthCase{apiVersion: apiVersion, kind: kind, expr: expr})
+	return b
+}
+
+// Default sets the default health expression when no case matches.
+func (b *ResourceTypeHealthSwitchBuilder) Default(expr HealthExpression) HealthExpression {
+	b.defaultExpr = expr
+	return &resourceTypeSwitchHealthExpr{cases: b.cases, defaultExpr: expr}
+}
+
+// ResourceSwitch starts building a resource-type based health switch on HealthBuilder.
+func (h *HealthBuilder) ResourceSwitch() *ResourceTypeHealthSwitchBuilder {
+	return &ResourceTypeHealthSwitchBuilder{}
+}
+
+// DeploymentHealthExpr returns a standalone health expression for Deployment resources.
+// This matches the ref-objects health CUE pattern with ready/updatedReplicas/replicas/observedGeneration.
+func DeploymentHealthExpr() HealthExpression {
+	return &deploymentHealthExpr{}
+}
+
+type deploymentHealthExpr struct{}
+
+func (d *deploymentHealthExpr) Preamble() string {
+	return `ready: {
+	updatedReplicas:    *0 | int
+	readyReplicas:      *0 | int
+	replicas:           *0 | int
+	observedGeneration: *0 | int
+} & {
+	if context.output.status.updatedReplicas != _|_ {
+		updatedReplicas: context.output.status.updatedReplicas
+	}
+	if context.output.status.readyReplicas != _|_ {
+		readyReplicas: context.output.status.readyReplicas
+	}
+	if context.output.status.replicas != _|_ {
+		replicas: context.output.status.replicas
+	}
+	if context.output.status.observedGeneration != _|_ {
+		observedGeneration: context.output.status.observedGeneration
+	}
+}`
+}
+
+func (d *deploymentHealthExpr) ToCUE() string {
+	return "(context.output.spec.replicas == ready.readyReplicas) && (context.output.spec.replicas == ready.updatedReplicas) && (context.output.spec.replicas == ready.replicas) && (ready.observedGeneration == context.output.metadata.generation || ready.observedGeneration > context.output.metadata.generation)"
+}
+
+// --- Shared resource switch helper ---
+
+// buildResourceSwitchCases generates CUE conditional blocks that switch on
+// context.output.apiVersion and context.output.kind.
+// It produces blocks like:
+//
+//	if context.output.apiVersion == "apps/v1" && context.output.kind == "Deployment" {
+//	    ...preamble and field...
+//	}
+//	if context.output.apiVersion != "apps/v1" || context.output.kind != "Deployment" {
+//	    ...default...
+//	}
+func buildResourceSwitchCases[C any, E any](
+	cases []C,
+	defaultExpr E,
+	_ string, // fieldName reserved for future use
+	getAPIVersion func(C) string,
+	getKind func(C) string,
+	buildCaseBody func(C) string,
+	buildDefaultBody func(E) string,
+) string {
+	var sb strings.Builder
+
+	for _, c := range cases {
+		apiVersion := getAPIVersion(c)
+		kind := getKind(c)
+
+		// Positive match block
+		sb.WriteString(fmt.Sprintf("if context.output.apiVersion == %q && context.output.kind == %q {\n", apiVersion, kind))
+		body := buildCaseBody(c)
+		for _, line := range strings.Split(body, "\n") {
+			sb.WriteString("\t" + line + "\n")
+		}
+		sb.WriteString("}\n")
+
+		// Negative match block (for default)
+		sb.WriteString(fmt.Sprintf("if context.output.apiVersion != %q || context.output.kind != %q {\n", apiVersion, kind))
+		defaultBody := buildDefaultBody(defaultExpr)
+		for _, line := range strings.Split(defaultBody, "\n") {
+			sb.WriteString("\t" + line + "\n")
+		}
+		sb.WriteString("}")
+	}
+
+	return sb.String()
 }
 
 // --- Helper functions ---

@@ -735,6 +735,10 @@ func (s *StatusBuilder) StatusExpr(expr StatusExpression) *StatusBuilder {
 // It creates a StatusBuilder with the given expression and returns it for use with CustomStatus().
 // Example: CustomStatusExpr(Status().Concat("Ready: ", s.Field("status.ready")))
 func CustomStatusExpr(expr StatusExpression) string {
+	// Check for composite expressions that generate complete multi-block policies
+	if composite, ok := expr.(CompositeStatusExpression); ok {
+		return composite.BuildFull()
+	}
 	switch e := expr.(type) {
 	case *statusSwitchExpr:
 		return e.BuildFull()
@@ -744,3 +748,94 @@ func CustomStatusExpr(expr StatusExpression) string {
 		return StatusPolicy(expr)
 	}
 }
+
+// --- CompositeStatusExpression for resource-type switching ---
+
+// CompositeStatusExpression generates complete multi-block status policies
+// that include conditional blocks based on resource type (apiVersion/kind).
+type CompositeStatusExpression interface {
+	StatusExpression
+	// BuildFull returns the complete status policy CUE including all conditional blocks.
+	BuildFull() string
+}
+
+// resourceTypeSwitchStatusExpr implements CompositeStatusExpression for switching
+// status behavior based on the resource's apiVersion and kind.
+type resourceTypeSwitchStatusExpr struct {
+	cases       []resourceStatusCase
+	defaultExpr StatusExpression
+}
+
+type resourceStatusCase struct {
+	apiVersion string
+	kind       string
+	expr       StatusExpression
+}
+
+func (r *resourceTypeSwitchStatusExpr) Preamble() string    { return "" }
+func (r *resourceTypeSwitchStatusExpr) ToCUE() string       { return "" }
+func (r *resourceTypeSwitchStatusExpr) IsStringExpr() bool   { return true }
+
+func (r *resourceTypeSwitchStatusExpr) BuildFull() string {
+	return buildResourceSwitchCases(r.cases, r.defaultExpr, "message",
+		func(c resourceStatusCase) string { return c.apiVersion },
+		func(c resourceStatusCase) string { return c.kind },
+		func(c resourceStatusCase) string {
+			preamble := c.expr.Preamble()
+			if preamble != "" {
+				return preamble + "\n\tmessage: " + c.expr.ToCUE()
+			}
+			return "message: " + c.expr.ToCUE()
+		},
+		func(expr StatusExpression) string {
+			return "message: " + expr.ToCUE()
+		},
+	)
+}
+
+// ResourceTypeStatusSwitchBuilder builds a resource-type based status switch.
+type ResourceTypeStatusSwitchBuilder struct {
+	cases       []resourceStatusCase
+	defaultExpr StatusExpression
+}
+
+// When adds a case for a specific apiVersion and kind.
+func (b *ResourceTypeStatusSwitchBuilder) When(apiVersion, kind string, expr StatusExpression) *ResourceTypeStatusSwitchBuilder {
+	b.cases = append(b.cases, resourceStatusCase{apiVersion: apiVersion, kind: kind, expr: expr})
+	return b
+}
+
+// Default sets the default status expression when no case matches.
+func (b *ResourceTypeStatusSwitchBuilder) Default(expr StatusExpression) StatusExpression {
+	b.defaultExpr = expr
+	return &resourceTypeSwitchStatusExpr{cases: b.cases, defaultExpr: expr}
+}
+
+// ResourceSwitch starts building a resource-type based status switch on StatusBuilder.
+func (s *StatusBuilder) ResourceSwitch() *ResourceTypeStatusSwitchBuilder {
+	return &ResourceTypeStatusSwitchBuilder{}
+}
+
+// DeploymentStatusExpr returns a standalone status expression for Deployment resources.
+// This matches the ref-objects customStatus CUE pattern.
+func DeploymentStatusExpr() StatusExpression {
+	return &deploymentStatusExpr{}
+}
+
+type deploymentStatusExpr struct{}
+
+func (d *deploymentStatusExpr) Preamble() string {
+	return `ready: {
+	readyReplicas: *0 | int
+} & {
+	if context.output.status.readyReplicas != _|_ {
+		readyReplicas: context.output.status.readyReplicas
+	}
+}`
+}
+
+func (d *deploymentStatusExpr) ToCUE() string {
+	return `"Ready:\(ready.readyReplicas)/\(context.output.spec.replicas)"`
+}
+
+func (d *deploymentStatusExpr) IsStringExpr() bool { return true }
