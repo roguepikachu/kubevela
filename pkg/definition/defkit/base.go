@@ -44,6 +44,7 @@ type baseDefinition struct {
 	helperDefinitions []HelperDefinition
 	rawCUE            string
 	imports           []string
+	labels            map[string]string
 	// Placement constraints for cluster-aware definition deployment
 	runOn    []placement.Condition
 	notRunOn []placement.Condition
@@ -94,6 +95,24 @@ func (b *baseDefinition) setRawCUE(cue string) {
 // addImports adds CUE imports.
 func (b *baseDefinition) addImports(imports ...string) {
 	b.imports = append(b.imports, imports...)
+}
+
+// setLabel sets a single label key-value pair.
+func (b *baseDefinition) setLabel(key, value string) {
+	if b.labels == nil {
+		b.labels = make(map[string]string)
+	}
+	b.labels[key] = value
+}
+
+// setLabels sets multiple labels at once.
+func (b *baseDefinition) setLabels(labels map[string]string) {
+	if b.labels == nil {
+		b.labels = make(map[string]string)
+	}
+	for k, v := range labels {
+		b.labels[k] = v
+	}
 }
 
 // addRunOn adds placement conditions specifying where this definition should run.
@@ -151,6 +170,11 @@ func (b *baseDefinition) GetRawCUE() string {
 // GetImports returns the CUE imports.
 func (b *baseDefinition) GetImports() []string {
 	return b.imports
+}
+
+// GetLabels returns the definition labels.
+func (b *baseDefinition) GetLabels() map[string]string {
+	return b.labels
 }
 
 // HasTemplate returns true if the definition has a template function set.

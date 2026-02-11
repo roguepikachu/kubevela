@@ -87,6 +87,19 @@ func (c *ComponentDefinition) AutodetectWorkload() *ComponentDefinition {
 	return c
 }
 
+// Label sets a single label on the component definition.
+// Labels appear in the definition metadata.
+func (c *ComponentDefinition) Label(key, value string) *ComponentDefinition {
+	c.setLabel(key, value)
+	return c
+}
+
+// Labels sets multiple labels on the component definition.
+func (c *ComponentDefinition) Labels(labels map[string]string) *ComponentDefinition {
+	c.setLabels(labels)
+	return c
+}
+
 // Params adds multiple parameter definitions to the component.
 func (c *ComponentDefinition) Params(params ...Param) *ComponentDefinition {
 	c.addParams(params...)
@@ -281,6 +294,32 @@ func (w WorkloadType) Kind() string { return w.kind }
 // IsAutodetect returns true if the workload type is auto-detected at runtime.
 func (w WorkloadType) IsAutodetect() bool { return w.autodetect }
 
+// ArrayPassthroughOutput configures a template to pass through an array element as the primary output.
+// This generates CUE like:
+//
+//	output: {
+//	    if len(parameter.objects) > 0 { parameter.objects[0] }
+//	    ...
+//	}
+type ArrayPassthroughOutput struct {
+	param Param
+	index int
+}
+
+// ArrayForEachOutputs configures a template to generate named outputs from array iteration.
+// This generates CUE like:
+//
+//	outputs: {
+//	    for i, v in parameter.objects {
+//	        if i > 0 { "objects-\(i)": v }
+//	    }
+//	}
+type ArrayForEachOutputs struct {
+	param      Param
+	prefix     string
+	startIndex int
+}
+
 // Template provides the building context for component and trait templates.
 // It embeds VelaContext to provide access to runtime context values
 // (Name, AppName, Namespace, Revision, etc.) directly on tpl.
@@ -295,6 +334,10 @@ type Template struct {
 	structArrayHelpers []*StructArrayHelper // Struct-based array helpers
 	concatHelpers      []*ConcatHelper      // list.Concat helpers
 	dedupeHelpers      []*DedupeHelper      // Deduplication helpers
+
+	// Array passthrough output and for-each outputs
+	outputPassthrough *ArrayPassthroughOutput // Passthrough of array element to output
+	outputsForEach    *ArrayForEachOutputs    // For-each iteration to outputs
 
 	// Trait-specific fields
 	patch         *PatchResource // Patch operations for traits
@@ -415,6 +458,43 @@ func (t *Template) GetOutput() *Resource { return t.output }
 
 // GetOutputs returns all auxiliary resources.
 func (t *Template) GetOutputs() map[string]*Resource { return t.outputs }
+
+// OutputPassthrough configures the output block to pass through an element from a parameter array.
+// The index specifies which array element becomes the primary output (typically 0 for the first element).
+// This generates CUE like:
+//
+//	output: {
+//	    if len(parameter.objects) > 0 { parameter.objects[0] }
+//	    ...
+//	}
+func (t *Template) OutputPassthrough(param Param, index int) {
+	t.outputPassthrough = &ArrayPassthroughOutput{param: param, index: index}
+}
+
+// OutputsForEach configures the outputs block to iterate over a parameter array and generate named outputs.
+// Elements starting from startIndex are emitted as named outputs with the given prefix.
+// This generates CUE like:
+//
+//	outputs: {
+//	    for i, v in parameter.objects {
+//	        if i > 0 { "objects-\(i)": v }
+//	    }
+//	}
+func (t *Template) OutputsForEach(param Param, prefix string, startIndex int) {
+	t.outputsForEach = &ArrayForEachOutputs{param: param, prefix: prefix, startIndex: startIndex}
+}
+
+// HasOutputPassthrough returns true if this template has a passthrough output configured.
+func (t *Template) HasOutputPassthrough() bool { return t.outputPassthrough != nil }
+
+// GetOutputPassthrough returns the passthrough output configuration.
+func (t *Template) GetOutputPassthrough() *ArrayPassthroughOutput { return t.outputPassthrough }
+
+// HasOutputsForEach returns true if this template has for-each outputs configured.
+func (t *Template) HasOutputsForEach() bool { return t.outputsForEach != nil }
+
+// GetOutputsForEach returns the for-each outputs configuration.
+func (t *Template) GetOutputsForEach() *ArrayForEachOutputs { return t.outputsForEach }
 
 // --- Patch methods for traits ---
 
