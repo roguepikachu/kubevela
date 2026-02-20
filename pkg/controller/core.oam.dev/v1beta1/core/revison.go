@@ -387,6 +387,14 @@ func CleanUpDefinitionRevision(ctx context.Context, cli client.Client, def runti
 		if rev.Name == usingRevision.Name {
 			continue
 		}
+		used, err := isDefinitionRevisionUsed(ctx, cli, rev.Name)
+		if err != nil {
+			return err
+		}
+		if used {
+			klog.InfoS("skip deleting definitionRevision still in use", "name", rev.Name)
+			continue
+		}
 		if err := cli.Delete(ctx, rev.DeepCopy()); err != nil && !apierrors.IsNotFound(err) {
 			return err
 		}
@@ -401,6 +409,39 @@ func (h historiesByRevision) Len() int      { return len(h) }
 func (h historiesByRevision) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 func (h historiesByRevision) Less(i, j int) bool {
 	return h[i].Spec.Revision < h[j].Spec.Revision
+}
+
+// isDefinitionRevisionUsed checks whether a DefinitionRevision is referenced by any existing Application.
+func isDefinitionRevisionUsed(ctx context.Context, cli client.Client, revName string) (bool, error) {
+	appList := new(v1beta1.ApplicationList)
+	if err := cli.List(ctx, appList); err != nil {
+		return false, err
+	}
+	for _, app := range appList.Items {
+		for _, comp := range app.Spec.Components {
+			if n, err := util.ConvertDefinitionRevName(comp.Type); err == nil && n == revName {
+				return true, nil
+			}
+			for _, tr := range comp.Traits {
+				if n, err := util.ConvertDefinitionRevName(tr.Type); err == nil && n == revName {
+					return true, nil
+				}
+			}
+		}
+		for _, policy := range app.Spec.Policies {
+			if n, err := util.ConvertDefinitionRevName(policy.Type); err == nil && n == revName {
+				return true, nil
+			}
+		}
+		if app.Spec.Workflow != nil {
+			for _, step := range app.Spec.Workflow.Steps {
+				if n, err := util.ConvertDefinitionRevName(step.Type); err == nil && n == revName {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 // ReconcileDefinitionRevision generate the definition revision and update it.
