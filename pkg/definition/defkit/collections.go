@@ -90,6 +90,19 @@ func (c *CollectionOp) Map(mappings FieldMap) *CollectionOp {
 	return c
 }
 
+// MapVariant adds a conditional field mapping that only applies when the iteration
+// variable's discriminator field equals the given variant name.
+// Generates: if v.discriminator == "variantName" { ...mappings... }
+// Usage: .MapVariant("type", "pvc", FieldMap{"persistentVolumeClaim.claimName": FieldRef("claimName")})
+func (c *CollectionOp) MapVariant(discriminator, variantName string, mappings FieldMap) *CollectionOp {
+	c.ops = append(c.ops, &mapVariantOp{
+		discriminator: discriminator,
+		variantName:   variantName,
+		mappings:      mappings,
+	})
+	return c
+}
+
 // Pick selects only the specified fields from each item.
 // Usage: .Pick("name", "mountPath")
 func (c *CollectionOp) Pick(fields ...string) *CollectionOp {
@@ -371,6 +384,33 @@ func (m *mapOp) apply(items []any) []any {
 				newItem[newKey] = fieldVal.resolve(itemMap)
 			}
 			result = append(result, newItem)
+		}
+	}
+	return result
+}
+
+// mapVariantOp represents a conditional map operation based on a discriminator field value.
+// When the iteration variable's discriminator field equals the variant name,
+// the variant's field mappings are included.
+// Generates: if v.discriminator == "variantName" { ...mappings... }
+type mapVariantOp struct {
+	discriminator string
+	variantName   string
+	mappings      FieldMap
+}
+
+func (m *mapVariantOp) apply(items []any) []any {
+	// Runtime apply: filter items matching variant and apply mappings
+	result := make([]any, 0, len(items))
+	for _, item := range items {
+		if itemMap, ok := item.(map[string]any); ok {
+			if disc, exists := itemMap[m.discriminator]; exists && fmt.Sprintf("%v", disc) == m.variantName {
+				newItem := make(map[string]any)
+				for newKey, fieldVal := range m.mappings {
+					newItem[newKey] = fieldVal.resolve(itemMap)
+				}
+				result = append(result, newItem)
+			}
 		}
 	}
 	return result

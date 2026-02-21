@@ -603,6 +603,30 @@ var _ = Describe("Parameters", func() {
 		})
 	})
 
+	Context("OneOfParam Default method", func() {
+		It("should set default variant name", func() {
+			p := defkit.OneOf("type").Default("emptyDir")
+			Expect(p.HasDefault()).To(BeTrue())
+			Expect(p.GetDefault()).To(Equal("emptyDir"))
+		})
+
+		It("should support fluent chaining with Default", func() {
+			p := defkit.OneOf("type").
+				Default("emptyDir").
+				Description("Volume type").
+				Variants(
+					defkit.Variant("pvc").Fields(
+						defkit.Field("claimName", defkit.ParamTypeString).Required(),
+					),
+					defkit.Variant("emptyDir"),
+				)
+			Expect(p.HasDefault()).To(BeTrue())
+			Expect(p.GetDefault()).To(Equal("emptyDir"))
+			Expect(p.GetDescription()).To(Equal("Volume type"))
+			Expect(p.GetVariants()).To(HaveLen(2))
+		})
+	})
+
 	Context("IntParam Optional method", func() {
 		It("should set int as optional", func() {
 			p := defkit.Int("replicas").Optional()

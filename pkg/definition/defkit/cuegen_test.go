@@ -17,6 +17,8 @@ limitations under the License.
 package defkit_test
 
 import (
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -217,6 +219,263 @@ var _ = Describe("CUEGenerator", func() {
 			Expect(cue).To(ContainSubstring("matchExpressions?: [...{"))
 			Expect(cue).To(ContainSubstring("key: string"))
 			Expect(cue).To(ContainSubstring("operator?: string"))
+		})
+	})
+
+	Describe("GenerateParameterSchema with OneOf parameters", func() {
+		It("should generate discriminator field and conditional variant blocks", func() {
+			comp := defkit.NewComponent("test").
+				Params(
+					defkit.OneOf("type").
+						Default("emptyDir").
+						Description("Volume type").
+						Variants(
+							defkit.Variant("pvc").Fields(
+								defkit.Field("claimName", defkit.ParamTypeString).Required(),
+							),
+							defkit.Variant("emptyDir").Fields(
+								defkit.Field("medium", defkit.ParamTypeString).Default("").Enum("", "Memory"),
+							),
+						),
+				)
+
+			cue := gen.GenerateParameterSchema(comp)
+
+			// Discriminator field with default
+			Expect(cue).To(ContainSubstring(`*"emptyDir"`))
+			Expect(cue).To(ContainSubstring(`"pvc"`))
+			// Conditional blocks
+			Expect(cue).To(ContainSubstring(`if type == "pvc"`))
+			Expect(cue).To(ContainSubstring("claimName: string"))
+			Expect(cue).To(ContainSubstring(`if type == "emptyDir"`))
+			Expect(cue).To(ContainSubstring(`medium:`))
+		})
+
+		It("should generate OneOf inside array with shared fields", func() {
+			comp := defkit.NewComponent("test").
+				Params(
+					defkit.List("volumes").WithFields(
+						defkit.String("name").Required(),
+						defkit.OneOf("type").Default("emptyDir").Variants(
+							defkit.Variant("pvc").Fields(
+								defkit.Field("claimName", defkit.ParamTypeString).Required(),
+							),
+							defkit.Variant("emptyDir"),
+						),
+					),
+				)
+
+			cue := gen.GenerateParameterSchema(comp)
+
+			Expect(cue).To(ContainSubstring("volumes?:"))
+			Expect(cue).To(ContainSubstring("[...{"))
+			Expect(cue).To(ContainSubstring("name: string"))
+			Expect(cue).To(ContainSubstring(`type: *"emptyDir" | "pvc"`))
+			Expect(cue).To(ContainSubstring(`if type == "pvc"`))
+			Expect(cue).To(ContainSubstring("claimName: string"))
+		})
+
+		It("should omit conditional block for empty variants", func() {
+			comp := defkit.NewComponent("test").
+				Params(
+					defkit.OneOf("kind").
+						Variants(
+							defkit.Variant("simple"), // no fields
+							defkit.Variant("complex").Fields(
+								defkit.Field("config", defkit.ParamTypeString).Required(),
+							),
+						),
+				)
+
+			cue := gen.GenerateParameterSchema(comp)
+
+			Expect(cue).NotTo(ContainSubstring(`if kind == "simple"`))
+			Expect(cue).To(ContainSubstring(`if kind == "complex"`))
+			Expect(cue).To(ContainSubstring("config: string"))
+		})
+	})
+
+	Describe("GenerateFullDefinition with MapVariant", func() {
+		It("should generate conditional field blocks in comprehension", func() {
+			volumes := defkit.List("volumes")
+			comp := defkit.NewComponent("test").
+				Workload("batch/v1", "Job").
+				Params(volumes).
+				Template(func(tpl *defkit.Template) {
+					tpl.Output(
+						defkit.NewResource("batch/v1", "Job").
+							Set("spec.volumes",
+								defkit.Each(volumes).
+									Map(defkit.FieldMap{"name": defkit.FieldRef("name")}).
+									MapVariant("type", "pvc", defkit.FieldMap{
+										"persistentVolumeClaim.claimName": defkit.FieldRef("claimName"),
+									}).
+									MapVariant("type", "emptyDir", defkit.FieldMap{
+										"emptyDir.medium": defkit.FieldRef("medium"),
+									}),
+							),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			Expect(cue).To(ContainSubstring("for v in parameter.volumes"))
+			Expect(cue).To(ContainSubstring("name: v.name"))
+			Expect(cue).To(ContainSubstring(`if v.type == "pvc"`))
+			Expect(cue).To(ContainSubstring("persistentVolumeClaim.claimName: v.claimName"))
+			Expect(cue).To(ContainSubstring(`if v.type == "emptyDir"`))
+			Expect(cue).To(ContainSubstring("emptyDir.medium: v.medium"))
+		})
+
+		It("should generate optional fields inside variant blocks", func() {
+			volumes := defkit.List("volumes")
+			comp := defkit.NewComponent("test").
+				Workload("batch/v1", "Job").
+				Params(volumes).
+				Template(func(tpl *defkit.Template) {
+					tpl.Output(
+						defkit.NewResource("batch/v1", "Job").
+							Set("spec.volumes",
+								defkit.Each(volumes).
+									Map(defkit.FieldMap{"name": defkit.FieldRef("name")}).
+									MapVariant("type", "configMap", defkit.FieldMap{
+										"configMap.name": defkit.FieldRef("cmName"),
+										"configMap.items": defkit.OptionalFieldRef("items"),
+									}),
+							),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			Expect(cue).To(ContainSubstring(`if v.type == "configMap"`))
+			Expect(cue).To(ContainSubstring("configMap.name: v.cmName"))
+			Expect(cue).To(ContainSubstring("if v.items != _|_"))
+			Expect(cue).To(ContainSubstring("configMap.items: v.items"))
+		})
+	})
+
+	Describe("Multi-conditional leaf values (condValues)", func() {
+		It("should render both conditional values when same path is set with different conditions", func() {
+			gen := defkit.NewCUEGenerator()
+
+			volMounts := defkit.String("volumeMounts")
+			volumes := defkit.String("volumes")
+
+			comp := defkit.NewComponent("test-multi-cond").
+				Description("Test multi-conditional values").
+				AutodetectWorkload().
+				Params(volMounts, volumes).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("batch/v1", "Job")
+					res.
+						If(volMounts.IsSet()).
+						Set("spec.containers[0].volumeMounts", defkit.Lit("mountsArray")).
+						EndIf().
+						If(volumes.IsSet()).
+						Set("spec.containers[0].volumeMounts", defkit.Lit("volumesArray")).
+						EndIf()
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+			// Both conditions should appear for the same field
+			Expect(cue).To(ContainSubstring(`if parameter["volumeMounts"] != _|_`))
+			Expect(cue).To(ContainSubstring(`if parameter["volumes"] != _|_`))
+			// The field should appear twice, each in its own if block
+			Expect(strings.Count(cue, "volumeMounts:")).To(BeNumerically(">=", 2))
+		})
+
+		It("should not activate condValues when path is set unconditionally then conditionally", func() {
+			gen := defkit.NewCUEGenerator()
+
+			optional := defkit.String("opt")
+
+			comp := defkit.NewComponent("test-uncond-then-cond").
+				Description("Test unconditional then conditional").
+				AutodetectWorkload().
+				Params(optional).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("v1", "Pod")
+					res.
+						Set("spec.field", defkit.Lit("default")).
+						SetIf(optional.IsSet(), "spec.field", optional)
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+			// Conditional should win (overwrites unconditional)
+			Expect(cue).To(ContainSubstring("field: parameter.opt"))
+		})
+	})
+
+	Describe("Intermediate node decomposition (canDecomposeByCondition)", func() {
+		It("should decompose struct into per-condition blocks when all leaves share the same condition set", func() {
+			gen := defkit.NewCUEGenerator()
+
+			cpu := defkit.String("cpu")
+			memory := defkit.String("memory")
+
+			comp := defkit.NewComponent("test-decompose").
+				Description("Test condition decomposition").
+				AutodetectWorkload().
+				Params(cpu, memory).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("v1", "Pod")
+					res.
+						If(cpu.IsSet()).
+						Set("spec.resources.limits.cpu", cpu).
+						Set("spec.resources.requests.cpu", cpu).
+						EndIf().
+						If(memory.IsSet()).
+						Set("spec.resources.limits.memory", memory).
+						Set("spec.resources.requests.memory", memory).
+						EndIf()
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+			// resources should NOT appear unconditionally
+			// It should appear inside if blocks
+			Expect(cue).To(ContainSubstring(`if parameter["cpu"] != _|_ {`))
+			Expect(cue).To(ContainSubstring(`if parameter["memory"] != _|_ {`))
+
+			// Each condition block should contain resources with limits and requests
+			// Find the cpu block
+			cpuIdx := strings.Index(cue, `if parameter["cpu"] != _|_ {`)
+			Expect(cpuIdx).To(BeNumerically(">", 0))
+			// After the cpu condition, resources should appear
+			afterCpu := cue[cpuIdx:]
+			Expect(afterCpu).To(ContainSubstring("resources:"))
+			Expect(afterCpu).To(ContainSubstring("limits:"))
+			Expect(afterCpu).To(ContainSubstring("requests:"))
+		})
+
+		It("should not decompose when children have unconditional values", func() {
+			gen := defkit.NewCUEGenerator()
+
+			cpu := defkit.String("cpu")
+
+			comp := defkit.NewComponent("test-no-decompose").
+				Description("Test no decomposition").
+				AutodetectWorkload().
+				Params(cpu).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("v1", "Pod")
+					res.
+						If(cpu.IsSet()).
+						Set("spec.resources.limits.cpu", cpu).
+						EndIf().
+						Set("spec.resources.limits.memory", defkit.Lit("128Mi"))
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+			// resources should appear as a regular struct (not decomposed)
+			// because it has a mix of conditional and unconditional children
+			Expect(cue).To(ContainSubstring("resources:"))
+			Expect(cue).To(ContainSubstring("limits:"))
+			Expect(cue).To(ContainSubstring(`memory: "128Mi"`))
 		})
 	})
 

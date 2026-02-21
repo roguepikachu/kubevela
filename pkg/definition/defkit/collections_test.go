@@ -81,6 +81,19 @@ var _ = Describe("Collections", func() {
 			Expect(col.Operations()).To(HaveLen(1))
 		})
 
+		It("should chain MapVariant operation", func() {
+			volumes := defkit.List("volumes")
+			col := defkit.Each(volumes).
+				Map(defkit.FieldMap{"name": defkit.FieldRef("name")}).
+				MapVariant("type", "pvc", defkit.FieldMap{
+					"persistentVolumeClaim.claimName": defkit.FieldRef("claimName"),
+				}).
+				MapVariant("type", "emptyDir", defkit.FieldMap{
+					"emptyDir.medium": defkit.FieldRef("medium"),
+				})
+			Expect(col.Operations()).To(HaveLen(3))
+		})
+
 		It("should chain Rename operation", func() {
 			ports := defkit.List("ports")
 			col := defkit.Each(ports).Rename("port", "containerPort")

@@ -1095,6 +1095,12 @@ func (p *OneOfParam) Variants(variants ...*OneOfVariant) *OneOfParam {
 	return p
 }
 
+// Default sets the default variant name for the discriminator.
+func (p *OneOfParam) Default(value string) *OneOfParam {
+	p.defaultValue = value
+	return p
+}
+
 // Required marks the parameter as required.
 func (p *OneOfParam) Required() *OneOfParam {
 	p.required = true
