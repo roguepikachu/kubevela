@@ -2583,9 +2583,9 @@ func (g *CUEGenerator) writeStringParam(sb *strings.Builder, p *StringParam, ind
 
 		if p.HasDefault() {
 			if len(constraints) > 0 {
-				sb.WriteString(fmt.Sprintf("%s%s: *%q | string & %s\n", indent, name, p.GetDefault(), strings.Join(constraints, " & ")))
+				sb.WriteString(fmt.Sprintf("%s%s%s: *%q | string & %s\n", indent, name, optional, p.GetDefault(), strings.Join(constraints, " & ")))
 			} else {
-				sb.WriteString(fmt.Sprintf("%s%s: *%q | string\n", indent, name, p.GetDefault()))
+				sb.WriteString(fmt.Sprintf("%s%s%s: *%q | string\n", indent, name, optional, p.GetDefault()))
 			}
 		} else {
 			if len(constraints) > 0 {
