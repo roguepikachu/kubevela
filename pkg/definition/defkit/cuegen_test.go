@@ -139,6 +139,48 @@ var _ = Describe("CUEGenerator", func() {
 			// ForceOptional with default: has ? (field can be absent, defaults when present)
 			Expect(cue).To(ContainSubstring(`optionalDefault?: *"Honor" | "Ignore"`))
 		})
+
+		It("should generate // +ignore directive for ignored parameters", func() {
+			comp := defkit.NewComponent("test").
+				Params(
+					defkit.String("visible").Description("A visible field"),
+					defkit.Enum("hidden").Values("A", "B").Default("A").Ignore().Description("An ignored field"),
+				)
+
+			cue := gen.GenerateParameterSchema(comp)
+
+			Expect(cue).NotTo(ContainSubstring("// +ignore\n\t// +usage=A visible field"))
+			Expect(cue).To(ContainSubstring("// +ignore\n\t// +usage=An ignored field"))
+		})
+
+		It("should generate // +short directive for params with short flags", func() {
+			comp := defkit.NewComponent("test").
+				Params(
+					defkit.String("image").Required().Description("Container image").Short("i"),
+				)
+
+			cue := gen.GenerateParameterSchema(comp)
+
+			Expect(cue).To(ContainSubstring("// +usage=Container image"))
+			Expect(cue).To(ContainSubstring("// +short=i"))
+		})
+
+		It("should generate both // +ignore and // +short directives in correct order", func() {
+			comp := defkit.NewComponent("test").
+				Params(
+					defkit.Int("port").Ignore().Description("Deprecated field, please use ports instead").Short("p"),
+				)
+
+			cue := gen.GenerateParameterSchema(comp)
+
+			// Order should be: // +ignore, // +usage=..., // +short=p
+			ignoreIdx := strings.Index(cue, "// +ignore")
+			usageIdx := strings.Index(cue, "// +usage=Deprecated field")
+			shortIdx := strings.Index(cue, "// +short=p")
+			Expect(ignoreIdx).To(BeNumerically(">", 0))
+			Expect(usageIdx).To(BeNumerically(">", ignoreIdx))
+			Expect(shortIdx).To(BeNumerically(">", usageIdx))
+		})
 	})
 
 	Describe("GenerateParameterSchema with complex types", func() {
@@ -656,6 +698,94 @@ var _ = Describe("CUEGenerator", func() {
 			cue := gen.GenerateFullDefinition(comp)
 
 			Expect(cue).To(ContainSubstring("strings"))
+		})
+	})
+
+	Describe("GenerateFullDefinition with ConditionalOrFieldRef", func() {
+		It("should generate if/else pattern for conditional field reference", func() {
+			gen := defkit.NewCUEGenerator()
+
+			ports := defkit.List("ports").WithFields(
+				defkit.Int("port").Required(),
+				defkit.String("name"),
+			)
+			comp := defkit.NewComponent("test").
+				Workload("apps/v1", "Deployment").
+				Params(ports).
+				Template(func(tpl *defkit.Template) {
+					containerPorts := defkit.Each(ports).Map(defkit.FieldMap{
+						"containerPort": defkit.FieldRef("port"),
+						"name":          defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
+					})
+					tpl.Output(
+						defkit.NewResource("apps/v1", "Deployment").
+							Set("spec.template.spec.containers[0].ports", containerPorts),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Should generate if/else blocks, NOT default syntax
+			Expect(cue).To(ContainSubstring("if v.name != _|_"))
+			Expect(cue).To(ContainSubstring("name: v.name"))
+			Expect(cue).To(ContainSubstring("if v.name == _|_"))
+			Expect(cue).To(ContainSubstring("strconv.FormatInt(v.port, 10)"))
+		})
+	})
+
+	Describe("GenerateFullDefinition with Directive", func() {
+		It("should render // +patchKey directive before field value", func() {
+			gen := defkit.NewCUEGenerator()
+
+			hostAliases := defkit.Object("hostAliases")
+			comp := defkit.NewComponent("test").
+				Workload("apps/v1", "DaemonSet").
+				Params(hostAliases).
+				Template(func(tpl *defkit.Template) {
+					tpl.Output(
+						defkit.NewResource("apps/v1", "DaemonSet").
+							SetIf(hostAliases.IsSet(), "spec.template.spec.hostAliases", hostAliases).
+							Directive("spec.template.spec.hostAliases", "patchKey=ip"),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Directive should appear before the field value
+			Expect(cue).To(ContainSubstring("// +patchKey=ip"))
+			Expect(cue).To(ContainSubstring("hostAliases: parameter.hostAliases"))
+
+			// Verify ordering: directive before field
+			patchIdx := strings.Index(cue, "// +patchKey=ip")
+			hostIdx := strings.Index(cue, "hostAliases: parameter.hostAliases")
+			Expect(patchIdx).To(BeNumerically("<", hostIdx))
+		})
+	})
+
+	Describe("GenerateFullDefinition with InlineArray", func() {
+		It("should render inline array value as [{field: value}]", func() {
+			gen := defkit.NewCUEGenerator()
+
+			port := defkit.Int("port")
+			ports := defkit.List("ports")
+			comp := defkit.NewComponent("test").
+				Workload("apps/v1", "DaemonSet").
+				Params(port, ports).
+				Template(func(tpl *defkit.Template) {
+					tpl.Output(
+						defkit.NewResource("apps/v1", "DaemonSet").
+							If(defkit.And(port.IsSet(), ports.NotSet())).
+							Set("spec.template.spec.containers[0].ports", defkit.InlineArray(map[string]defkit.Value{
+								"containerPort": port,
+							})).
+							EndIf(),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			Expect(cue).To(ContainSubstring(`if parameter["port"] != _|_ && parameter["ports"] == _|_`))
+			Expect(cue).To(ContainSubstring("containerPort: parameter.port"))
 		})
 	})
 })

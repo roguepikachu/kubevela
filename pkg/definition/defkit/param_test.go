@@ -816,4 +816,63 @@ var _ = Describe("Parameters", func() {
 			Expect(cond).NotTo(BeNil())
 		})
 	})
+
+	Context("Short method", func() {
+		It("should set short flag on StringParam", func() {
+			p := defkit.String("image").Short("i")
+			Expect(p.GetShort()).To(Equal("i"))
+		})
+		It("should set short flag on IntParam", func() {
+			p := defkit.Int("port").Short("p")
+			Expect(p.GetShort()).To(Equal("p"))
+		})
+		It("should set short flag on BoolParam", func() {
+			p := defkit.Bool("debug").Short("d")
+			Expect(p.GetShort()).To(Equal("d"))
+		})
+		It("should set short flag on EnumParam", func() {
+			p := defkit.Enum("protocol").Values("TCP", "UDP").Short("p")
+			Expect(p.GetShort()).To(Equal("p"))
+		})
+		It("should return empty string when not set", func() {
+			p := defkit.String("image")
+			Expect(p.GetShort()).To(BeEmpty())
+		})
+		It("should support fluent chaining with other methods", func() {
+			p := defkit.String("image").Required().Description("Container image").Short("i")
+			Expect(p.Name()).To(Equal("image"))
+			Expect(p.IsRequired()).To(BeTrue())
+			Expect(p.GetDescription()).To(Equal("Container image"))
+			Expect(p.GetShort()).To(Equal("i"))
+		})
+	})
+
+	Context("Ignore method", func() {
+		It("should mark StringParam as ignored", func() {
+			p := defkit.String("port").Ignore()
+			Expect(p.IsIgnore()).To(BeTrue())
+		})
+		It("should mark IntParam as ignored", func() {
+			p := defkit.Int("port").Ignore()
+			Expect(p.IsIgnore()).To(BeTrue())
+		})
+		It("should mark BoolParam as ignored", func() {
+			p := defkit.Bool("debug").Ignore()
+			Expect(p.IsIgnore()).To(BeTrue())
+		})
+		It("should mark EnumParam as ignored", func() {
+			p := defkit.Enum("type").Values("A", "B").Ignore()
+			Expect(p.IsIgnore()).To(BeTrue())
+		})
+		It("should not be ignored by default", func() {
+			p := defkit.String("image")
+			Expect(p.IsIgnore()).To(BeFalse())
+		})
+		It("should support fluent chaining with Short and other methods", func() {
+			p := defkit.Int("port").Ignore().Description("Deprecated field").Short("p")
+			Expect(p.IsIgnore()).To(BeTrue())
+			Expect(p.GetShort()).To(Equal("p"))
+			Expect(p.GetDescription()).To(Equal("Deprecated field"))
+		})
+	})
 })

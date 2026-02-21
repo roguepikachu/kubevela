@@ -249,8 +249,34 @@ func (f FieldRef) resolve(item map[string]any) any {
 }
 
 // Or provides a fallback if the field is nil or empty.
+// Generates CUE like: *v.field | fallback
 func (f FieldRef) Or(fallback FieldValue) *OrFieldRef {
 	return &OrFieldRef{primary: f, fallback: fallback}
+}
+
+// OrConditional provides a fallback using if/else blocks instead of default syntax.
+// Generates CUE like:
+//
+//	if v.field != _|_ { name: v.field }
+//	if v.field == _|_ { name: fallbackExpr }
+func (f FieldRef) OrConditional(fallback FieldValue) *ConditionalOrFieldRef {
+	return &ConditionalOrFieldRef{primary: f, fallback: fallback}
+}
+
+// ConditionalOrFieldRef represents a field reference with a conditional fallback.
+// Instead of generating CUE default syntax (*v.field | fallback), it generates
+// two if/else blocks for the field.
+type ConditionalOrFieldRef struct {
+	primary  FieldRef
+	fallback FieldValue
+}
+
+func (c *ConditionalOrFieldRef) resolve(item map[string]any) any {
+	val := item[string(c.primary)]
+	if val == nil || val == "" {
+		return c.fallback.resolve(item)
+	}
+	return val
 }
 
 // OrFieldRef represents a field reference with a fallback value.

@@ -890,6 +890,58 @@ var _ = Describe("Collections", func() {
 			})
 		})
 
+		Context("OrConditional (ConditionalOrFieldRef)", func() {
+			It("should create ConditionalOrFieldRef from FieldRef", func() {
+				ref := defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port")))
+				Expect(ref).NotTo(BeNil())
+			})
+
+			It("should use primary field when present", func() {
+				ports := defkit.List("ports")
+				col := defkit.Each(ports).Map(defkit.FieldMap{
+					"displayName": defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
+				})
+
+				items := []any{
+					map[string]any{"port": 80, "name": "http"},
+				}
+
+				results := col.Collect(items)
+				Expect(results).To(HaveLen(1))
+				Expect(results[0]["displayName"]).To(Equal("http"))
+			})
+
+			It("should use fallback when primary field is nil", func() {
+				ports := defkit.List("ports")
+				col := defkit.Each(ports).Map(defkit.FieldMap{
+					"displayName": defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
+				})
+
+				items := []any{
+					map[string]any{"port": 443},
+				}
+
+				results := col.Collect(items)
+				Expect(results).To(HaveLen(1))
+				Expect(results[0]["displayName"]).To(Equal("port-443"))
+			})
+
+			It("should use fallback when primary field is empty string", func() {
+				ports := defkit.List("ports")
+				col := defkit.Each(ports).Map(defkit.FieldMap{
+					"displayName": defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
+				})
+
+				items := []any{
+					map[string]any{"port": 8080, "name": ""},
+				}
+
+				results := col.Collect(items)
+				Expect(results).To(HaveLen(1))
+				Expect(results[0]["displayName"]).To(Equal("port-8080"))
+			})
+		})
+
 		Context("FormatField RequiredImports", func() {
 			It("should require strconv for numeric formatting", func() {
 				f := defkit.Format("port-%v", defkit.FieldRef("port"))

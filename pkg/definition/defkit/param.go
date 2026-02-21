@@ -24,6 +24,8 @@ type baseParam struct {
 	defaultValue  any
 	description   string
 	forceOptional bool // when true, field stays optional even with a default value
+	short         string // short flag alias (e.g. "i" → // +short=i)
+	ignore        bool   // when true, emits // +ignore directive
 }
 
 func (p *baseParam) expr()      {}
@@ -37,6 +39,8 @@ func (p *baseParam) HasDefault() bool       { return p.defaultValue != nil }
 func (p *baseParam) GetDefault() any        { return p.defaultValue }
 func (p *baseParam) GetDescription() string { return p.description }
 func (p *baseParam) IsForceOptional() bool  { return p.forceOptional }
+func (p *baseParam) GetShort() string       { return p.short }
+func (p *baseParam) IsIgnore() bool         { return p.ignore }
 
 // IsSet returns a condition that checks if the parameter has a value.
 // This is used with SetIf for conditional field assignment.
@@ -139,6 +143,20 @@ func (p *StringParam) Optional() *StringParam {
 // This generates field?: *default | type instead of field: *default | type.
 func (p *StringParam) ForceOptional() *StringParam {
 	p.forceOptional = true
+	return p
+}
+
+// Short sets a short flag alias for the parameter.
+// This generates a // +short=X directive in the CUE output.
+func (p *StringParam) Short(s string) *StringParam {
+	p.short = s
+	return p
+}
+
+// Ignore marks the parameter as ignored by the UI.
+// This generates a // +ignore directive in the CUE output.
+func (p *StringParam) Ignore() *StringParam {
+	p.ignore = true
 	return p
 }
 
@@ -320,6 +338,20 @@ func (p *IntParam) Description(desc string) *IntParam {
 	return p
 }
 
+// Short sets a short flag alias for the parameter.
+// This generates a // +short=X directive in the CUE output.
+func (p *IntParam) Short(s string) *IntParam {
+	p.short = s
+	return p
+}
+
+// Ignore marks the parameter as ignored by the UI.
+// This generates a // +ignore directive in the CUE output.
+func (p *IntParam) Ignore() *IntParam {
+	p.ignore = true
+	return p
+}
+
 // Min sets the minimum value constraint for the parameter.
 // This generates CUE like: int & >=n
 func (p *IntParam) Min(n int) *IntParam {
@@ -414,6 +446,20 @@ func (p *BoolParam) Default(value bool) *BoolParam {
 // Description sets the parameter description.
 func (p *BoolParam) Description(desc string) *BoolParam {
 	p.description = desc
+	return p
+}
+
+// Short sets a short flag alias for the parameter.
+// This generates a // +short=X directive in the CUE output.
+func (p *BoolParam) Short(s string) *BoolParam {
+	p.short = s
+	return p
+}
+
+// Ignore marks the parameter as ignored by the UI.
+// This generates a // +ignore directive in the CUE output.
+func (p *BoolParam) Ignore() *BoolParam {
+	p.ignore = true
 	return p
 }
 
@@ -1030,6 +1076,20 @@ func (p *EnumParam) Default(value string) *EnumParam {
 // Description sets the parameter description.
 func (p *EnumParam) Description(desc string) *EnumParam {
 	p.description = desc
+	return p
+}
+
+// Short sets a short flag alias for the parameter.
+// This generates a // +short=X directive in the CUE output.
+func (p *EnumParam) Short(s string) *EnumParam {
+	p.short = s
+	return p
+}
+
+// Ignore marks the parameter as ignored by the UI.
+// This generates a // +ignore directive in the CUE output.
+func (p *EnumParam) Ignore() *EnumParam {
+	p.ignore = true
 	return p
 }
 

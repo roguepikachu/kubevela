@@ -323,4 +323,31 @@ var _ = Describe("Expressions", func() {
 			Expect(ref).NotTo(BeNil())
 		})
 	})
+
+	Context("InlineArrayValue", func() {
+		It("should create inline array with fields", func() {
+			port := defkit.Int("port")
+			arr := defkit.InlineArray(map[string]defkit.Value{
+				"containerPort": port,
+			})
+			Expect(arr).NotTo(BeNil())
+			Expect(arr.Fields()).To(HaveLen(1))
+			Expect(arr.Fields()).To(HaveKey("containerPort"))
+		})
+
+		It("should create inline array with multiple fields", func() {
+			arr := defkit.InlineArray(map[string]defkit.Value{
+				"containerPort": defkit.Int("port"),
+				"protocol":      defkit.Lit("TCP"),
+			})
+			Expect(arr.Fields()).To(HaveLen(2))
+		})
+
+		It("should implement Value interface", func() {
+			arr := defkit.InlineArray(map[string]defkit.Value{
+				"containerPort": defkit.Int("port"),
+			})
+			var _ defkit.Value = arr // compile-time check
+		})
+	})
 })

@@ -193,6 +193,8 @@ func (g *CUEGenerator) collectImportsFromFieldValue(fv FieldValue) {
 	switch val := fv.(type) {
 	case *OrFieldRef:
 		g.collectImportsFromFieldValue(val.fallback)
+	case *ConditionalOrFieldRef:
+		g.collectImportsFromFieldValue(val.fallback)
 	case *NestedField:
 		for _, nested := range val.mapping {
 			g.collectImportsFromFieldValue(nested)
@@ -788,8 +790,20 @@ func (g *CUEGenerator) writeCollectionOpHelper(sb *strings.Builder, col *Collect
 			}
 
 			for fieldName, fieldVal := range mOp.mappings {
-				valStr := g.fieldValueToCUE(fieldVal)
-				sb.WriteString(fmt.Sprintf("%s%s: %s\n", fieldIndent, fieldName, valStr))
+				if condRef, isConditional := fieldVal.(*ConditionalOrFieldRef); isConditional {
+					// Emit if/else pattern for conditional field reference
+					primaryField := string(condRef.primary)
+					fallbackStr := g.fieldValueToCUE(condRef.fallback)
+					sb.WriteString(fmt.Sprintf("%sif v.%s != _|_ {\n", fieldIndent, primaryField))
+					sb.WriteString(fmt.Sprintf("%s\t%s: v.%s\n", fieldIndent, fieldName, primaryField))
+					sb.WriteString(fmt.Sprintf("%s}\n", fieldIndent))
+					sb.WriteString(fmt.Sprintf("%sif v.%s == _|_ {\n", fieldIndent, primaryField))
+					sb.WriteString(fmt.Sprintf("%s\t%s: %s\n", fieldIndent, fieldName, fallbackStr))
+					sb.WriteString(fmt.Sprintf("%s}\n", fieldIndent))
+				} else {
+					valStr := g.fieldValueToCUE(fieldVal)
+					sb.WriteString(fmt.Sprintf("%s%s: %s\n", fieldIndent, fieldName, valStr))
+				}
 			}
 
 			sb.WriteString(fmt.Sprintf("%s},\n%s]", innerIndent, strings.Repeat(g.indent, depth)))
@@ -942,6 +956,7 @@ type fieldNode struct {
 	patchKey      *PatchKeyOp   // PatchKey operation (for array patches with merge key)
 	spreadAll     *SpreadAllOp  // SpreadAll operation (for array constraint patches)
 	patchStrategy string        // e.g. "retainKeys" → generates // +patchStrategy=retainKeys
+	directives    []string          // e.g. ["patchKey=ip"] → generates // +patchKey=ip
 	condValues    []condValueEntry // additional conditional values at same path
 }
 
@@ -981,6 +996,8 @@ func (g *CUEGenerator) buildFieldTree(ops []ResourceOp) *fieldNode {
 			g.insertSpreadAllIntoTree(root, o, nil)
 		case *PatchStrategyAnnotationOp:
 			g.insertAnnotationIntoTree(root, o.Path(), o.Strategy())
+		case *DirectiveOp:
+			g.insertDirectiveIntoTree(root, o.Path(), o.GetDirective())
 		case *IfBlock:
 			// For if blocks, process inner ops with the block's condition
 			for _, innerOp := range o.Ops() {
@@ -1006,12 +1023,28 @@ func (g *CUEGenerator) buildFieldTree(ops []ResourceOp) *fieldNode {
 					g.insertSpreadAllIntoTree(root, inner, o.Cond())
 				case *PatchStrategyAnnotationOp:
 					g.insertAnnotationIntoTree(root, inner.Path(), inner.Strategy())
+				case *DirectiveOp:
+					g.insertDirectiveIntoTree(root, inner.Path(), inner.GetDirective())
 				}
 			}
 		}
 	}
 
 	return root
+}
+
+// insertDirectiveIntoTree navigates to a node by path and adds a directive annotation.
+func (g *CUEGenerator) insertDirectiveIntoTree(root *fieldNode, path string, directive string) {
+	parts := splitPath(path)
+	current := root
+	for _, part := range parts {
+		if _, exists := current.children[part]; !exists {
+			current.children[part] = newFieldNode()
+			current.childOrder = append(current.childOrder, part)
+		}
+		current = current.children[part]
+	}
+	current.directives = append(current.directives, directive)
 }
 
 // insertAnnotationIntoTree navigates to a node by path and sets its patchStrategy annotation.
@@ -1484,6 +1517,11 @@ func (g *CUEGenerator) writeFieldNode(sb *strings.Builder, name string, node *fi
 		}
 	}
 
+	// Emit directive annotations before the field
+	for _, directive := range node.directives {
+		sb.WriteString(fmt.Sprintf("%s// +%s\n", indent, directive))
+	}
+
 	// Regular field
 	if node.value != nil && len(node.children) == 0 {
 		if len(node.condValues) > 0 {
@@ -1659,6 +1697,8 @@ func (g *CUEGenerator) valueToCUE(v Value) string {
 		return g.collectionOpToCUE(val)
 	case *MultiSource:
 		return g.multiSourceToCUE(val)
+	case *InlineArrayValue:
+		return g.inlineArrayToCUE(val)
 	case *ConcatExprValue:
 		return g.concatExprToCUE(val)
 	case *CUEFunc:
@@ -1983,6 +2023,16 @@ func (g *CUEGenerator) collectionOpToCUE(col *CollectionOp) string {
 						sb.WriteString(fmt.Sprintf("\t\t\t\t\tif v.%s != _|_ {\n", optField.field))
 						sb.WriteString(fmt.Sprintf("\t\t\t\t\t\t%s: v.%s\n", fieldName, optField.field))
 						sb.WriteString("\t\t\t\t\t}\n")
+					} else if condRef, isConditional := fieldVal.(*ConditionalOrFieldRef); isConditional {
+						// Emit if/else pattern for conditional field reference
+						primaryField := string(condRef.primary)
+						fallbackStr := g.fieldValueToCUE(condRef.fallback)
+						sb.WriteString(fmt.Sprintf("\t\t\t\t\tif v.%s != _|_ {\n", primaryField))
+						sb.WriteString(fmt.Sprintf("\t\t\t\t\t\t%s: v.%s\n", fieldName, primaryField))
+						sb.WriteString("\t\t\t\t\t}\n")
+						sb.WriteString(fmt.Sprintf("\t\t\t\t\tif v.%s == _|_ {\n", primaryField))
+						sb.WriteString(fmt.Sprintf("\t\t\t\t\t\t%s: %s\n", fieldName, fallbackStr))
+						sb.WriteString("\t\t\t\t\t}\n")
 					} else {
 						valStr := g.fieldValueToCUE(fieldVal)
 						sb.WriteString(fmt.Sprintf("\t\t\t\t\t%s: %s\n", fieldName, valStr))
@@ -2277,6 +2327,19 @@ func (g *CUEGenerator) concatExprToCUE(ce *ConcatExprValue) string {
 	return strings.Join(parts, " + ")
 }
 
+// inlineArrayToCUE converts an InlineArrayValue to CUE syntax.
+// Generates: [{field1: value1, field2: value2}]
+func (g *CUEGenerator) inlineArrayToCUE(arr *InlineArrayValue) string {
+	var sb strings.Builder
+	sb.WriteString("[{\n")
+	for fieldName, fieldVal := range arr.Fields() {
+		valStr := g.valueToCUE(fieldVal)
+		sb.WriteString(fmt.Sprintf("\t\t\t\t\t\t\t%s: %s\n", fieldName, valStr))
+	}
+	sb.WriteString("\t\t\t\t\t\t}]")
+	return sb.String()
+}
+
 // conditionToCUE converts a Condition to CUE syntax.
 func (g *CUEGenerator) conditionToCUE(cond Condition) string {
 	switch c := cond.(type) {
@@ -2487,9 +2550,19 @@ func (g *CUEGenerator) writeStatus(sb *strings.Builder, c *ComponentDefinition, 
 func (g *CUEGenerator) writeParam(sb *strings.Builder, param Param, depth int) {
 	indent := strings.Repeat(g.indent, depth)
 
+	// Write // +ignore directive if set (before +usage)
+	if ip, ok := param.(interface{ IsIgnore() bool }); ok && ip.IsIgnore() {
+		sb.WriteString(fmt.Sprintf("%s// +ignore\n", indent))
+	}
+
 	// Write description as comment if present
 	if desc := param.GetDescription(); desc != "" {
 		sb.WriteString(fmt.Sprintf("%s// +usage=%s\n", indent, desc))
+	}
+
+	// Write // +short=X directive if set (after +usage)
+	if sp, ok := param.(interface{ GetShort() string }); ok && sp.GetShort() != "" {
+		sb.WriteString(fmt.Sprintf("%s// +short=%s\n", indent, sp.GetShort()))
 	}
 
 	name := param.Name()
