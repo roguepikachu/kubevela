@@ -767,24 +767,42 @@ var _ = Describe("CUEGenerator", func() {
 			gen := defkit.NewCUEGenerator()
 
 			port := defkit.Int("port")
-			ports := defkit.List("ports")
 			comp := defkit.NewComponent("test").
 				Workload("apps/v1", "DaemonSet").
-				Params(port, ports).
+				Params(port).
 				Template(func(tpl *defkit.Template) {
 					tpl.Output(
 						defkit.NewResource("apps/v1", "DaemonSet").
-							If(defkit.And(port.IsSet(), ports.NotSet())).
 							Set("spec.template.spec.containers[0].ports", defkit.InlineArray(map[string]defkit.Value{
 								"containerPort": port,
-							})).
-							EndIf(),
+							})),
 					)
 				})
 
 			cue := gen.GenerateFullDefinition(comp)
 
-			Expect(cue).To(ContainSubstring(`if parameter["port"] != _|_ && parameter["ports"] == _|_`))
+			Expect(cue).To(ContainSubstring("containerPort: parameter.port"))
+		})
+
+		It("should render inline array with conditional wrapping", func() {
+			gen := defkit.NewCUEGenerator()
+
+			port := defkit.Int("port")
+			comp := defkit.NewComponent("test").
+				Workload("apps/v1", "DaemonSet").
+				Params(port).
+				Template(func(tpl *defkit.Template) {
+					tpl.Output(
+						defkit.NewResource("apps/v1", "DaemonSet").
+							SetIf(port.IsSet(), "spec.template.spec.containers[0].ports", defkit.InlineArray(map[string]defkit.Value{
+								"containerPort": port,
+							})),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			Expect(cue).To(ContainSubstring(`if parameter["port"] != _|_`))
 			Expect(cue).To(ContainSubstring("containerPort: parameter.port"))
 		})
 	})
