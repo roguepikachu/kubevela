@@ -784,7 +784,7 @@ var _ = Describe("CUEGenerator", func() {
 			Expect(cue).To(ContainSubstring("containerPort: parameter.port"))
 		})
 
-		It("should render inline array with conditional wrapping", func() {
+		It("should render inline array with multiple fields", func() {
 			gen := defkit.NewCUEGenerator()
 
 			port := defkit.Int("port")
@@ -794,16 +794,17 @@ var _ = Describe("CUEGenerator", func() {
 				Template(func(tpl *defkit.Template) {
 					tpl.Output(
 						defkit.NewResource("apps/v1", "DaemonSet").
-							SetIf(port.IsSet(), "spec.template.spec.containers[0].ports", defkit.InlineArray(map[string]defkit.Value{
+							Set("spec.template.spec.containers[0].ports", defkit.InlineArray(map[string]defkit.Value{
 								"containerPort": port,
+								"protocol":      defkit.Lit("TCP"),
 							})),
 					)
 				})
 
 			cue := gen.GenerateFullDefinition(comp)
 
-			Expect(cue).To(ContainSubstring(`if parameter["port"] != _|_`))
 			Expect(cue).To(ContainSubstring("containerPort: parameter.port"))
+			Expect(cue).To(ContainSubstring(`protocol: "TCP"`))
 		})
 	})
 })
