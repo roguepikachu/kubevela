@@ -289,7 +289,15 @@ func (g *CUEGenerator) GenerateFullDefinition(c *ComponentDefinition) string {
 	sb.WriteString(fmt.Sprintf("%s: {\n", cueLabel(c.GetName())))
 	sb.WriteString(fmt.Sprintf("%stype: \"component\"\n", g.indent))
 	sb.WriteString(fmt.Sprintf("%sannotations: {}\n", g.indent))
-	sb.WriteString(fmt.Sprintf("%slabels: {}\n", g.indent))
+	if len(c.GetLabels()) > 0 {
+		sb.WriteString(fmt.Sprintf("%slabels: {\n", g.indent))
+		for k, v := range c.GetLabels() {
+			sb.WriteString(fmt.Sprintf("%s\t%q: %q\n", g.indent, k, v))
+		}
+		sb.WriteString(fmt.Sprintf("%s}\n", g.indent))
+	} else {
+		sb.WriteString(fmt.Sprintf("%slabels: {}\n", g.indent))
+	}
 	sb.WriteString(fmt.Sprintf("%sdescription: %q\n", g.indent, c.GetDescription()))
 
 	// Write attributes
