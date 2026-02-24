@@ -451,6 +451,155 @@ var _ = Describe("CUEGenerator", func() {
 		})
 	})
 
+	Describe("Decomposition with condValues (condValues + canDecomposeByCondition)", func() {
+		It("should decompose struct when leaf nodes have condValues from SetIf with different And conditions", func() {
+			// This is the webservice CPU/memory limit branching pattern:
+			// Two SetIf calls with different conditions target the same leaf path,
+			// creating condValues. The parent struct must still decompose correctly.
+			gen := defkit.NewCUEGenerator()
+
+			cpu := defkit.String("cpu")
+			limit := defkit.Object("limit")
+
+			comp := defkit.NewComponent("test-condval-decompose").
+				Description("Test condValues decomposition").
+				AutodetectWorkload().
+				Params(cpu, limit).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("v1", "Pod")
+					// When cpu is set and limit.cpu exists: use limit.cpu for limits, cpu for requests
+					res.SetIf(defkit.And(cpu.IsSet(), defkit.PathExists("parameter.limit.cpu")),
+						"spec.resources.requests.cpu", cpu)
+					res.SetIf(defkit.And(cpu.IsSet(), defkit.PathExists("parameter.limit.cpu")),
+						"spec.resources.limits.cpu", defkit.Reference("parameter.limit.cpu"))
+					// When cpu is set but limit.cpu does NOT exist: use cpu for both
+					res.SetIf(defkit.And(cpu.IsSet(), defkit.Not(defkit.PathExists("parameter.limit.cpu"))),
+						"spec.resources.limits.cpu", cpu)
+					res.SetIf(defkit.And(cpu.IsSet(), defkit.Not(defkit.PathExists("parameter.limit.cpu"))),
+						"spec.resources.requests.cpu", cpu)
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Both compound conditions should appear as separate blocks
+			Expect(cue).To(ContainSubstring(`parameter["cpu"] != _|_`))
+			Expect(cue).To(ContainSubstring("parameter.limit.cpu"))
+
+			// resources should be decomposed into per-condition blocks
+			// Each block should contain both limits and requests
+			Expect(strings.Count(cue, "resources:")).To(BeNumerically(">=", 2))
+			Expect(strings.Count(cue, "limits:")).To(BeNumerically(">=", 2))
+			Expect(strings.Count(cue, "requests:")).To(BeNumerically(">=", 2))
+
+			// The block where limit.cpu exists should use parameter.limit.cpu for limits
+			Expect(cue).To(ContainSubstring("cpu: parameter.limit.cpu"))
+			// The block where limit.cpu does NOT exist should use parameter.cpu for limits
+			Expect(strings.Count(cue, "cpu: parameter.cpu")).To(BeNumerically(">=", 2))
+		})
+
+		It("should decompose when two sibling leaves at the same path have different condValues", func() {
+			// Pattern: limits.cpu set under condition A (primary) and condition B (condValue),
+			// requests.cpu set under condition A (primary) and condition B (condValue).
+			// collectLeafConditions must see both A and B from condValues.
+			gen := defkit.NewCUEGenerator()
+
+			flagA := defkit.Bool("flagA")
+			flagB := defkit.Bool("flagB")
+
+			comp := defkit.NewComponent("test-condval-siblings").
+				Description("Test condValues sibling decomposition").
+				AutodetectWorkload().
+				Params(flagA, flagB).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("v1", "Pod")
+					res.SetIf(flagA.IsSet(), "spec.nested.child1", defkit.Lit("A1"))
+					res.SetIf(flagB.IsSet(), "spec.nested.child1", defkit.Lit("B1"))
+					res.SetIf(flagA.IsSet(), "spec.nested.child2", defkit.Lit("A2"))
+					res.SetIf(flagB.IsSet(), "spec.nested.child2", defkit.Lit("B2"))
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Both conditions should appear
+			Expect(cue).To(ContainSubstring(`parameter["flagA"]`))
+			Expect(cue).To(ContainSubstring(`parameter["flagB"]`))
+			// nested should be decomposed into per-condition blocks
+			Expect(strings.Count(cue, "nested:")).To(BeNumerically(">=", 2))
+
+			// In the flagA block: child1 = "A1", child2 = "A2"
+			flagAIdx := strings.Index(cue, `parameter["flagA"]`)
+			Expect(flagAIdx).To(BeNumerically(">", 0))
+			endA := flagAIdx + 200
+			if endA > len(cue) {
+				endA = len(cue)
+			}
+			afterFlagA := cue[flagAIdx:endA]
+			Expect(afterFlagA).To(ContainSubstring(`child1: "A1"`))
+			Expect(afterFlagA).To(ContainSubstring(`child2: "A2"`))
+
+			// In the flagB block: child1 = "B1", child2 = "B2"
+			flagBIdx := strings.Index(cue, `parameter["flagB"]`)
+			Expect(flagBIdx).To(BeNumerically(">", 0))
+			endB := flagBIdx + 200
+			if endB > len(cue) {
+				endB = len(cue)
+			}
+			afterFlagB := cue[flagBIdx:endB]
+			Expect(afterFlagB).To(ContainSubstring(`child1: "B1"`))
+			Expect(afterFlagB).To(ContainSubstring(`child2: "B2"`))
+		})
+
+		It("should filter condValues correctly: primary condition returns primary value, condValue condition returns condValue value", func() {
+			// Verifies filterNodeByCondition returns the correct value
+			// when the target condition matches a condValue rather than the primary.
+			gen := defkit.NewCUEGenerator()
+
+			modeA := defkit.String("modeA")
+			modeB := defkit.String("modeB")
+
+			comp := defkit.NewComponent("test-filter-condval").
+				Description("Test filterNodeByCondition with condValues").
+				AutodetectWorkload().
+				Params(modeA, modeB).
+				Template(func(tpl *defkit.Template) {
+					res := defkit.NewResource("v1", "Pod")
+					// Same leaf path, two different conditions, two different values
+					res.SetIf(modeA.IsSet(), "spec.wrapper.target", defkit.Lit("value-from-A"))
+					res.SetIf(modeB.IsSet(), "spec.wrapper.target", defkit.Lit("value-from-B"))
+					// Second leaf to make decomposition viable
+					res.SetIf(modeA.IsSet(), "spec.wrapper.other", defkit.Lit("other-A"))
+					res.SetIf(modeB.IsSet(), "spec.wrapper.other", defkit.Lit("other-B"))
+					tpl.Output(res)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Find the modeA block and verify it has value-from-A
+			modeAIdx := strings.Index(cue, `parameter["modeA"]`)
+			Expect(modeAIdx).To(BeNumerically(">", 0))
+			endA := modeAIdx + 250
+			if endA > len(cue) {
+				endA = len(cue)
+			}
+			afterA := cue[modeAIdx:endA]
+			Expect(afterA).To(ContainSubstring(`target: "value-from-A"`))
+			Expect(afterA).To(ContainSubstring(`other: "other-A"`))
+
+			// Find the modeB block and verify it has value-from-B
+			modeBIdx := strings.Index(cue, `parameter["modeB"]`)
+			Expect(modeBIdx).To(BeNumerically(">", 0))
+			endB := modeBIdx + 250
+			if endB > len(cue) {
+				endB = len(cue)
+			}
+			afterB := cue[modeBIdx:endB]
+			Expect(afterB).To(ContainSubstring(`target: "value-from-B"`))
+			Expect(afterB).To(ContainSubstring(`other: "other-B"`))
+		})
+	})
+
 	Describe("Intermediate node decomposition (canDecomposeByCondition)", func() {
 		It("should decompose struct into per-condition blocks when all leaves share the same condition set", func() {
 			gen := defkit.NewCUEGenerator()

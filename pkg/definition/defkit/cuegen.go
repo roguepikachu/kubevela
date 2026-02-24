@@ -1664,6 +1664,11 @@ func (g *CUEGenerator) canDecomposeByCondition(node *fieldNode) map[string][]str
 func (g *CUEGenerator) collectLeafConditions(node *fieldNode, condSet map[string]bool) {
 	if node.cond != nil && node.value != nil {
 		condSet[g.conditionToCUE(node.cond)] = true
+		// Also collect conditions from condValues (additional conditional
+		// values at the same path).
+		for _, cv := range node.condValues {
+			condSet[g.conditionToCUE(cv.cond)] = true
+		}
 		return
 	}
 	if node.cond != nil && len(node.children) > 0 {
@@ -1689,7 +1694,18 @@ func (g *CUEGenerator) filterNodeByCondition(node *fieldNode, condStr string) *f
 		if g.conditionToCUE(node.cond) == condStr {
 			nodeCopy := *node
 			nodeCopy.cond = nil
+			nodeCopy.condValues = nil // Strip condValues; other conditions handled by their own block
 			return &nodeCopy
+		}
+		// Check if the target condition is in condValues instead of the primary
+		for _, cv := range node.condValues {
+			if g.conditionToCUE(cv.cond) == condStr {
+				nodeCopy := *node
+				nodeCopy.value = cv.value
+				nodeCopy.cond = nil
+				nodeCopy.condValues = nil
+				return &nodeCopy
+			}
 		}
 		return nil
 	}
