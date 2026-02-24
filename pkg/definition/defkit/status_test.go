@@ -229,6 +229,49 @@ var _ = Describe("Status", func() {
 		})
 	})
 
+	Context("StatusBuilder field grouping", func() {
+		It("should consolidate multiple fields with same parent into one block", func() {
+			s := defkit.Status().
+				IntField("status.active", "status.active", 0).
+				IntField("status.failed", "status.failed", 0).
+				IntField("status.succeeded", "status.succeeded", 0).
+				Message(`Active/Failed/Succeeded:\(status.active)/\(status.failed)/\(status.succeeded)`)
+			cue := s.Build()
+			Expect(strings.Count(cue, "status: {")).To(Equal(1))
+			Expect(cue).To(ContainSubstring("active:"))
+			Expect(cue).To(ContainSubstring("failed:"))
+			Expect(cue).To(ContainSubstring("succeeded:"))
+		})
+
+		It("should keep different parent prefixes as separate blocks", func() {
+			s := defkit.Status().
+				IntField("ready.replicas", "status.numberReady", 0).
+				IntField("desired.replicas", "status.desiredNumberScheduled", 0).
+				Message(`Ready:\(ready.replicas)/\(desired.replicas)`)
+			cue := s.Build()
+			Expect(strings.Count(cue, "ready: {")).To(Equal(1))
+			Expect(strings.Count(cue, "desired: {")).To(Equal(1))
+		})
+
+		It("should column-align fields within consolidated block", func() {
+			s := defkit.Status().
+				IntField("status.active", "status.active", 0).
+				IntField("status.succeeded", "status.succeeded", 0)
+			cue := s.Build()
+			// "active" is shorter than "succeeded", so it should be padded
+			Expect(cue).To(ContainSubstring("active:    *0 | int"))
+			Expect(cue).To(ContainSubstring("succeeded: *0 | int"))
+		})
+
+		It("should handle simple (non-nested) fields without grouping", func() {
+			s := defkit.Status().
+				IntField("succeeded", "status.succeeded", 0)
+			cue := s.Build()
+			Expect(cue).To(ContainSubstring("succeeded: *0 | int"))
+			Expect(cue).To(ContainSubstring("context.output.status.succeeded"))
+		})
+	})
+
 	Context("HealthBuilder field grouping", func() {
 		It("should consolidate multiple fields with same parent into one block", func() {
 			h := defkit.Health().
