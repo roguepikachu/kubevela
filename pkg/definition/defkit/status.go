@@ -236,7 +236,18 @@ func (h *HealthBuilder) Build() string {
 	parts = append(parts, h.buildGroupedFields()...)
 
 	if len(h.conditions) > 0 {
-		healthExpr := strings.Join(h.conditions, " && ")
+		// When multiple conditions are joined with &&, auto-parenthesize each
+		// for correct precedence and readability. Skip already-parenthesized
+		// conditions (e.g. from StatusOr). Single conditions are left as-is.
+		conditions := h.conditions
+		if len(conditions) > 1 {
+			wrapped := make([]string, len(conditions))
+			for i, c := range conditions {
+				wrapped[i] = parenthesizeCondition(c)
+			}
+			conditions = wrapped
+		}
+		healthExpr := strings.Join(conditions, " && ")
 		if h.useDefault {
 			parts = append(parts, fmt.Sprintf("_isHealth: %s", healthExpr), "isHealth: *_isHealth | bool")
 		} else {
@@ -249,6 +260,39 @@ func (h *HealthBuilder) Build() string {
 	}
 
 	return strings.Join(parts, "\n")
+}
+
+// parenthesizeCondition wraps a condition string in parentheses if it isn't already
+// fully enclosed in a matching pair. This prevents double-wrapping conditions that
+// are already parenthesized (e.g. from StatusOr).
+func parenthesizeCondition(s string) string {
+	s = strings.TrimSpace(s)
+	if isFullyParenthesized(s) {
+		return s
+	}
+	return "(" + s + ")"
+}
+
+// isFullyParenthesized checks whether the string is enclosed by a single matching
+// pair of parentheses. For example "(a == b)" and "(a || b)" return true, but
+// "(a) && (b)" returns false because the first closing paren appears before the end.
+func isFullyParenthesized(s string) bool {
+	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
+		return false
+	}
+	depth := 0
+	for i, ch := range s {
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+		}
+		// If depth reaches 0 before the last character, the outer parens don't enclose everything
+		if depth == 0 && i < len(s)-1 {
+			return false
+		}
+	}
+	return depth == 0
 }
 
 // buildGroupedFields groups fields by parent prefix and generates consolidated CUE blocks.
@@ -402,9 +446,9 @@ func DeploymentHealth() *HealthBuilder {
 		IntField("ready.replicas", "status.replicas", 0).
 		IntField("ready.observedGeneration", "status.observedGeneration", 0).
 		HealthyWhen(
-			"("+StatusEq("context.output.spec.replicas", "ready.readyReplicas")+")",
-			"("+StatusEq("context.output.spec.replicas", "ready.updatedReplicas")+")",
-			"("+StatusEq("context.output.spec.replicas", "ready.replicas")+")",
+			StatusEq("context.output.spec.replicas", "ready.readyReplicas"),
+			StatusEq("context.output.spec.replicas", "ready.updatedReplicas"),
+			StatusEq("context.output.spec.replicas", "ready.replicas"),
 			StatusOr(StatusEq("ready.observedGeneration", "context.output.metadata.generation"), "ready.observedGeneration > context.output.metadata.generation"),
 		).
 		WithDefault().

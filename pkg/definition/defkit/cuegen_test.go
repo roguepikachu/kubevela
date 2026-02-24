@@ -762,6 +762,85 @@ var _ = Describe("CUEGenerator", func() {
 		})
 	})
 
+	Describe("GenerateFullDefinition with CompoundOptionalField", func() {
+		It("should generate compound conditional for OptionalFieldWithCond in collection Map", func() {
+			gen := defkit.NewCUEGenerator()
+
+			exposeType := defkit.Enum("exposeType").
+				Values("ClusterIP", "NodePort", "LoadBalancer").
+				Default("ClusterIP")
+			ports := defkit.List("ports").WithFields(
+				defkit.Int("port").Required(),
+				defkit.String("name"),
+				defkit.Int("nodePort"),
+				defkit.Bool("expose").Default(false),
+			)
+			comp := defkit.NewComponent("test").
+				Workload("apps/v1", "Deployment").
+				Params(exposeType, ports).
+				Template(func(tpl *defkit.Template) {
+					exposePorts := defkit.Each(ports).
+						Filter(defkit.FieldEquals("expose", true)).
+						Map(defkit.FieldMap{
+							"port":     defkit.FieldRef("port"),
+							"nodePort": defkit.OptionalFieldWithCond("nodePort", defkit.Eq(exposeType, defkit.Lit("NodePort"))),
+						})
+					tpl.Output(
+						defkit.NewResource("apps/v1", "Deployment").
+							Set("spec.ports", exposePorts),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Should generate compound conditional: if v.nodePort != _|_ if <cond> { nodePort: v.nodePort }
+			Expect(cue).To(ContainSubstring("v.nodePort != _|_"))
+			Expect(cue).To(ContainSubstring(`parameter.exposeType == "NodePort"`))
+			Expect(cue).To(ContainSubstring("nodePort: v.nodePort"))
+		})
+
+		It("should generate simple optional conditional alongside compound conditional", func() {
+			gen := defkit.NewCUEGenerator()
+
+			exposeType := defkit.Enum("exposeType").
+				Values("ClusterIP", "NodePort", "LoadBalancer").
+				Default("ClusterIP")
+			ports := defkit.List("ports").WithFields(
+				defkit.Int("port").Required(),
+				defkit.Int("nodePort"),
+				defkit.String("protocol"),
+				defkit.Bool("expose").Default(false),
+			)
+			comp := defkit.NewComponent("test").
+				Workload("apps/v1", "Deployment").
+				Params(exposeType, ports).
+				Template(func(tpl *defkit.Template) {
+					exposePorts := defkit.Each(ports).
+						Filter(defkit.FieldEquals("expose", true)).
+						Map(defkit.FieldMap{
+							"port":     defkit.FieldRef("port"),
+							"nodePort": defkit.OptionalFieldWithCond("nodePort", defkit.Eq(exposeType, defkit.Lit("NodePort"))),
+							"protocol": defkit.OptionalFieldRef("protocol"),
+						})
+					tpl.Output(
+						defkit.NewResource("apps/v1", "Deployment").
+							Set("spec.ports", exposePorts),
+					)
+				})
+
+			cue := gen.GenerateFullDefinition(comp)
+
+			// Compound conditional for nodePort
+			Expect(cue).To(ContainSubstring("v.nodePort != _|_"))
+			Expect(cue).To(ContainSubstring(`parameter.exposeType == "NodePort"`))
+			Expect(cue).To(ContainSubstring("nodePort: v.nodePort"))
+
+			// Simple optional conditional for protocol
+			Expect(cue).To(ContainSubstring("v.protocol != _|_"))
+			Expect(cue).To(ContainSubstring("protocol: v.protocol"))
+		})
+	})
+
 	Describe("GenerateFullDefinition with InlineArray", func() {
 		It("should render inline array value as [{field: value}]", func() {
 			gen := defkit.NewCUEGenerator()

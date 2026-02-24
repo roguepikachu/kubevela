@@ -214,6 +214,23 @@ var _ = Describe("Collections", func() {
 		})
 	})
 
+	Context("CompoundOptionalField", func() {
+		It("should create compound optional field with OptionalFieldWithCond", func() {
+			cond := defkit.Eq(defkit.String("exposeType"), defkit.Lit("NodePort"))
+			compOpt := defkit.OptionalFieldWithCond("nodePort", cond)
+			Expect(compOpt).NotTo(BeNil())
+		})
+
+		It("should be usable as a FieldValue in FieldMap", func() {
+			cond := defkit.Eq(defkit.String("exposeType"), defkit.Lit("NodePort"))
+			fm := defkit.FieldMap{
+				"port":     defkit.FieldRef("port"),
+				"nodePort": defkit.OptionalFieldWithCond("nodePort", cond),
+			}
+			Expect(fm).To(HaveLen(2))
+		})
+	})
+
 	Context("NestedFieldMap", func() {
 		It("should create nested field mapping (alias for Nested)", func() {
 			nested := defkit.NestedFieldMap(defkit.FieldMap{

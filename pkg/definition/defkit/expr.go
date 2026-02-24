@@ -355,6 +355,14 @@ type CUEFunc struct {
 func (c *CUEFunc) expr()  {}
 func (c *CUEFunc) value() {}
 
+// RequiredImports returns the CUE imports required by this function call.
+func (c *CUEFunc) RequiredImports() []string {
+	if c.pkg != "" {
+		return []string{c.pkg}
+	}
+	return nil
+}
+
 // Package returns the CUE package name.
 func (c *CUEFunc) Package() string { return c.pkg }
 

@@ -110,11 +110,11 @@ var _ = Describe("Status", func() {
 			Expect(cue).To(ContainSubstring("isHealth: ready.replicas == desired.replicas"))
 		})
 
-		It("should add multiple health conditions", func() {
+		It("should add multiple health conditions with auto-parenthesization", func() {
 			h := defkit.Health().
 				HealthyWhen("condition1", "condition2", "condition3")
 			cue := h.Build()
-			Expect(cue).To(ContainSubstring("isHealth: condition1 && condition2 && condition3"))
+			Expect(cue).To(ContainSubstring("isHealth: (condition1) && (condition2) && (condition3)"))
 		})
 
 		It("should support RawCUE override on health builder", func() {
@@ -283,6 +283,80 @@ var _ = Describe("Status", func() {
 			// The shorter field "a" should have more padding than "longFieldName"
 			Expect(cue).To(ContainSubstring("a:"))
 			Expect(cue).To(ContainSubstring("longFieldName:"))
+		})
+	})
+
+	Context("HealthBuilder auto-parenthesization", func() {
+		It("should NOT parenthesize a single condition", func() {
+			h := defkit.Health().
+				HealthyWhen("ready.replicas == desired.replicas")
+			cue := h.Build()
+			Expect(cue).To(ContainSubstring("isHealth: ready.replicas == desired.replicas"))
+		})
+
+		It("should auto-parenthesize multiple conditions", func() {
+			h := defkit.Health().
+				HealthyWhen("a == b", "c == d")
+			cue := h.Build()
+			Expect(cue).To(ContainSubstring("isHealth: (a == b) && (c == d)"))
+		})
+
+		It("should NOT double-wrap already-parenthesized conditions", func() {
+			h := defkit.Health().
+				HealthyWhen("a == b", defkit.StatusOr("x == y", "x > y"))
+			cue := h.Build()
+			// StatusOr returns "(x == y || x > y)" which is already fully parenthesized
+			Expect(cue).To(ContainSubstring("(a == b) && (x == y || x > y)"))
+		})
+
+		It("should NOT treat partially-parenthesized strings as fully wrapped", func() {
+			// "(a) && (b)" starts with ( and ends with ) but is not fully enclosed
+			h := defkit.Health().
+				HealthyWhen("first", "(a) && (b)")
+			cue := h.Build()
+			Expect(cue).To(ContainSubstring("(first) && ((a) && (b))"))
+		})
+
+		It("should work with StatusEq without manual parens", func() {
+			h := defkit.Health().
+				HealthyWhen(
+					defkit.StatusEq("spec.replicas", "ready.replicas"),
+					defkit.StatusEq("spec.replicas", "ready.updated"),
+				)
+			cue := h.Build()
+			Expect(cue).To(ContainSubstring("(spec.replicas == ready.replicas) && (spec.replicas == ready.updated)"))
+		})
+
+		It("should work with WithDefault and StatusEq", func() {
+			h := defkit.Health().
+				HealthyWhen(
+					defkit.StatusEq("a", "b"),
+					defkit.StatusEq("c", "d"),
+				).
+				WithDefault()
+			cue := h.Build()
+			Expect(cue).To(ContainSubstring("_isHealth: (a == b) && (c == d)"))
+			Expect(cue).To(ContainSubstring("isHealth: *_isHealth | bool"))
+		})
+
+		It("should produce correct CUE for DaemonSetHealth with auto-parens", func() {
+			h := defkit.DaemonSetHealth()
+			cue := h.Build()
+			// Each equality condition should be parenthesized
+			Expect(cue).To(ContainSubstring("(desired.replicas == ready.replicas)"))
+			Expect(cue).To(ContainSubstring("(desired.replicas == updated.replicas)"))
+			Expect(cue).To(ContainSubstring("(desired.replicas == current.replicas)"))
+			// StatusOr is already wrapped, should not be double-wrapped
+			Expect(cue).To(ContainSubstring("(generation.observed == generation.metadata || generation.observed > generation.metadata)"))
+		})
+
+		It("should produce correct CUE for DeploymentHealth with auto-parens", func() {
+			h := defkit.DeploymentHealth()
+			cue := h.Build()
+			Expect(cue).To(ContainSubstring("(context.output.spec.replicas == ready.readyReplicas)"))
+			Expect(cue).To(ContainSubstring("(context.output.spec.replicas == ready.updatedReplicas)"))
+			Expect(cue).To(ContainSubstring("(context.output.spec.replicas == ready.replicas)"))
+			Expect(cue).To(ContainSubstring("_isHealth:"))
 		})
 	})
 

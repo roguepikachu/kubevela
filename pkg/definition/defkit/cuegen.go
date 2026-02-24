@@ -173,6 +173,16 @@ func (g *CUEGenerator) collectImportsFromValue(v interface{}) {
 				g.collectImportsFromFieldValue(fv)
 			}
 		}
+	case *ArrayBuilder:
+		for _, entry := range val.Entries() {
+			if entry.itemBuilder != nil {
+				g.collectImportsFromItemOps(entry.itemBuilder.Ops())
+			}
+		}
+	case *PlusExpr:
+		for _, part := range val.Parts() {
+			g.collectImportsFromValue(part)
+		}
 	}
 }
 
@@ -198,6 +208,22 @@ func (g *CUEGenerator) collectImportsFromFieldValue(fv FieldValue) {
 	case *NestedField:
 		for _, nested := range val.mapping {
 			g.collectImportsFromFieldValue(nested)
+		}
+	}
+}
+
+// collectImportsFromItemOps recursively scans ItemBuilder operations for import requirements.
+func (g *CUEGenerator) collectImportsFromItemOps(ops []itemOp) {
+	for _, op := range ops {
+		switch o := op.(type) {
+		case setOp:
+			g.collectImportsFromValue(o.value)
+		case letOp:
+			g.collectImportsFromValue(o.value)
+		case setDefaultOp:
+			g.collectImportsFromValue(o.defValue)
+		case ifBlockOp:
+			g.collectImportsFromItemOps(o.body)
 		}
 	}
 }
@@ -677,6 +703,8 @@ func (g *CUEGenerator) writeHelper(sb *strings.Builder, helper *HelperVar, depth
 		g.writeMultiSourceHelper(sb, col, depth)
 	case *CollectionOp:
 		g.writeCollectionOpHelper(sb, col, depth, guard)
+	case *ArrayBuilder:
+		sb.WriteString(g.arrayBuilderToCUE(col, depth))
 	default:
 		sb.WriteString("[]")
 	}
@@ -800,6 +828,15 @@ func (g *CUEGenerator) writeCollectionOpHelper(sb *strings.Builder, col *Collect
 					sb.WriteString(fmt.Sprintf("%sif v.%s == _|_ {\n", fieldIndent, primaryField))
 					sb.WriteString(fmt.Sprintf("%s\t%s: %s\n", fieldIndent, fieldName, fallbackStr))
 					sb.WriteString(fmt.Sprintf("%s}\n", fieldIndent))
+				} else if optField, isOptional := fieldVal.(*OptionalField); isOptional {
+					sb.WriteString(fmt.Sprintf("%sif v.%s != _|_ {\n", fieldIndent, optField.field))
+					sb.WriteString(fmt.Sprintf("%s\t%s: v.%s\n", fieldIndent, fieldName, optField.field))
+					sb.WriteString(fmt.Sprintf("%s}\n", fieldIndent))
+				} else if compOpt, isCompound := fieldVal.(*CompoundOptionalField); isCompound {
+					condStr := g.conditionToCUE(compOpt.additionalCond)
+					sb.WriteString(fmt.Sprintf("%sif v.%s != _|_ if %s {\n", fieldIndent, compOpt.field, condStr))
+					sb.WriteString(fmt.Sprintf("%s\t%s: v.%s\n", fieldIndent, fieldName, compOpt.field))
+					sb.WriteString(fmt.Sprintf("%s}\n", fieldIndent))
 				} else {
 					valStr := g.fieldValueToCUE(fieldVal)
 					sb.WriteString(fmt.Sprintf("%s%s: %s\n", fieldIndent, fieldName, valStr))
@@ -851,6 +888,11 @@ func (g *CUEGenerator) writeFieldMapAsHelper(sb *strings.Builder, mapping FieldM
 			if _, isOptional := fieldVal.(*OptionalField); isOptional {
 				sb.WriteString(fmt.Sprintf("%sif v.%s != _|_ {\n", indent, fieldVal.(*OptionalField).field))
 				sb.WriteString(fmt.Sprintf("%s\t%s: v.%s\n", indent, fieldName, fieldVal.(*OptionalField).field))
+				sb.WriteString(fmt.Sprintf("%s}\n", indent))
+			} else if compOpt, isCompound := fieldVal.(*CompoundOptionalField); isCompound {
+				condStr := g.conditionToCUE(compOpt.additionalCond)
+				sb.WriteString(fmt.Sprintf("%sif v.%s != _|_ if %s {\n", indent, compOpt.field, condStr))
+				sb.WriteString(fmt.Sprintf("%s\t%s: v.%s\n", indent, fieldName, compOpt.field))
 				sb.WriteString(fmt.Sprintf("%s}\n", indent))
 			} else {
 				sb.WriteString(fmt.Sprintf("%s%s: %s\n", indent, fieldName, valStr))
@@ -1924,7 +1966,15 @@ func (g *CUEGenerator) arrayBuilderToCUE(ab *ArrayBuilder, depth int) string {
 
 		case entryForEachWith:
 			sourceStr := g.valueToCUE(entry.source)
-			sb.WriteString(fmt.Sprintf("%sfor %s in %s {\n", innerIndent, entry.itemBuilder.VarName(), sourceStr))
+			guardPrefix := ""
+			if entry.guard != nil {
+				guardPrefix = "if " + g.conditionToCUE(entry.guard) + " "
+			}
+			filterSuffix := ""
+			if entry.filter != nil {
+				filterSuffix = " if " + g.predicateToCUE(entry.filter)
+			}
+			sb.WriteString(fmt.Sprintf("%s%sfor %s in %s%s {\n", innerIndent, guardPrefix, entry.itemBuilder.VarName(), sourceStr, filterSuffix))
 			g.writeItemBuilderOps(&sb, entry.itemBuilder.Ops(), depth+2)
 			sb.WriteString(fmt.Sprintf("%s},\n", innerIndent))
 		}
@@ -2022,6 +2072,11 @@ func (g *CUEGenerator) collectionOpToCUE(col *CollectionOp) string {
 					if optField, isOptional := fieldVal.(*OptionalField); isOptional {
 						sb.WriteString(fmt.Sprintf("\t\t\t\t\tif v.%s != _|_ {\n", optField.field))
 						sb.WriteString(fmt.Sprintf("\t\t\t\t\t\t%s: v.%s\n", fieldName, optField.field))
+						sb.WriteString("\t\t\t\t\t}\n")
+					} else if compOpt, isCompound := fieldVal.(*CompoundOptionalField); isCompound {
+						condStr := g.conditionToCUE(compOpt.additionalCond)
+						sb.WriteString(fmt.Sprintf("\t\t\t\t\tif v.%s != _|_ if %s {\n", compOpt.field, condStr))
+						sb.WriteString(fmt.Sprintf("\t\t\t\t\t\t%s: v.%s\n", fieldName, compOpt.field))
 						sb.WriteString("\t\t\t\t\t}\n")
 					} else if condRef, isConditional := fieldVal.(*ConditionalOrFieldRef); isConditional {
 						// Emit if/else pattern for conditional field reference

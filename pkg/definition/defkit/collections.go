@@ -764,6 +764,28 @@ func OptionalFieldRef(field string) *OptionalField {
 	return &OptionalField{field: field}
 }
 
+// CompoundOptionalField includes a field value only if the field exists AND an additional condition is met.
+// Generates CUE: if v.field != _|_ if additionalCond { fieldName: v.field }
+type CompoundOptionalField struct {
+	field          string
+	additionalCond Condition
+}
+
+func (o *CompoundOptionalField) resolve(item map[string]any) any {
+	val, exists := item[o.field]
+	if !exists || val == nil {
+		return nil
+	}
+	return val
+}
+
+// OptionalFieldWithCond creates a field reference that includes the field only when
+// both the field exists and the additional condition is satisfied.
+// Generates CUE: if v.field != _|_ if cond { fieldName: v.field }
+func OptionalFieldWithCond(field string, cond Condition) *CompoundOptionalField {
+	return &CompoundOptionalField{field: field, additionalCond: cond}
+}
+
 // NestedFieldMap creates a nested object from field mappings.
 // This is an alias for Nested, providing a clearer name for struct array helpers.
 // Usage: defkit.NestedFieldMap(defkit.FieldMap{"claimName": defkit.FieldRef("claimName")})
