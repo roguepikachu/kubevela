@@ -23,7 +23,7 @@ type baseParam struct {
 	required      bool
 	defaultValue  any
 	description   string
-	forceOptional bool // when true, field stays optional even with a default value
+	forceOptional bool   // when true, field stays optional even with a default value
 	short         string // short flag alias (e.g. "i" → // +short=i)
 	ignore        bool   // when true, emits // +ignore directive
 }

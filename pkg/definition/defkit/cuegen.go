@@ -1001,12 +1001,12 @@ type fieldNode struct {
 	childOrder    []string // Track insertion order
 	isArray       bool
 	arrayIndex    int
-	spreads       []spreadEntry // Spread operations at this node level
-	forEach       *ForEachOp    // ForEach operation (for trait patches)
-	patchKey      *PatchKeyOp   // PatchKey operation (for array patches with merge key)
-	spreadAll     *SpreadAllOp  // SpreadAll operation (for array constraint patches)
-	patchStrategy string        // e.g. "retainKeys" → generates // +patchStrategy=retainKeys
-	directives    []string          // e.g. ["patchKey=ip"] → generates // +patchKey=ip
+	spreads       []spreadEntry    // Spread operations at this node level
+	forEach       *ForEachOp       // ForEach operation (for trait patches)
+	patchKey      *PatchKeyOp      // PatchKey operation (for array patches with merge key)
+	spreadAll     *SpreadAllOp     // SpreadAll operation (for array constraint patches)
+	patchStrategy string           // e.g. "retainKeys" → generates // +patchStrategy=retainKeys
+	directives    []string         // e.g. ["patchKey=ip"] → generates // +patchKey=ip
 	condValues    []condValueEntry // additional conditional values at same path
 }
 

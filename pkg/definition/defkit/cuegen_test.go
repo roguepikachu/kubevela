@@ -381,7 +381,7 @@ var _ = Describe("CUEGenerator", func() {
 								defkit.Each(volumes).
 									Map(defkit.FieldMap{"name": defkit.FieldRef("name")}).
 									MapVariant("type", "configMap", defkit.FieldMap{
-										"configMap.name": defkit.FieldRef("cmName"),
+										"configMap.name":  defkit.FieldRef("cmName"),
 										"configMap.items": defkit.OptionalFieldRef("items"),
 									}),
 							),
