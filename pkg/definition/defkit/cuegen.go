@@ -22,6 +22,9 @@ import (
 	"strings"
 )
 
+// cueOpenStruct is the CUE literal for an open struct type.
+const cueOpenStruct = "{...}"
+
 // cueLabel quotes a CUE field label if it contains characters that are not
 // valid in a CUE identifier (letters, digits, underscore, $).
 func cueLabel(name string) string {
@@ -1378,14 +1381,15 @@ func (g *CUEGenerator) writeFieldTree(sb *strings.Builder, node *fieldNode, dept
 
 	for _, name := range node.childOrder {
 		child := node.children[name]
-		if len(child.condValues) > 0 {
+		switch {
+		case len(child.condValues) > 0:
 			// Multi-conditional nodes render their own if blocks internally,
 			// so they must be treated as unconditional at the parent level.
 			unconditional = append(unconditional, name)
-		} else if child.cond != nil {
+		case child.cond != nil:
 			condStr := g.conditionToCUE(child.cond)
 			conditional[condStr] = append(conditional[condStr], name)
-		} else {
+		default:
 			unconditional = append(unconditional, name)
 		}
 	}
@@ -1467,6 +1471,78 @@ func (g *CUEGenerator) liftChildConditions(node *fieldNode) {
 	}
 }
 
+// tryDecomposeOrLift attempts to decompose a struct node into per-condition
+// blocks or lift a shared child condition to the parent. Returns true if the
+// node was handled, false if normal rendering should proceed.
+func (g *CUEGenerator) tryDecomposeOrLift(sb *strings.Builder, name string, node *fieldNode, indent string, depth int) bool {
+	if node.value != nil || len(node.children) == 0 || len(node.spreads) > 0 || node.forEach != nil || node.patchKey != nil {
+		return false
+	}
+
+	// Decompose a struct node into per-condition blocks when every child
+	// subtree shares the same uniform set of leaf conditions.
+	condGroups := g.canDecomposeByCondition(node)
+	if condGroups != nil {
+		condStrs := make([]string, 0, len(condGroups))
+		for cs := range condGroups {
+			condStrs = append(condStrs, cs)
+		}
+		sort.Strings(condStrs)
+
+		for _, condStr := range condStrs {
+			sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, condStr))
+			sb.WriteString(fmt.Sprintf("%s\t%s: {\n", indent, name))
+			for _, childName := range node.childOrder {
+				child := node.children[childName]
+				filteredChild := g.filterNodeByCondition(child, condStr)
+				if filteredChild != nil {
+					g.writeFieldNode(sb, childName, filteredChild, depth+2)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
+			sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		}
+		return true
+	}
+
+	// If all children share the same condition, lift it to avoid empty parent structs.
+	condStr := ""
+	canLift := true
+	for _, childName := range node.childOrder {
+		child := node.children[childName]
+		if child.cond == nil {
+			canLift = false
+			break
+		}
+		childCondStr := g.conditionToCUE(child.cond)
+		if condStr == "" {
+			condStr = childCondStr
+		} else if condStr != childCondStr {
+			canLift = false
+			break
+		}
+	}
+	if canLift && condStr != "" {
+		clone := &fieldNode{
+			children:   make(map[string]*fieldNode, len(node.children)),
+			childOrder: append([]string(nil), node.childOrder...),
+		}
+		for childName, child := range node.children {
+			childCopy := *child
+			childCopy.cond = nil
+			clone.children[childName] = &childCopy
+		}
+		sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, condStr))
+		sb.WriteString(fmt.Sprintf("%s\t%s: {\n", indent, name))
+		g.writeFieldTree(sb, clone, depth+2)
+		sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
+		sb.WriteString(fmt.Sprintf("%s}\n", indent))
+		return true
+	}
+
+	return false
+}
+
 // writeFieldNode writes a single field node as CUE.
 func (g *CUEGenerator) writeFieldNode(sb *strings.Builder, name string, node *fieldNode, depth int) {
 	indent := strings.Repeat(g.indent, depth)
@@ -1497,74 +1573,9 @@ func (g *CUEGenerator) writeFieldNode(sb *strings.Builder, name string, node *fi
 		return
 	}
 
-	// Decompose a struct node into per-condition blocks when every child
-	// subtree shares the same uniform set of leaf conditions. For example,
-	// resources: { limits: { if cpu {...}, if memory {...} }, requests: { if cpu {...}, if memory {...} } }
-	// becomes: if cpu { resources: { limits: cpu: ... requests: cpu: ... } } if memory { ... }
-	if node.value == nil && len(node.children) > 0 && len(node.spreads) == 0 && node.forEach == nil && node.patchKey == nil {
-		condGroups := g.canDecomposeByCondition(node)
-		if condGroups != nil {
-			// Sort condition strings for deterministic output
-			condStrs := make([]string, 0, len(condGroups))
-			for cs := range condGroups {
-				condStrs = append(condStrs, cs)
-			}
-			sort.Strings(condStrs)
-
-			for _, condStr := range condStrs {
-				sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, condStr))
-				sb.WriteString(fmt.Sprintf("%s\t%s: {\n", indent, name))
-				for _, childName := range node.childOrder {
-					child := node.children[childName]
-					filteredChild := g.filterNodeByCondition(child, condStr)
-					if filteredChild != nil {
-						g.writeFieldNode(sb, childName, filteredChild, depth+2)
-					}
-				}
-				sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
-				sb.WriteString(fmt.Sprintf("%s}\n", indent))
-			}
-			return
-		}
-	}
-
-	// If all children share the same condition and there are no unconditional parts,
-	// lift the condition to avoid emitting empty parent structs.
-	if node.value == nil && len(node.children) > 0 && len(node.spreads) == 0 && node.forEach == nil && node.patchKey == nil {
-		condStr := ""
-		canLift := true
-		for _, childName := range node.childOrder {
-			child := node.children[childName]
-			if child.cond == nil {
-				canLift = false
-				break
-			}
-			childCondStr := g.conditionToCUE(child.cond)
-			if condStr == "" {
-				condStr = childCondStr
-			} else if condStr != childCondStr {
-				canLift = false
-				break
-			}
-		}
-		if canLift && condStr != "" {
-			// Clone node with cleared child conditions for rendering.
-			clone := &fieldNode{
-				children:   make(map[string]*fieldNode, len(node.children)),
-				childOrder: append([]string(nil), node.childOrder...),
-			}
-			for childName, child := range node.children {
-				childCopy := *child
-				childCopy.cond = nil
-				clone.children[childName] = &childCopy
-			}
-			sb.WriteString(fmt.Sprintf("%sif %s {\n", indent, condStr))
-			sb.WriteString(fmt.Sprintf("%s\t%s: {\n", indent, name))
-			g.writeFieldTree(sb, clone, depth+2)
-			sb.WriteString(fmt.Sprintf("%s\t}\n", indent))
-			sb.WriteString(fmt.Sprintf("%s}\n", indent))
-			return
-		}
+	// Try to decompose or lift conditions for cleaner CUE output.
+	if g.tryDecomposeOrLift(sb, name, node, indent, depth) {
+		return
 	}
 
 	// Emit directive annotations before the field
@@ -1654,15 +1665,13 @@ func (g *CUEGenerator) canDecomposeByCondition(node *fieldNode) map[string][]str
 	}
 
 	// Need at least 2 different conditions to warrant decomposition
-	if referenceSet == nil || len(referenceSet) < 2 {
+	if len(referenceSet) < 2 {
 		return nil
 	}
 
 	result := make(map[string][]string)
 	for condStr := range referenceSet {
-		for _, childName := range node.childOrder {
-			result[condStr] = append(result[condStr], childName)
-		}
+		result[condStr] = append(result[condStr], node.childOrder...)
 	}
 	return result
 }
@@ -2900,11 +2909,11 @@ func (g *CUEGenerator) writeMapParam(sb *strings.Builder, p *MapParam, indent, n
 		if cueType != "" {
 			sb.WriteString(fmt.Sprintf("%s%s%s: [string]: %s\n", indent, name, optional, cueType))
 		} else {
-			sb.WriteString(fmt.Sprintf("%s%s%s: {...}\n", indent, name, optional))
+			sb.WriteString(fmt.Sprintf("%s%s%s: %s\n", indent, name, optional, cueOpenStruct))
 		}
 	} else {
 		// Generic object
-		sb.WriteString(fmt.Sprintf("%s%s%s: {...}\n", indent, name, optional))
+		sb.WriteString(fmt.Sprintf("%s%s%s: %s\n", indent, name, optional, cueOpenStruct))
 	}
 }
 
@@ -3056,8 +3065,8 @@ func (g *CUEGenerator) writeOneOfParam(sb *strings.Builder, p *OneOfParam, inden
 	}
 }
 
-// cueTypeForParamType converts a ParamType to its CUE type string.
-func (g *CUEGenerator) cueTypeForParamType(pt ParamType) string {
+// cueTypeStr converts a ParamType to its CUE type string.
+func cueTypeStr(pt ParamType) string {
 	switch pt {
 	case ParamTypeString:
 		return string(ParamTypeString)
@@ -3069,15 +3078,16 @@ func (g *CUEGenerator) cueTypeForParamType(pt ParamType) string {
 		return "float"
 	case ParamTypeArray:
 		return "[...]"
-	case ParamTypeMap:
-		return "{...}"
-	case ParamTypeStruct:
-		return "{...}"
-	case ParamTypeOneOf:
-		return "{...}"
+	case ParamTypeMap, ParamTypeStruct, ParamTypeOneOf:
+		return cueOpenStruct
 	default:
 		return "_"
 	}
+}
+
+// cueTypeForParamType converts a ParamType to its CUE type string.
+func (g *CUEGenerator) cueTypeForParamType(pt ParamType) string {
+	return cueTypeStr(pt)
 }
 
 // formatCUEValue formats a Go value as a CUE literal.

@@ -426,18 +426,32 @@ type mapVariantOp struct {
 }
 
 func (m *mapVariantOp) apply(items []any) []any {
-	// Runtime apply: filter items matching variant and apply mappings
+	// Runtime apply: merge variant mappings into matching items, pass others through.
+	// This mirrors CUE semantics where each variant condition is evaluated for every
+	// item in the loop body — non-matching items are kept so later MapVariant ops
+	// can process them.
 	result := make([]any, 0, len(items))
 	for _, item := range items {
-		if itemMap, ok := item.(map[string]any); ok {
-			if disc, exists := itemMap[m.discriminator]; exists && fmt.Sprintf("%v", disc) == m.variantName {
-				newItem := make(map[string]any)
-				for newKey, fieldVal := range m.mappings {
-					newItem[newKey] = fieldVal.resolve(itemMap)
-				}
-				result = append(result, newItem)
-			}
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			result = append(result, item)
+			continue
 		}
+		disc, exists := itemMap[m.discriminator]
+		if !exists || fmt.Sprintf("%v", disc) != m.variantName {
+			// Non-matching: pass through unchanged
+			result = append(result, item)
+			continue
+		}
+		// Matching: copy existing fields and merge variant mappings
+		newItem := make(map[string]any, len(itemMap)+len(m.mappings))
+		for k, v := range itemMap {
+			newItem[k] = v
+		}
+		for newKey, fieldVal := range m.mappings {
+			newItem[newKey] = fieldVal.resolve(itemMap)
+		}
+		result = append(result, newItem)
 	}
 	return result
 }

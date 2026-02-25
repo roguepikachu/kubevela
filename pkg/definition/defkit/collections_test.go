@@ -847,6 +847,65 @@ var _ = Describe("Collections", func() {
 			})
 		})
 
+		Context("MapVariant chained operation behavior", func() {
+			It("should apply chained variant mappings to matching items and pass others through", func() {
+				volumes := defkit.List("volumes")
+				col := defkit.Each(volumes).
+					MapVariant("type", "pvc", defkit.FieldMap{
+						"pvcClaim": defkit.FieldRef("claimName"),
+					}).
+					MapVariant("type", "configMap", defkit.FieldMap{
+						"cmRef": defkit.FieldRef("cmName"),
+					}).
+					MapVariant("type", "emptyDir", defkit.FieldMap{
+						"medium": defkit.FieldRef("medium"),
+					})
+
+				items := []any{
+					map[string]any{"name": "data", "type": "pvc", "claimName": "data-pvc"},
+					map[string]any{"name": "config", "type": "configMap", "cmName": "app-config"},
+					map[string]any{"name": "cache", "type": "emptyDir", "medium": "Memory"},
+				}
+
+				results := col.Collect(items)
+				Expect(results).To(HaveLen(3))
+
+				// PVC item should have variant field merged, original fields preserved
+				Expect(results[0]["name"]).To(Equal("data"))
+				Expect(results[0]["pvcClaim"]).To(Equal("data-pvc"))
+				Expect(results[0]).NotTo(HaveKey("cmRef"))
+
+				// ConfigMap item should have variant field merged
+				Expect(results[1]["name"]).To(Equal("config"))
+				Expect(results[1]["cmRef"]).To(Equal("app-config"))
+				Expect(results[1]).NotTo(HaveKey("pvcClaim"))
+
+				// EmptyDir item should have variant field merged
+				Expect(results[2]["name"]).To(Equal("cache"))
+				Expect(results[2]["medium"]).To(Equal("Memory"))
+			})
+
+			It("should preserve items with no matching variant", func() {
+				volumes := defkit.List("volumes")
+				col := defkit.Each(volumes).
+					MapVariant("type", "pvc", defkit.FieldMap{
+						"pvcClaim": defkit.FieldRef("claimName"),
+					})
+
+				items := []any{
+					map[string]any{"name": "data", "type": "pvc", "claimName": "data-pvc"},
+					map[string]any{"name": "config", "type": "configMap", "cmName": "app-config"},
+				}
+
+				results := col.Collect(items)
+				Expect(results).To(HaveLen(2))
+				Expect(results[0]["pvcClaim"]).To(Equal("data-pvc"))
+				// Non-matching item passes through unchanged
+				Expect(results[1]["name"]).To(Equal("config"))
+				Expect(results[1]["type"]).To(Equal("configMap"))
+			})
+		})
+
 		Context("Flatten operation behavior", func() {
 			It("should flatten nested arrays", func() {
 				volumes := defkit.List("volumes")

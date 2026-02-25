@@ -251,5 +251,5 @@ func (d *DirectiveOp) resourceOp() {}
 // Path returns the field path.
 func (d *DirectiveOp) Path() string { return d.path }
 
-// Directive returns the directive string.
+// GetDirective returns the directive string.
 func (d *DirectiveOp) GetDirective() string { return d.directive }
