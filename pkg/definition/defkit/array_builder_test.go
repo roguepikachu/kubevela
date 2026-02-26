@@ -32,9 +32,13 @@ var _ = Describe("ArrayBuilder", func() {
 			Expect(ab.Entries()).To(BeEmpty())
 		})
 
-		It("should implement the Value interface", func() {
-			var v defkit.Value = defkit.NewArray()
+		It("should implement the Value interface and retain builder behavior", func() {
+			ab := defkit.NewArray()
+			var v defkit.Value = ab // compile-time interface check
 			Expect(v).NotTo(BeNil())
+			// Verify the builder still works through the interface
+			ab.Item(defkit.NewArrayElement().Set("name", defkit.Lit("test")))
+			Expect(ab.Entries()).To(HaveLen(1))
 		})
 	})
 
@@ -453,9 +457,14 @@ var _ = Describe("ArrayConcat", func() {
 		Expect(concat.Right()).To(BeIdenticalTo(right))
 	})
 
-	It("should implement the Value interface", func() {
-		var v defkit.Value = defkit.ArrayConcat(defkit.NewArray(), defkit.List("extra"))
+	It("should implement the Value interface and preserve operands", func() {
+		left := defkit.NewArray()
+		right := defkit.List("extra")
+		var v defkit.Value = defkit.ArrayConcat(left, right) // compile-time interface check
 		Expect(v).NotTo(BeNil())
+		concat := v.(*defkit.ArrayConcatValue)
+		Expect(concat.Left()).To(BeIdenticalTo(left))
+		Expect(concat.Right()).To(BeIdenticalTo(right))
 	})
 })
 
