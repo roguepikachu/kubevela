@@ -175,16 +175,24 @@ var _ = Describe("Collections", func() {
 	})
 
 	Context("Format", func() {
-		It("should create format field value", func() {
+		It("should create format field value with required imports", func() {
 			f := defkit.Format("port-%v", defkit.FieldRef("port"))
 			Expect(f).NotTo(BeNil())
+			Expect(f.RequiredImports()).To(ContainElement("strconv"))
 		})
 	})
 
 	Context("LitField", func() {
-		It("should create literal field value", func() {
+		It("should resolve literal field value from item", func() {
 			lit := defkit.LitField("TCP")
 			Expect(lit).NotTo(BeNil())
+			// LitField should resolve to the literal value regardless of item content
+			ports := defkit.List("ports")
+			col := defkit.Each(ports).Map(defkit.FieldMap{"protocol": lit})
+			items := []any{map[string]any{"port": 80}}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(1))
+			Expect(results[0]["protocol"]).To(Equal("TCP"))
 		})
 	})
 
@@ -229,23 +237,54 @@ var _ = Describe("Collections", func() {
 	})
 
 	Context("Nested", func() {
-		It("should create nested field mapping", func() {
+		It("should resolve nested field mapping from item", func() {
 			nested := defkit.Nested(defkit.FieldMap{
 				"claimName": defkit.FieldRef("claimName"),
 			})
 			Expect(nested).NotTo(BeNil())
+			// Verify nested resolves correctly through a collection
+			vols := defkit.List("volumes")
+			col := defkit.Each(vols).Map(defkit.FieldMap{
+				"pvc": nested,
+			})
+			items := []any{map[string]any{"claimName": "my-pvc"}}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(1))
+			Expect(results[0]["pvc"]).To(Equal(map[string]any{"claimName": "my-pvc"}))
 		})
 	})
 
 	Context("Optional and OptionalFieldRef", func() {
-		It("should create optional field reference", func() {
-			opt := defkit.Optional("items")
-			Expect(opt).NotTo(BeNil())
+		It("should include optional field when present and omit when absent", func() {
+			vols := defkit.List("volumes")
+			col := defkit.Each(vols).Map(defkit.FieldMap{
+				"name":  defkit.FieldRef("name"),
+				"items": defkit.Optional("items"),
+			})
+			items := []any{
+				map[string]any{"name": "vol1", "items": []string{"a"}},
+				map[string]any{"name": "vol2"},
+			}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(2))
+			Expect(results[0]).To(HaveKey("items"))
+			Expect(results[1]).NotTo(HaveKey("items"))
 		})
 
 		It("should create optional field reference via OptionalFieldRef alias", func() {
-			opt := defkit.OptionalFieldRef("subPath")
-			Expect(opt).NotTo(BeNil())
+			vols := defkit.List("volumes")
+			col := defkit.Each(vols).Map(defkit.FieldMap{
+				"name":    defkit.FieldRef("name"),
+				"subPath": defkit.OptionalFieldRef("subPath"),
+			})
+			items := []any{
+				map[string]any{"name": "vol1", "subPath": "/data"},
+				map[string]any{"name": "vol2"},
+			}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(2))
+			Expect(results[0]["subPath"]).To(Equal("/data"))
+			Expect(results[1]).NotTo(HaveKey("subPath"))
 		})
 	})
 
@@ -254,24 +293,42 @@ var _ = Describe("Collections", func() {
 			cond := defkit.Eq(defkit.String("exposeType"), defkit.Lit("NodePort"))
 			compOpt := defkit.OptionalFieldWithCond("nodePort", cond)
 			Expect(compOpt).NotTo(BeNil())
+			// Verify it can be used in a FieldMap and the CUE generation picks it up
+			ports := defkit.List("ports").WithFields(
+				defkit.Int("port").Required(),
+				defkit.Int("nodePort"),
+			)
+			col := defkit.Each(ports).Map(defkit.FieldMap{
+				"port":     defkit.FieldRef("port"),
+				"nodePort": compOpt,
+			})
+			Expect(col.Operations()).To(HaveLen(1))
 		})
 
-		It("should be usable as a FieldValue in FieldMap", func() {
+		It("should be usable as a FieldValue in FieldMap alongside regular fields", func() {
 			cond := defkit.Eq(defkit.String("exposeType"), defkit.Lit("NodePort"))
 			fm := defkit.FieldMap{
 				"port":     defkit.FieldRef("port"),
 				"nodePort": defkit.OptionalFieldWithCond("nodePort", cond),
 			}
 			Expect(fm).To(HaveLen(2))
+			Expect(fm).To(HaveKey("port"))
+			Expect(fm).To(HaveKey("nodePort"))
 		})
 	})
 
 	Context("NestedFieldMap", func() {
-		It("should create nested field mapping (alias for Nested)", func() {
+		It("should resolve nested field mapping identically to Nested", func() {
 			nested := defkit.NestedFieldMap(defkit.FieldMap{
 				"claimName": defkit.FieldRef("claimName"),
 			})
 			Expect(nested).NotTo(BeNil())
+			vols := defkit.List("volumes")
+			col := defkit.Each(vols).Map(defkit.FieldMap{"pvc": nested})
+			items := []any{map[string]any{"claimName": "my-pvc"}}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(1))
+			Expect(results[0]["pvc"]).To(Equal(map[string]any{"claimName": "my-pvc"}))
 		})
 	})
 

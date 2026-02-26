@@ -28,9 +28,11 @@ import (
 var _ = Describe("Status", func() {
 
 	Context("StatusBuilder", func() {
-		It("should create a status builder", func() {
+		It("should create a status builder that produces empty CUE without fields", func() {
 			s := defkit.Status()
 			Expect(s).NotTo(BeNil())
+			cue := s.Build()
+			Expect(cue).To(BeEmpty())
 		})
 
 		It("should add IntField to status", func() {
@@ -71,9 +73,11 @@ var _ = Describe("Status", func() {
 	})
 
 	Context("HealthBuilder", func() {
-		It("should create a health builder", func() {
+		It("should create a health builder that produces empty CUE without conditions", func() {
 			h := defkit.Health()
 			Expect(h).NotTo(BeNil())
+			cue := h.Build()
+			Expect(cue).To(BeEmpty())
 		})
 
 		It("should add IntField through HealthBuilder", func() {

@@ -286,6 +286,11 @@ var _ = Describe("Expressions", func() {
 		It("should create ForEachMap expression", func() {
 			forEach := defkit.ForEachMap()
 			Expect(forEach).NotTo(BeNil())
+			Expect(forEach.Source()).To(Equal("parameter"))
+			Expect(forEach.KeyVar()).To(Equal("k"))
+			Expect(forEach.ValVar()).To(Equal("v"))
+			Expect(forEach.KeyExpr()).To(BeEmpty())
+			Expect(forEach.ValExpr()).To(BeEmpty())
 		})
 
 		It("should set source and variable names", func() {
@@ -316,11 +321,13 @@ var _ = Describe("Expressions", func() {
 		It("should create parameter reference", func() {
 			ref := defkit.ParamRef("image")
 			Expect(ref).NotTo(BeNil())
+			Expect(ref.Path()).To(Equal("parameter.image"))
 		})
 
 		It("should reference nested parameter", func() {
 			ref := defkit.ParamRef("config.port")
 			Expect(ref).NotTo(BeNil())
+			Expect(ref.Path()).To(Equal("parameter.config.port"))
 		})
 	})
 
@@ -344,10 +351,14 @@ var _ = Describe("Expressions", func() {
 		})
 
 		It("should implement Value interface", func() {
+			port := defkit.Int("port")
 			arr := defkit.InlineArray(map[string]defkit.Value{
-				"containerPort": defkit.Int("port"),
+				"containerPort": port,
 			})
-			var _ defkit.Value = arr // compile-time check
+			var v defkit.Value = arr // compile-time check
+			Expect(v).NotTo(BeNil())
+			Expect(arr.Fields()).To(HaveKey("containerPort"))
+			Expect(arr.Fields()["containerPort"]).To(Equal(port))
 		})
 	})
 })

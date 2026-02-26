@@ -407,7 +407,18 @@ func (m *mapOp) apply(items []any) []any {
 		if itemMap, ok := item.(map[string]any); ok {
 			newItem := make(map[string]any)
 			for newKey, fieldVal := range m.mappings {
-				newItem[newKey] = fieldVal.resolve(itemMap)
+				resolved := fieldVal.resolve(itemMap)
+				// Skip nil values from optional field types — they should be
+				// omitted from the output entirely, not included as nil.
+				if resolved == nil {
+					if _, isOpt := fieldVal.(*OptionalField); isOpt {
+						continue
+					}
+					if _, isCompOpt := fieldVal.(*CompoundOptionalField); isCompOpt {
+						continue
+					}
+				}
+				newItem[newKey] = resolved
 			}
 			result = append(result, newItem)
 		}

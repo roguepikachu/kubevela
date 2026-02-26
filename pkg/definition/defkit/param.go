@@ -1263,6 +1263,9 @@ func (p *StringKeyMapParam) Description(desc string) *StringKeyMapParam {
 	return p
 }
 
+// GetType returns the parameter type.
+func (p *StringKeyMapParam) GetType() ParamType { return p.paramType }
+
 // DynamicMapParam represents a parameter where the parameter itself is a dynamic map.
 // In CUE: parameter: [string]: T (where T is the value type)
 // This is used for traits like labels where all user values become map keys.

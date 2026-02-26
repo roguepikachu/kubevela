@@ -362,42 +362,51 @@ var _ = Describe("Parameters", func() {
 			It("should create Eq condition from IntParam", func() {
 				replicas := defkit.Int("replicas")
 				cond := replicas.Eq(3)
-				Expect(cond).NotTo(BeNil())
-				// Check it implements Condition interface
-				_, ok := cond.(defkit.Condition) //lint:ignore S1040 intentional interface check for documentation
-				Expect(ok).To(BeTrue())
+				pcc, ok := cond.(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue(), "expected *ParamCompareCondition")
+				Expect(pcc.ParamName()).To(Equal("replicas"))
+				Expect(pcc.Op()).To(Equal("=="))
+				Expect(pcc.CompareValue()).To(Equal(3))
 			})
 
 			It("should create comparison conditions from StringParam", func() {
 				status := defkit.String("status")
 
-				// Eq
-				eqCond := status.Eq("running")
-				Expect(eqCond).NotTo(BeNil())
+				eqCond, ok := status.Eq("running").(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue())
+				Expect(eqCond.ParamName()).To(Equal("status"))
+				Expect(eqCond.Op()).To(Equal("=="))
+				Expect(eqCond.CompareValue()).To(Equal("running"))
 
-				// Ne
-				neCond := status.Ne("error")
-				Expect(neCond).NotTo(BeNil())
+				neCond, ok := status.Ne("error").(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue())
+				Expect(neCond.ParamName()).To(Equal("status"))
+				Expect(neCond.Op()).To(Equal("!="))
+				Expect(neCond.CompareValue()).To(Equal("error"))
 			})
 
 			It("should create numeric comparison conditions", func() {
 				replicas := defkit.Int("replicas")
 
-				// Gt
-				gtCond := replicas.Gt(1)
-				Expect(gtCond).NotTo(BeNil())
+				gtCond, ok := replicas.Gt(1).(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue())
+				Expect(gtCond.Op()).To(Equal(">"))
+				Expect(gtCond.CompareValue()).To(Equal(1))
 
-				// Gte
-				gteCond := replicas.Gte(1)
-				Expect(gteCond).NotTo(BeNil())
+				gteCond, ok := replicas.Gte(1).(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue())
+				Expect(gteCond.Op()).To(Equal(">="))
+				Expect(gteCond.CompareValue()).To(Equal(1))
 
-				// Lt
-				ltCond := replicas.Lt(10)
-				Expect(ltCond).NotTo(BeNil())
+				ltCond, ok := replicas.Lt(10).(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue())
+				Expect(ltCond.Op()).To(Equal("<"))
+				Expect(ltCond.CompareValue()).To(Equal(10))
 
-				// Lte
-				lteCond := replicas.Lte(10)
-				Expect(lteCond).NotTo(BeNil())
+				lteCond, ok := replicas.Lte(10).(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue())
+				Expect(lteCond.Op()).To(Equal("<="))
+				Expect(lteCond.CompareValue()).To(Equal(10))
 			})
 		})
 
@@ -405,30 +414,35 @@ var _ = Describe("Parameters", func() {
 			It("should create Add expression from IntParam", func() {
 				replicas := defkit.Int("replicas")
 				expr := replicas.Add(1)
-				Expect(expr).NotTo(BeNil())
-				// Check it implements Value interface
-				_, ok := expr.(defkit.Value) //lint:ignore S1040 intentional interface check for documentation
-				Expect(ok).To(BeTrue())
+				arith, ok := expr.(*defkit.ParamArithExpr)
+				Expect(ok).To(BeTrue(), "expected *ParamArithExpr")
+				Expect(arith.ParamName()).To(Equal("replicas"))
+				Expect(arith.Op()).To(Equal("+"))
+				Expect(arith.ArithValue()).To(Equal(1))
 			})
 
 			It("should create arithmetic expressions from IntParam", func() {
 				replicas := defkit.Int("replicas")
 
-				// Add
-				addExpr := replicas.Add(1)
-				Expect(addExpr).NotTo(BeNil())
+				addExpr, ok := replicas.Add(1).(*defkit.ParamArithExpr)
+				Expect(ok).To(BeTrue())
+				Expect(addExpr.Op()).To(Equal("+"))
+				Expect(addExpr.ArithValue()).To(Equal(1))
 
-				// Sub
-				subExpr := replicas.Sub(1)
-				Expect(subExpr).NotTo(BeNil())
+				subExpr, ok := replicas.Sub(1).(*defkit.ParamArithExpr)
+				Expect(ok).To(BeTrue())
+				Expect(subExpr.Op()).To(Equal("-"))
+				Expect(subExpr.ArithValue()).To(Equal(1))
 
-				// Mul
-				mulExpr := replicas.Mul(2)
-				Expect(mulExpr).NotTo(BeNil())
+				mulExpr, ok := replicas.Mul(2).(*defkit.ParamArithExpr)
+				Expect(ok).To(BeTrue())
+				Expect(mulExpr.Op()).To(Equal("*"))
+				Expect(mulExpr.ArithValue()).To(Equal(2))
 
-				// Div
-				divExpr := replicas.Div(2)
-				Expect(divExpr).NotTo(BeNil())
+				divExpr, ok := replicas.Div(2).(*defkit.ParamArithExpr)
+				Expect(ok).To(BeTrue())
+				Expect(divExpr.Op()).To(Equal("/"))
+				Expect(divExpr.ArithValue()).To(Equal(2))
 			})
 		})
 
@@ -436,19 +450,21 @@ var _ = Describe("Parameters", func() {
 			It("should create Concat expression from StringParam", func() {
 				name := defkit.String("name")
 				expr := name.Concat("-suffix")
-				Expect(expr).NotTo(BeNil())
-				// Check it implements Value interface
-				_, ok := expr.(defkit.Value) //lint:ignore S1040 intentional interface check for documentation
-				Expect(ok).To(BeTrue())
+				concat, ok := expr.(*defkit.ParamConcatExpr)
+				Expect(ok).To(BeTrue(), "expected *ParamConcatExpr")
+				Expect(concat.ParamName()).To(Equal("name"))
+				Expect(concat.Suffix()).To(Equal("-suffix"))
+				Expect(concat.Prefix()).To(BeEmpty())
 			})
 
 			It("should create Prepend expression from StringParam", func() {
 				name := defkit.String("name")
 				expr := name.Prepend("prefix-")
-				Expect(expr).NotTo(BeNil())
-				// Check it implements Value interface
-				_, ok := expr.(defkit.Value) //lint:ignore S1040 intentional interface check for documentation
-				Expect(ok).To(BeTrue())
+				concat, ok := expr.(*defkit.ParamConcatExpr)
+				Expect(ok).To(BeTrue(), "expected *ParamConcatExpr")
+				Expect(concat.ParamName()).To(Equal("name"))
+				Expect(concat.Prefix()).To(Equal("prefix-"))
+				Expect(concat.Suffix()).To(BeEmpty())
 			})
 		})
 
@@ -476,14 +492,20 @@ var _ = Describe("Parameters", func() {
 				config := defkit.Struct("config")
 				fieldRef := config.Field("port")
 				cond := fieldRef.IsSet()
-				Expect(cond).NotTo(BeNil())
+				isSet, ok := cond.(*defkit.ParamPathIsSetCondition)
+				Expect(ok).To(BeTrue(), "expected *ParamPathIsSetCondition")
+				Expect(isSet.Path()).To(Equal("config.port"))
 			})
 
 			It("should create Eq condition from field ref", func() {
 				config := defkit.Struct("config")
 				fieldRef := config.Field("enabled")
 				cond := fieldRef.Eq(true)
-				Expect(cond).NotTo(BeNil())
+				pcc, ok := cond.(*defkit.ParamCompareCondition)
+				Expect(ok).To(BeTrue(), "expected *ParamCompareCondition")
+				Expect(pcc.ParamName()).To(Equal("config.enabled"))
+				Expect(pcc.Op()).To(Equal("=="))
+				Expect(pcc.CompareValue()).To(Equal(true))
 			})
 		})
 	})
@@ -492,26 +514,33 @@ var _ = Describe("Parameters", func() {
 		It("should create StringList parameter", func() {
 			p := defkit.StringList("tags")
 			Expect(p.Name()).To(Equal("tags"))
+			Expect(p.ElementType()).To(Equal(defkit.ParamTypeString))
+			Expect(p.IsRequired()).To(BeFalse())
 		})
 
 		It("should create IntList parameter", func() {
 			p := defkit.IntList("ports")
 			Expect(p.Name()).To(Equal("ports"))
+			Expect(p.ElementType()).To(Equal(defkit.ParamTypeInt))
+			Expect(p.IsRequired()).To(BeFalse())
 		})
 
 		It("should create StringKeyMap parameter", func() {
 			p := defkit.StringKeyMap("labels")
 			Expect(p.Name()).To(Equal("labels"))
+			Expect(p.GetType()).To(Equal(defkit.ParamTypeMap))
 		})
 
 		It("should create List parameter", func() {
 			p := defkit.List("items")
 			Expect(p.Name()).To(Equal("items"))
+			Expect(p.IsRequired()).To(BeFalse())
 		})
 
 		It("should create Object parameter", func() {
 			p := defkit.Object("config")
 			Expect(p.Name()).To(Equal("config"))
+			Expect(p.IsRequired()).To(BeFalse())
 		})
 	})
 
@@ -519,13 +548,19 @@ var _ = Describe("Parameters", func() {
 		It("should create IsSet condition from param", func() {
 			replicas := defkit.Int("replicas")
 			cond := replicas.IsSet()
-			Expect(cond).NotTo(BeNil())
+			isSet, ok := cond.(*defkit.IsSetCondition)
+			Expect(ok).To(BeTrue(), "expected *IsSetCondition")
+			Expect(isSet.ParamName()).To(Equal("replicas"))
 		})
 
 		It("should create NotSet condition from param", func() {
 			replicas := defkit.Int("replicas")
 			cond := replicas.NotSet()
-			Expect(cond).NotTo(BeNil())
+			notCond, ok := cond.(*defkit.NotCondition)
+			Expect(ok).To(BeTrue(), "expected *NotCondition")
+			inner, ok := notCond.Inner().(*defkit.IsSetCondition)
+			Expect(ok).To(BeTrue(), "expected inner *IsSetCondition")
+			Expect(inner.ParamName()).To(Equal("replicas"))
 		})
 	})
 
@@ -533,13 +568,17 @@ var _ = Describe("Parameters", func() {
 		It("should create IsTrue condition", func() {
 			enabled := defkit.Bool("enabled")
 			cond := enabled.IsTrue()
-			Expect(cond).NotTo(BeNil())
+			truthy, ok := cond.(*defkit.TruthyCondition)
+			Expect(ok).To(BeTrue(), "expected *TruthyCondition")
+			Expect(truthy.ParamName()).To(Equal("enabled"))
 		})
 
 		It("should create IsFalse condition", func() {
 			enabled := defkit.Bool("enabled")
 			cond := enabled.IsFalse()
-			Expect(cond).NotTo(BeNil())
+			falsy, ok := cond.(*defkit.FalsyCondition)
+			Expect(ok).To(BeTrue(), "expected *FalsyCondition")
+			Expect(falsy.ParamName()).To(Equal("enabled"))
 		})
 	})
 
@@ -556,7 +595,11 @@ var _ = Describe("Parameters", func() {
 		It("should create length constraint conditions", func() {
 			arr := defkit.Array("items")
 			gteCond := arr.LenGte(1)
-			Expect(gteCond).NotTo(BeNil())
+			lenCond, ok := gteCond.(*defkit.LenCondition)
+			Expect(ok).To(BeTrue(), "expected *LenCondition")
+			Expect(lenCond.ParamName()).To(Equal("items"))
+			Expect(lenCond.Op()).To(Equal(">="))
+			Expect(lenCond.Length()).To(Equal(1))
 		})
 
 		It("should set WithFields for array items", func() {
@@ -652,13 +695,21 @@ var _ = Describe("Parameters", func() {
 		It("should create LenLt condition", func() {
 			arr := defkit.Array("items")
 			cond := arr.LenLt(10)
-			Expect(cond).NotTo(BeNil())
+			lenCond, ok := cond.(*defkit.LenCondition)
+			Expect(ok).To(BeTrue(), "expected *LenCondition")
+			Expect(lenCond.ParamName()).To(Equal("items"))
+			Expect(lenCond.Op()).To(Equal("<"))
+			Expect(lenCond.Length()).To(Equal(10))
 		})
 
 		It("should create LenLte condition", func() {
 			arr := defkit.Array("items")
 			cond := arr.LenLte(10)
-			Expect(cond).NotTo(BeNil())
+			lenCond, ok := cond.(*defkit.LenCondition)
+			Expect(ok).To(BeTrue(), "expected *LenCondition")
+			Expect(lenCond.ParamName()).To(Equal("items"))
+			Expect(lenCond.Op()).To(Equal("<="))
+			Expect(lenCond.Length()).To(Equal(10))
 		})
 	})
 
@@ -780,7 +831,9 @@ var _ = Describe("Parameters", func() {
 		It("should create IsSet condition", func() {
 			path := defkit.ParamPath("config.port")
 			cond := path.IsSet()
-			Expect(cond).NotTo(BeNil())
+			isSet, ok := cond.(*defkit.ParamPathIsSetCondition)
+			Expect(ok).To(BeTrue(), "expected *ParamPathIsSetCondition")
+			Expect(isSet.Path()).To(Equal("config.port"))
 		})
 	})
 
@@ -813,7 +866,11 @@ var _ = Describe("Parameters", func() {
 		It("should create Ne condition", func() {
 			p := defkit.Int("count")
 			cond := p.Ne(0)
-			Expect(cond).NotTo(BeNil())
+			pcc, ok := cond.(*defkit.ParamCompareCondition)
+			Expect(ok).To(BeTrue(), "expected *ParamCompareCondition")
+			Expect(pcc.ParamName()).To(Equal("count"))
+			Expect(pcc.Op()).To(Equal("!="))
+			Expect(pcc.CompareValue()).To(Equal(0))
 		})
 	})
 
