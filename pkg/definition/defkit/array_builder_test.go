@@ -223,10 +223,13 @@ var _ = Describe("ItemBuilder", func() {
 				// v.Field returns an IterFieldRef which implements Value
 				fieldRef := v.Field("port")
 				Expect(fieldRef).NotTo(BeNil())
+				Expect(fieldRef.VarName()).To(Equal("v"))
+				Expect(fieldRef.FieldName()).To(Equal("port"))
 
 				// v.Ref returns an IterVarRef for the whole variable
 				varRef := v.Ref()
 				Expect(varRef).NotTo(BeNil())
+				Expect(varRef.VarName()).To(Equal("v"))
 			})
 		})
 	})
@@ -300,13 +303,15 @@ var _ = Describe("ItemBuilder", func() {
 	})
 
 	Describe("Let", func() {
-		It("should record a letOp and return a reference", func() {
+		It("should record a letOp and return a reference with correct name", func() {
 			ports := defkit.List("ports")
 			defkit.NewArray().ForEachWith(ports, func(item *defkit.ItemBuilder) {
 				v := item.Var()
 				ref := item.Let("_name",
 					defkit.Plus(defkit.Lit("port-"), defkit.StrconvFormatInt(v.Field("port"), 10)))
-				Expect(ref).NotTo(BeNil())
+				letRef, ok := ref.(*defkit.IterLetRef)
+				Expect(ok).To(BeTrue(), "expected *IterLetRef")
+				Expect(letRef.RefName()).To(Equal("_name"))
 				Expect(item.Ops()).To(HaveLen(1))
 			})
 		})
@@ -334,21 +339,31 @@ var _ = Describe("ItemBuilder", func() {
 	})
 
 	Describe("FieldExists", func() {
-		It("should return a Condition for field existence", func() {
+		It("should return a Condition for field existence with correct var and field name", func() {
 			ports := defkit.List("ports")
 			defkit.NewArray().ForEachWith(ports, func(item *defkit.ItemBuilder) {
 				cond := item.FieldExists("name")
 				Expect(cond).NotTo(BeNil())
+				iterCond, ok := cond.(*defkit.IterFieldExistsCondition)
+				Expect(ok).To(BeTrue(), "expected *IterFieldExistsCondition")
+				Expect(iterCond.VarName()).To(Equal("v"))
+				Expect(iterCond.FieldName()).To(Equal("name"))
+				Expect(iterCond.IsNegated()).To(BeFalse())
 			})
 		})
 	})
 
 	Describe("FieldNotExists", func() {
-		It("should return a Condition for field non-existence", func() {
+		It("should return a negated Condition for field non-existence", func() {
 			ports := defkit.List("ports")
 			defkit.NewArray().ForEachWith(ports, func(item *defkit.ItemBuilder) {
 				cond := item.FieldNotExists("name")
 				Expect(cond).NotTo(BeNil())
+				iterCond, ok := cond.(*defkit.IterFieldExistsCondition)
+				Expect(ok).To(BeTrue(), "expected *IterFieldExistsCondition")
+				Expect(iterCond.VarName()).To(Equal("v"))
+				Expect(iterCond.FieldName()).To(Equal("name"))
+				Expect(iterCond.IsNegated()).To(BeTrue())
 			})
 		})
 	})
@@ -391,24 +406,26 @@ var _ = Describe("ItemBuilder", func() {
 })
 
 var _ = Describe("IterVarBuilder", func() {
-	It("should return field references", func() {
+	It("should return field references with correct variable and field names", func() {
 		ports := defkit.List("ports")
 		defkit.NewArray().ForEachWith(ports, func(item *defkit.ItemBuilder) {
 			v := item.Var()
 			portRef := v.Field("port")
-			Expect(portRef).NotTo(BeNil())
+			Expect(portRef.VarName()).To(Equal("v"))
+			Expect(portRef.FieldName()).To(Equal("port"))
 
 			nameRef := v.Field("name")
-			Expect(nameRef).NotTo(BeNil())
+			Expect(nameRef.VarName()).To(Equal("v"))
+			Expect(nameRef.FieldName()).To(Equal("name"))
 		})
 	})
 
-	It("should return a whole-variable reference", func() {
+	It("should return a whole-variable reference with correct variable name", func() {
 		items := defkit.StringList("items")
 		defkit.NewArray().ForEachWith(items, func(item *defkit.ItemBuilder) {
 			v := item.Var()
 			ref := v.Ref()
-			Expect(ref).NotTo(BeNil())
+			Expect(ref.VarName()).To(Equal("v"))
 		})
 	})
 
@@ -416,9 +433,12 @@ var _ = Describe("IterVarBuilder", func() {
 		ports := defkit.List("ports")
 		defkit.NewArray().ForEachWithVar("p", ports, func(item *defkit.ItemBuilder) {
 			v := item.Var()
-			// The IterFieldRef should use "p" as the variable name
 			fieldRef := v.Field("port")
-			Expect(fieldRef).NotTo(BeNil())
+			Expect(fieldRef.VarName()).To(Equal("p"))
+			Expect(fieldRef.FieldName()).To(Equal("port"))
+
+			ref := v.Ref()
+			Expect(ref.VarName()).To(Equal("p"))
 		})
 	})
 })

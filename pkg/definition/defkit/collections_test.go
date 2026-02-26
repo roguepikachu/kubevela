@@ -114,28 +114,63 @@ var _ = Describe("Collections", func() {
 	})
 
 	Context("FieldRef", func() {
-		It("should resolve field from item", func() {
+		It("should store field name and resolve correctly from item", func() {
 			ref := defkit.FieldRef("port")
-			Expect(ref).NotTo(BeNil())
+			Expect(string(ref)).To(Equal("port"))
+
+			// Verify it resolves correctly through a collection
+			ports := defkit.List("ports")
+			col := defkit.Each(ports).Map(defkit.FieldMap{"p": ref})
+			items := []any{map[string]any{"port": 8080}}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(1))
+			Expect(results[0]["p"]).To(Equal(8080))
 		})
 
-		It("should support Or fallback", func() {
-			ref := defkit.FieldRef("name").Or(defkit.Format("port-%v", defkit.FieldRef("port")))
-			Expect(ref).NotTo(BeNil())
+		It("should support Or fallback and use fallback when primary is nil", func() {
+			ports := defkit.List("ports")
+			col := defkit.Each(ports).Map(defkit.FieldMap{
+				"display": defkit.FieldRef("name").Or(defkit.Format("port-%v", defkit.FieldRef("port"))),
+			})
+			// Primary field present — should use primary
+			items := []any{map[string]any{"port": 80, "name": "http"}}
+			results := col.Collect(items)
+			Expect(results[0]["display"]).To(Equal("http"))
+
+			// Primary field missing — should use fallback
+			items = []any{map[string]any{"port": 443}}
+			results = col.Collect(items)
+			Expect(results[0]["display"]).To(Equal("port-443"))
 		})
 	})
 
 	Context("FieldEquals", func() {
-		It("should create equality predicate", func() {
+		It("should filter items matching the field equality predicate", func() {
 			pred := defkit.FieldEquals("expose", true)
-			Expect(pred).NotTo(BeNil())
+			ports := defkit.List("ports")
+			col := defkit.Each(ports).Filter(pred)
+			items := []any{
+				map[string]any{"port": 80, "expose": true},
+				map[string]any{"port": 443, "expose": false},
+			}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(1))
+			Expect(results[0]["port"]).To(Equal(80))
 		})
 	})
 
 	Context("FieldExists", func() {
-		It("should create existence predicate", func() {
+		It("should filter items where field is present", func() {
 			pred := defkit.FieldExists("items")
-			Expect(pred).NotTo(BeNil())
+			ports := defkit.List("data")
+			col := defkit.Each(ports).Filter(pred)
+			items := []any{
+				map[string]any{"name": "a", "items": []string{"x"}},
+				map[string]any{"name": "b"},
+			}
+			results := col.Collect(items)
+			Expect(results).To(HaveLen(1))
+			Expect(results[0]["name"]).To(Equal("a"))
 		})
 	})
 

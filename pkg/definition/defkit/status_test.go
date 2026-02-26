@@ -404,103 +404,127 @@ var _ = Describe("Status", func() {
 	})
 
 	Context("HealthBuilder Expressions", func() {
-		It("should create Condition expression", func() {
+		It("should generate Condition expression that checks condition status", func() {
 			h := defkit.Health()
-			cond := h.Condition("Ready")
-			Expect(cond).NotTo(BeNil())
+			expr := h.Condition("Ready").IsTrue()
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("Ready"))
+			Expect(policy).To(ContainSubstring("isHealth:"))
+			Expect(policy).To(ContainSubstring(`"True"`))
 		})
 
-		It("should create Field expression", func() {
-			h := defkit.Health()
-			field := h.Field("status.replicas")
-			Expect(field).NotTo(BeNil())
-		})
-
-		It("should create FieldRef expression", func() {
-			h := defkit.Health()
-			ref := h.FieldRef("spec.replicas")
-			Expect(ref).NotTo(BeNil())
-		})
-
-		It("should create Phase expression", func() {
+		It("should generate Phase expression that checks status.phase", func() {
 			h := defkit.Health()
 			expr := h.Phase("Running", "Succeeded")
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("isHealth:"))
+			Expect(policy).To(ContainSubstring("Running"))
+			Expect(policy).To(ContainSubstring("Succeeded"))
+			Expect(policy).To(ContainSubstring("context.output.status.phase"))
 		})
 
-		It("should create PhaseField expression", func() {
+		It("should generate PhaseField expression with custom field path", func() {
 			h := defkit.Health()
 			expr := h.PhaseField("status.currentPhase", "Active", "Ready")
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("isHealth:"))
+			Expect(policy).To(ContainSubstring("context.output.status.currentPhase"))
+			Expect(policy).To(ContainSubstring("Active"))
+			Expect(policy).To(ContainSubstring("Ready"))
 		})
 
-		It("should create Exists expression", func() {
+		It("should generate Exists expression that checks field != _|_", func() {
 			h := defkit.Health()
 			expr := h.Exists("status.loadBalancer.ingress")
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("isHealth:"))
+			Expect(policy).To(ContainSubstring("status.loadBalancer.ingress"))
+			Expect(policy).To(ContainSubstring("!= _|_"))
 		})
 
-		It("should create NotExists expression", func() {
+		It("should generate NotExists expression that checks field == _|_", func() {
 			h := defkit.Health()
 			expr := h.NotExists("status.error")
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("isHealth:"))
+			Expect(policy).To(ContainSubstring("status.error"))
+			Expect(policy).To(ContainSubstring("== _|_"))
 		})
 
-		It("should create And expression", func() {
+		It("should generate And expression combining multiple conditions", func() {
 			h := defkit.Health()
 			expr1 := h.Condition("Ready").IsTrue()
 			expr2 := h.Condition("Synced").IsTrue()
 			and := h.And(expr1, expr2)
-			Expect(and).NotTo(BeNil())
+			policy := h.Policy(and)
+			Expect(policy).To(ContainSubstring("Ready"))
+			Expect(policy).To(ContainSubstring("Synced"))
+			Expect(policy).To(ContainSubstring("&&"))
 		})
 
-		It("should create Or expression", func() {
+		It("should generate Or expression combining multiple conditions", func() {
 			h := defkit.Health()
 			expr1 := h.Phase("Running")
 			expr2 := h.Phase("Succeeded")
 			or := h.Or(expr1, expr2)
-			Expect(or).NotTo(BeNil())
+			policy := h.Policy(or)
+			Expect(policy).To(ContainSubstring("Running"))
+			Expect(policy).To(ContainSubstring("Succeeded"))
+			Expect(policy).To(ContainSubstring("||"))
 		})
 
-		It("should create Not expression", func() {
+		It("should generate Not expression negating a condition", func() {
 			h := defkit.Health()
 			expr := h.Condition("Stalled").IsTrue()
 			not := h.Not(expr)
-			Expect(not).NotTo(BeNil())
+			policy := h.Policy(not)
+			Expect(policy).To(ContainSubstring("Stalled"))
+			Expect(policy).To(ContainSubstring("!"))
 		})
 
-		It("should create Always expression", func() {
+		It("should generate Always expression as isHealth: true", func() {
 			h := defkit.Health()
 			expr := h.Always()
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("isHealth: true"))
 		})
 
-		It("should create AllTrue expression", func() {
+		It("should generate AllTrue expression checking multiple conditions are True", func() {
 			h := defkit.Health()
 			expr := h.AllTrue("Ready", "Synced", "Available")
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("Ready"))
+			Expect(policy).To(ContainSubstring("Synced"))
+			Expect(policy).To(ContainSubstring("Available"))
+			Expect(policy).To(ContainSubstring("&&"))
 		})
 
-		It("should create AnyTrue expression", func() {
+		It("should generate AnyTrue expression checking any condition is True", func() {
 			h := defkit.Health()
 			expr := h.AnyTrue("Ready", "Available")
-			Expect(expr).NotTo(BeNil())
+			policy := h.Policy(expr)
+			Expect(policy).To(ContainSubstring("Ready"))
+			Expect(policy).To(ContainSubstring("Available"))
+			Expect(policy).To(ContainSubstring("||"))
 		})
 
-		It("should set health condition with HealthyWhenExpr", func() {
+		It("should set health condition with HealthyWhenExpr and generate correct CUE", func() {
 			h := defkit.Health()
 			expr := h.Condition("Ready").IsTrue()
 			h.HealthyWhenExpr(expr)
 			cue := h.Build()
-			Expect(cue).NotTo(BeEmpty())
+			Expect(cue).To(ContainSubstring("isHealth:"))
+			Expect(cue).To(ContainSubstring("Ready"))
+			Expect(cue).To(ContainSubstring(`"True"`))
 		})
 
-		It("should generate policy from expression", func() {
+		It("should generate policy with correct isHealth expression from Condition", func() {
 			h := defkit.Health()
 			expr := h.Condition("Ready").IsTrue()
 			policy := h.Policy(expr)
-			Expect(policy).NotTo(BeEmpty())
 			Expect(policy).To(ContainSubstring("isHealth:"))
+			Expect(policy).To(ContainSubstring("Ready"))
+			Expect(policy).To(ContainSubstring(`"True"`))
 		})
 	})
 })
