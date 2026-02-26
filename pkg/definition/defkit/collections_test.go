@@ -1059,54 +1059,47 @@ var _ = Describe("Collections", func() {
 		})
 
 		Context("OrConditional (ConditionalOrFieldRef)", func() {
-			It("should create ConditionalOrFieldRef from FieldRef", func() {
+			It("should create ConditionalOrFieldRef that resolves primary field", func() {
 				ref := defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port")))
-				Expect(ref).NotTo(BeNil())
+				col := defkit.Each(defkit.List("items")).Map(defkit.FieldMap{"result": ref})
+				results := col.Collect([]any{map[string]any{"name": "web", "port": 80}})
+				Expect(results).To(HaveLen(1))
+				Expect(results[0]["result"]).To(Equal("web"))
 			})
 
-			It("should use primary field when present", func() {
+			It("should resolve primary vs fallback across multiple items with full structure", func() {
 				ports := defkit.List("ports")
 				col := defkit.Each(ports).Map(defkit.FieldMap{
 					"displayName": defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
+					"portNumber":  defkit.FieldRef("port"),
+					"protocol":    defkit.FieldRef("proto").OrConditional(defkit.LitField("TCP")),
 				})
 
 				items := []any{
-					map[string]any{"port": 80, "name": "http"},
+					map[string]any{"port": 80, "name": "http", "proto": "HTTP"},   // all primary fields present
+					map[string]any{"port": 443},                                    // name and proto nil → fallback
+					map[string]any{"port": 8080, "name": "", "proto": ""},          // name and proto empty → fallback
+					map[string]any{"port": 9090, "name": "grpc"},                   // name present, proto nil → mixed
 				}
 
 				results := col.Collect(items)
-				Expect(results).To(HaveLen(1))
+				Expect(results).To(HaveLen(4))
+
 				Expect(results[0]["displayName"]).To(Equal("http"))
-			})
+				Expect(results[0]["portNumber"]).To(Equal(80))
+				Expect(results[0]["protocol"]).To(Equal("HTTP"))
 
-			It("should use fallback when primary field is nil", func() {
-				ports := defkit.List("ports")
-				col := defkit.Each(ports).Map(defkit.FieldMap{
-					"displayName": defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
-				})
+				Expect(results[1]["displayName"]).To(Equal("port-443"))
+				Expect(results[1]["portNumber"]).To(Equal(443))
+				Expect(results[1]["protocol"]).To(Equal("TCP"))
 
-				items := []any{
-					map[string]any{"port": 443},
-				}
+				Expect(results[2]["displayName"]).To(Equal("port-8080"))
+				Expect(results[2]["portNumber"]).To(Equal(8080))
+				Expect(results[2]["protocol"]).To(Equal("TCP"))
 
-				results := col.Collect(items)
-				Expect(results).To(HaveLen(1))
-				Expect(results[0]["displayName"]).To(Equal("port-443"))
-			})
-
-			It("should use fallback when primary field is empty string", func() {
-				ports := defkit.List("ports")
-				col := defkit.Each(ports).Map(defkit.FieldMap{
-					"displayName": defkit.FieldRef("name").OrConditional(defkit.Format("port-%v", defkit.FieldRef("port"))),
-				})
-
-				items := []any{
-					map[string]any{"port": 8080, "name": ""},
-				}
-
-				results := col.Collect(items)
-				Expect(results).To(HaveLen(1))
-				Expect(results[0]["displayName"]).To(Equal("port-8080"))
+				Expect(results[3]["displayName"]).To(Equal("grpc"))
+				Expect(results[3]["portNumber"]).To(Equal(9090))
+				Expect(results[3]["protocol"]).To(Equal("TCP"))
 			})
 		})
 
