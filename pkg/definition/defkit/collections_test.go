@@ -1076,10 +1076,10 @@ var _ = Describe("Collections", func() {
 				})
 
 				items := []any{
-					map[string]any{"port": 80, "name": "http", "proto": "HTTP"},   // all primary fields present
-					map[string]any{"port": 443},                                    // name and proto nil → fallback
-					map[string]any{"port": 8080, "name": "", "proto": ""},          // name and proto empty → fallback
-					map[string]any{"port": 9090, "name": "grpc"},                   // name present, proto nil → mixed
+					map[string]any{"port": 80, "name": "http", "proto": "HTTP"}, // all primary fields present
+					map[string]any{"port": 443},                                 // name and proto nil → fallback
+					map[string]any{"port": 8080, "name": "", "proto": ""},       // name and proto empty → fallback
+					map[string]any{"port": 9090, "name": "grpc"},                // name present, proto nil → mixed
 				}
 
 				results := col.Collect(items)
