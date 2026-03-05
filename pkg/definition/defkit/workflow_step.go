@@ -390,11 +390,11 @@ func (b *BuiltinActionBuilder) WithFullParameter() *BuiltinActionBuilder {
 	return b
 }
 
-// WithDirectParams generates parameters directly on the struct without a $params wrapper.
+// Unwrapped renders parameters directly on the struct without a $params wrapper.
 // This generates: name: ref & { key: value, ... } instead of name: ref & { $params: { key: value } }
 // Useful for legacy CUE helpers (e.g., op.#DeployCloudResource) that are pure CUE structs
 // rather than provider calls.
-func (b *BuiltinActionBuilder) WithDirectParams() *BuiltinActionBuilder {
+func (b *BuiltinActionBuilder) Unwrapped() *BuiltinActionBuilder {
 	b.action.directParams = true
 	return b
 }

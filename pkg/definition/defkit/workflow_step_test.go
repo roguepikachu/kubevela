@@ -387,7 +387,7 @@ template: {
 		})
 	})
 
-	Context("WithDirectParams", func() {
+	Context("Unwrapped", func() {
 		It("should generate params directly without $params wrapper", func() {
 			env := defkit.String("env").Default("prod")
 
@@ -397,10 +397,10 @@ template: {
 				Params(env).
 				Template(func(tpl *defkit.WorkflowStepTemplate) {
 					tpl.Builtin("cloud", "op.#DeployCloudResource").
-						WithDirectParams().
 						WithParams(map[string]defkit.Value{
 							"env": env,
 						}).
+						Unwrapped().
 						Build()
 				})
 
@@ -410,13 +410,13 @@ template: {
 			Expect(cue).NotTo(ContainSubstring("$params"))
 		})
 
-		It("should not write anything when directParams is set but no params provided", func() {
+		It("should not write anything when Unwrapped is set but no params provided", func() {
 			step := defkit.NewWorkflowStep("empty-direct").
 				Description("No params").
 				WithImports("vela/op").
 				Template(func(tpl *defkit.WorkflowStepTemplate) {
 					tpl.Builtin("cloud", "op.#DeployCloudResource").
-						WithDirectParams().
+						Unwrapped().
 						Build()
 				})
 
@@ -437,11 +437,11 @@ template: {
 				Params(env, region).
 				Template(func(tpl *defkit.WorkflowStepTemplate) {
 					tpl.Builtin("cloud", "op.#DeployCloudResource").
-						WithDirectParams().
 						WithParams(map[string]defkit.Value{
 							"env":    env,
 							"region": region,
 						}).
+						Unwrapped().
 						Build()
 				})
 
@@ -451,7 +451,7 @@ template: {
 			Expect(cue).NotTo(ContainSubstring("$params"))
 		})
 
-		It("should prefer WithFullParameter over WithDirectParams when both are set", func() {
+		It("should prefer WithFullParameter over Unwrapped when both are set", func() {
 			step := defkit.NewWorkflowStep("test-precedence").
 				Description("Test").
 				WithImports("vela/op").
@@ -459,7 +459,7 @@ template: {
 				Template(func(tpl *defkit.WorkflowStepTemplate) {
 					tpl.Builtin("action", "op.#Action").
 						WithFullParameter().
-						WithDirectParams().
+						Unwrapped().
 						WithParams(map[string]defkit.Value{
 							"name": defkit.Reference("parameter.name"),
 						}).
