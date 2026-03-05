@@ -387,6 +387,92 @@ template: {
 		})
 	})
 
+	Context("WithDirectParams", func() {
+		It("should generate params directly without $params wrapper", func() {
+			env := defkit.String("env").Default("prod")
+
+			step := defkit.NewWorkflowStep("deploy-cloud").
+				Description("Deploy cloud resource").
+				WithImports("vela/op").
+				Params(env).
+				Template(func(tpl *defkit.WorkflowStepTemplate) {
+					tpl.Builtin("cloud", "op.#DeployCloudResource").
+						WithDirectParams().
+						WithParams(map[string]defkit.Value{
+							"env": env,
+						}).
+						Build()
+				})
+
+			cue := step.ToCue()
+			Expect(cue).To(ContainSubstring("cloud: op.#DeployCloudResource & {"))
+			Expect(cue).To(ContainSubstring("env: parameter.env"))
+			Expect(cue).NotTo(ContainSubstring("$params"))
+		})
+
+		It("should not write anything when directParams is set but no params provided", func() {
+			step := defkit.NewWorkflowStep("empty-direct").
+				Description("No params").
+				WithImports("vela/op").
+				Template(func(tpl *defkit.WorkflowStepTemplate) {
+					tpl.Builtin("cloud", "op.#DeployCloudResource").
+						WithDirectParams().
+						Build()
+				})
+
+			cue := step.ToCue()
+			Expect(cue).To(ContainSubstring("cloud: op.#DeployCloudResource & {"))
+			Expect(cue).NotTo(ContainSubstring("$params"))
+			// Should just have the opening and closing braces with nothing in between
+			Expect(cue).To(ContainSubstring("cloud: op.#DeployCloudResource & {\n\t}"))
+		})
+
+		It("should generate multiple direct params", func() {
+			env := defkit.String("env").Default("prod")
+			region := defkit.String("region").Default("us-east-1")
+
+			step := defkit.NewWorkflowStep("deploy-cloud").
+				Description("Deploy cloud resource").
+				WithImports("vela/op").
+				Params(env, region).
+				Template(func(tpl *defkit.WorkflowStepTemplate) {
+					tpl.Builtin("cloud", "op.#DeployCloudResource").
+						WithDirectParams().
+						WithParams(map[string]defkit.Value{
+							"env":    env,
+							"region": region,
+						}).
+						Build()
+				})
+
+			cue := step.ToCue()
+			Expect(cue).To(ContainSubstring("env: parameter.env"))
+			Expect(cue).To(ContainSubstring("region: parameter.region"))
+			Expect(cue).NotTo(ContainSubstring("$params"))
+		})
+
+		It("should prefer WithFullParameter over WithDirectParams when both are set", func() {
+			step := defkit.NewWorkflowStep("test-precedence").
+				Description("Test").
+				WithImports("vela/op").
+				Params(defkit.String("name").Required()).
+				Template(func(tpl *defkit.WorkflowStepTemplate) {
+					tpl.Builtin("action", "op.#Action").
+						WithFullParameter().
+						WithDirectParams().
+						WithParams(map[string]defkit.Value{
+							"name": defkit.Reference("parameter.name"),
+						}).
+						Build()
+				})
+
+			cue := step.ToCue()
+			// WithFullParameter takes precedence in the if/else chain
+			Expect(cue).To(ContainSubstring("$params: parameter"))
+			Expect(cue).NotTo(ContainSubstring("$params: {"))
+		})
+	})
+
 	Context("Registry", func() {
 		BeforeEach(func() {
 			defkit.Clear()

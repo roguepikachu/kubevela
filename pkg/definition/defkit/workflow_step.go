@@ -58,6 +58,7 @@ type BuiltinAction struct {
 	name         string           // e.g., "multicluster.#Deploy", "builtin.#Suspend"
 	params       map[string]Value // parameters to pass
 	useFullParam bool             // if true, generates $params: parameter instead of $params: { key: value }
+	directParams bool             // if true, generates params directly without $params wrapper
 }
 
 func (b *BuiltinAction) isWorkflowAction() {}
@@ -389,6 +390,15 @@ func (b *BuiltinActionBuilder) WithFullParameter() *BuiltinActionBuilder {
 	return b
 }
 
+// WithDirectParams generates parameters directly on the struct without a $params wrapper.
+// This generates: name: ref & { key: value, ... } instead of name: ref & { $params: { key: value } }
+// Useful for legacy CUE helpers (e.g., op.#DeployCloudResource) that are pure CUE structs
+// rather than provider calls.
+func (b *BuiltinActionBuilder) WithDirectParams() *BuiltinActionBuilder {
+	b.action.directParams = true
+	return b
+}
+
 // Build finalizes the action and adds it to the template.
 func (b *BuiltinActionBuilder) Build() *WorkflowStepTemplate {
 	b.template.actions = append(b.template.actions, b.action)
@@ -568,6 +578,11 @@ func (g *WorkflowStepCUEGenerator) writeBuiltinAction(sb *strings.Builder, a *Bu
 	if a.useFullParam {
 		// Pass the entire parameter object as $params (e.g., builtin.#Suspend)
 		sb.WriteString(fmt.Sprintf("%s%s\t$params: parameter\n", indent, extraIndent))
+	} else if a.directParams && len(a.params) > 0 {
+		// Write params directly without $params wrapper (legacy CUE helpers)
+		for paramName, paramVal := range a.params {
+			sb.WriteString(fmt.Sprintf("%s%s\t%s: %s\n", indent, extraIndent, paramName, gen.valueToCUE(paramVal)))
+		}
 	} else if len(a.params) > 0 {
 		sb.WriteString(fmt.Sprintf("%s%s\t$params: {\n", indent, extraIndent))
 		for paramName, paramVal := range a.params {
