@@ -574,21 +574,34 @@ func (g *WorkflowStepCUEGenerator) writeBuiltinAction(sb *strings.Builder, a *Bu
 		actionName = extractActionName(a.name)
 	}
 
+	// All three modes share the same outer structure: actionName: builtinRef & { ... }
 	sb.WriteString(fmt.Sprintf("%s%s%s: %s & {\n", indent, extraIndent, actionName, a.name))
+
 	if a.useFullParam {
-		// Pass the entire parameter object as $params (e.g., builtin.#Suspend)
+		// WithFullParameter: passes the entire parameter object.
+		//   suspend: builtin.#Suspend & {
+		//       $params: parameter
+		//   }
 		sb.WriteString(fmt.Sprintf("%s%s\t$params: parameter\n", indent, extraIndent))
-	} else if a.directParams && len(a.params) > 0 {
-		// Write params directly without $params wrapper (legacy CUE helpers)
-		for paramName, paramVal := range a.params {
-			sb.WriteString(fmt.Sprintf("%s%s\t%s: %s\n", indent, extraIndent, paramName, gen.valueToCUE(paramVal)))
-		}
 	} else if len(a.params) > 0 {
-		sb.WriteString(fmt.Sprintf("%s%s\t$params: {\n", indent, extraIndent))
-		for paramName, paramVal := range a.params {
-			sb.WriteString(fmt.Sprintf("%s%s\t\t%s: %s\n", indent, extraIndent, paramName, gen.valueToCUE(paramVal)))
+		// WithParams (default, wrapped):     WithParams(...).Unwrapped() (unwrapped):
+		//   deploy: multicluster.#Deploy & {    app: op.#DeployCloudResource & {
+		//       $params: {                          env: parameter.env
+		//           policies: parameter.policies    name: context.name
+		//       }                                }
+		//   }
+		wrapped := !a.directParams
+		paramIndent := "\t"
+		if wrapped {
+			sb.WriteString(fmt.Sprintf("%s%s\t$params: {\n", indent, extraIndent))
+			paramIndent = "\t\t"
 		}
-		sb.WriteString(fmt.Sprintf("%s%s\t}\n", indent, extraIndent))
+		for paramName, paramVal := range a.params {
+			sb.WriteString(fmt.Sprintf("%s%s%s%s: %s\n", indent, extraIndent, paramIndent, paramName, gen.valueToCUE(paramVal)))
+		}
+		if wrapped {
+			sb.WriteString(fmt.Sprintf("%s%s\t}\n", indent, extraIndent))
+		}
 	}
 	sb.WriteString(fmt.Sprintf("%s%s}\n", indent, extraIndent))
 }
