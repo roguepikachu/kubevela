@@ -1,0 +1,19 @@
+# SpokeCluster connecting to an EKS cluster via AWS Pod Identity.
+# SpokeCluster is cluster-scoped, so the object carries no metadata.namespace.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: prod-us-east-1
+  labels:
+    provider: aws
+    region: us-east-1
+spec:
+  mode: connect
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity        # podIdentity | irsa
+      clusterName: prod-us-east-1
+      region: us-east-1
+      roleArn: arn:aws:iam::123456789012:role/per-cluster-role
+      # externalId: <optional>

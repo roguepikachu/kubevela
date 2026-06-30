@@ -1,0 +1,140 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1beta1
+
+import (
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"sigs.k8s.io/yaml"
+)
+
+const spokeClusterCRDPath = "../../../charts/vela-core/crds/core.oam.dev_spokeclusters.yaml"
+
+func loadSpokeClusterCRD(t *testing.T) *apiextv1.CustomResourceDefinition {
+	t.Helper()
+	raw, err := os.ReadFile(spokeClusterCRDPath)
+	require.NoError(t, err, "generated SpokeCluster CRD must be present in charts/vela-core/crds")
+	crd := &apiextv1.CustomResourceDefinition{}
+	require.NoError(t, yaml.Unmarshal(raw, crd))
+	return crd
+}
+
+// v1beta1Schema returns the openAPIV3 schema of the v1beta1 version.
+func v1beta1Schema(t *testing.T, crd *apiextv1.CustomResourceDefinition) *apiextv1.JSONSchemaProps {
+	t.Helper()
+	for _, v := range crd.Spec.Versions {
+		if v.Name == "v1beta1" {
+			require.NotNil(t, v.Schema)
+			return v.Schema.OpenAPIV3Schema
+		}
+	}
+	t.Fatalf("v1beta1 version not found in CRD")
+	return nil
+}
+
+// TestSpokeClusterCRD_ClusterScoped asserts the installed CRD is cluster-scoped
+// and named to avoid the Cluster API collision (Requirement 1).
+func TestSpokeClusterCRD_ClusterScoped(t *testing.T) {
+	r := require.New(t)
+	crd := loadSpokeClusterCRD(t)
+
+	r.Equal(apiextv1.ClusterScoped, crd.Spec.Scope)
+	r.Equal("spokeclusters", crd.Spec.Names.Plural)
+	r.Equal("SpokeCluster", crd.Spec.Names.Kind)
+	r.Equal("core.oam.dev", crd.Spec.Group)
+}
+
+// TestSpokeClusterCRD_PrinterColumns asserts the default and wide fleet-summary
+// columns are present (Requirement 5).
+func TestSpokeClusterCRD_PrinterColumns(t *testing.T) {
+	r := require.New(t)
+	crd := loadSpokeClusterCRD(t)
+
+	var version *apiextv1.CustomResourceDefinitionVersion
+	for i := range crd.Spec.Versions {
+		if crd.Spec.Versions[i].Name == "v1beta1" {
+			version = &crd.Spec.Versions[i]
+		}
+	}
+	r.NotNil(version)
+
+	defaultCols := map[string]bool{}
+	wideCols := map[string]bool{}
+	for _, c := range version.AdditionalPrinterColumns {
+		if c.Priority == 0 {
+			defaultCols[c.Name] = true
+		} else {
+			wideCols[c.Name] = true
+		}
+	}
+
+	// NAME and AGE: NAME is implicit; AGE is an explicit column here.
+	for _, name := range []string{"MODE", "VERSION", "NODES", "PLATFORM", "STATUS", "AGE"} {
+		r.Truef(defaultCols[name], "expected default column %q", name)
+	}
+	for _, name := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "AUTH", "LAST PROBE"} {
+		r.Truef(wideCols[name], "expected wide (priority>0) column %q", name)
+	}
+}
+
+// TestSpokeClusterCRD_Enums asserts the closed value sets are enforced at the
+// schema level (Requirements 2, 3, 4).
+func TestSpokeClusterCRD_Enums(t *testing.T) {
+	r := require.New(t)
+	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
+
+	enumValues := func(props apiextv1.JSONSchemaProps) []string {
+		out := make([]string, 0, len(props.Enum))
+		for _, e := range props.Enum {
+			// Enum JSON values are quoted strings, e.g. "connect".
+			out = append(out, string(e.Raw))
+		}
+		return out
+	}
+
+	spec := schema.Properties["spec"]
+	r.ElementsMatch([]string{`"connect"`, `"provision"`, `"adopt"`}, enumValues(spec.Properties["mode"]))
+
+	credential := spec.Properties["credential"]
+	r.ElementsMatch([]string{`"kubeconfig"`, `"aws"`, `"azure"`, `"gcp"`}, enumValues(credential.Properties["type"]))
+
+	aws := credential.Properties["aws"]
+	r.ElementsMatch([]string{`"podIdentity"`, `"irsa"`}, enumValues(aws.Properties["authMode"]))
+
+	status := schema.Properties["status"]
+	r.ElementsMatch([]string{`"Connected"`, `"Disconnected"`, `"Unknown"`}, enumValues(status.Properties["connection"]))
+}
+
+// TestSpokeClusterCRD_RequiredSecretNamespace asserts the kubeconfig Secret
+// reference requires a namespace, since a cluster-scoped object has none to
+// default to (Requirement 2, criterion 2).
+func TestSpokeClusterCRD_RequiredSecretNamespace(t *testing.T) {
+	r := require.New(t)
+	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
+
+	secretRef := schema.
+		Properties["spec"].
+		Properties["credential"].
+		Properties["kubeconfig"].
+		Properties["secretRef"]
+
+	r.Contains(secretRef.Required, "name")
+	r.Contains(secretRef.Required, "namespace")
+}
