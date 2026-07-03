@@ -662,6 +662,15 @@ This section is the in-depth guide to connecting the hub to real EKS spokes usin
 model, the IAM roles, the cross-account chaining, the Kubernetes access entries,
 and the SpokeCluster manifests. No static credentials are stored anywhere.
 
+> **Verified on real EKS.** This path was tested end to end with a hub and a
+> spoke EKS cluster (both v1.35) in one account, using Pod Identity. The spoke
+> reached `Connected` with `platform: eks` and working read-through. Two issues
+> that only surface against a real EKS token validator and a real cluster-gateway
+> are called out inline: the EKS token must carry `X-Amz-Expires` (section 7.1)
+> and the cluster-gateway APIService caBundle must be real, not the `Cg==`
+> placeholder (section 7.10). Both are also in the
+> [Troubleshooting](#10-troubleshooting) table.
+
 ### 7.1 What the AWS credential provider does
 
 When `spec.credential.type: aws`, the controller (running in the
@@ -677,10 +686,19 @@ vela-cluster-core pod) does the following on every reconcile:
 3. **Describe the cluster.** With the assumed role it calls `eks:DescribeCluster`
    for the spoke's API server endpoint and CA certificate.
 4. **Mint an EKS bearer token.** It presigns an STS `GetCallerIdentity` request
-   bound to the cluster name via the `x-k8s-aws-id` header, then base64url-encodes
-   it with the `k8s-aws-v1.` prefix. This is byte-for-byte what
-   `aws eks get-token` produces. EKS validates the token by replaying the
-   presigned URL and checking the identity and cluster-id header.
+   bound to the cluster name via the `x-k8s-aws-id` header and with an
+   `X-Amz-Expires` value, then base64url-encodes it with the `k8s-aws-v1.`
+   prefix. This is byte-for-byte what `aws eks get-token` produces. EKS validates
+   the token by replaying the presigned URL and checking the identity and
+   cluster-id header.
+
+   > **Load-bearing detail (found in real-EKS testing):** the AWS SDK v2 STS
+   > presign path does NOT add `X-Amz-Expires` on its own, and EKS rejects a
+   > presigned token without it with `401 Unauthorized`. The provider injects
+   > `X-Amz-Expires=60` via a Build-step middleware before signing (in
+   > `pkg/spokecluster/credential/aws_token.go`). Unit tests and the k3d path
+   > cannot catch a missing expiry because neither hits a real EKS token
+   > validator, so if you change the token generator, keep this covered.
 5. **Materialize and refresh.** The endpoint, CA, and token become the
    cluster-gateway Secret. Because the token's presign window is 15 minutes, the
    controller schedules the next reconcile ~1 minute early so the token never
@@ -831,6 +849,17 @@ aws iam put-role-policy --role-name oam-hub-base \
 }
 ```
 
+> **The externalId's service-account segment must match the SA the pod actually
+> runs as.** EKS generates the externalId as
+> `<region>/<hubAccount>/<hubCluster>/<namespace>/<serviceAccount>`. If you set
+> `clusterCore.aws.serviceAccountRoleArn` (section 7.6), the chart creates a
+> dedicated SA named `<release>-cluster-core` (for example
+> `vela-core-cluster-core`) and you use that. If you do NOT set it, the
+> vela-cluster-core pod runs as the shared `vela-core` SA, and the externalId
+> must end in `.../vela-system/vela-core`. A mismatch here causes the AssumeRole
+> to be denied. Confirm the SA with
+> `kubectl get deploy <release>-cluster-core -n vela-system -o jsonpath='{.spec.template.spec.serviceAccountName}'`.
+
 `spoke-scoped-perms.json` (describe only the one cluster):
 
 ```json
@@ -906,6 +935,7 @@ helm upgrade --install vela-core ./charts/vela-core \
   --namespace vela-system --create-namespace \
   --set featureGates.enableSpokeClusterCRD=true \
   --set clusterCore.aws.serviceAccountRoleArn=arn:aws:iam::776719623202:role/oam-hub-base \
+  --set multicluster.clusterGateway.direct=false \
   --wait
 ```
 
@@ -917,7 +947,29 @@ is used by IRSA; for Pod Identity the association in step 4 is what binds the
 identity, and the annotation is harmless and documents intent. If you use IRSA
 instead of Pod Identity, this annotation is the binding.)
 
+> **Two install flags that matter (found in real-EKS testing):**
+> - Keep `admissionWebhooks.enabled=true` (the default). Setting it to `false`
+>   disables the cert-patch job that fills the cluster-gateway APIService
+>   `caBundle`, which leaves the `Cg==` placeholder and breaks every gateway
+>   proxy with a PEM error. See [section 7.10](#710-cluster-gateway-cabundle-must-be-real).
+> - Set `multicluster.clusterGateway.direct=false`. The chart default `direct=true`
+>   makes vela-core mount a cluster-gateway TLS cert; if that cert path is not
+>   provisioned, vela-core CrashLoopBackOffs on
+>   `/cluster-gateway-tls-cert/ca: no such file or directory`. With `direct=false`
+>   vela-core reaches the gateway through the apiserver.
+
 ### 7.7 Connect an EKS spoke
+
+> **Restart vela-cluster-core after creating the Pod Identity association.** A
+> Pod Identity association only injects credentials into pods created after it
+> exists. If you associated the SA (step 4) after the pod was already running,
+> restart it first, then confirm the identity is injected:
+> ```bash
+> kubectl rollout restart deploy/<release>-cluster-core -n vela-system
+> kubectl get pod -n vela-system -l controller.oam.dev/name=vela-cluster-core \
+>   -o jsonpath='{.items[0].spec.containers[0].env[*].name}' | tr ' ' '\n' | grep AWS_CONTAINER
+> # AWS_CONTAINER_CREDENTIALS_FULL_URI present = Pod Identity active
+> ```
 
 ```yaml
 apiVersion: core.oam.dev/v1beta1
@@ -983,6 +1035,55 @@ explicit allow-list, not the whole fleet. It also composes with the tree
 topology: a spoke that is itself a hub for downstream clusters runs its own
 vela-cluster-core with its own base role and its own per-cluster roles for its
 children; the chains are independent, one hop each.
+
+### 7.10 cluster-gateway caBundle must be real
+
+The connect probe, discovery, and read-through all go through cluster-gateway,
+an aggregated API server. The kube-apiserver only proxies to it if the
+`APIService` `v1alpha1.cluster.core.oam.dev` carries the gateway's real CA in
+`spec.caBundle`. The Helm chart writes a placeholder `caBundle: Cg==` (base64 for
+a bare newline) and relies on a post-install cert-patch job to replace it. If
+that job does not run, every gateway proxy fails with:
+
+```
+unable to load root certificates: unable to parse bytes as PEM block
+```
+
+This is the same class of issue as [kubevela/workflow#224](https://github.com/kubevela/workflow/pull/224).
+Two ways to get a valid caBundle:
+
+- **Keep `admissionWebhooks.enabled=true`** (the default) so the cert-patch job
+  runs. This is the normal path.
+- **Patch it manually** if you disabled admission webhooks:
+
+```bash
+CA=$(kubectl get secret <release>-cluster-gateway-tls-v2 -n vela-system -o jsonpath='{.data.ca}')
+kubectl patch apiservice v1alpha1.cluster.core.oam.dev --type=merge \
+  -p "{\"spec\":{\"caBundle\":\"${CA}\"}}"
+```
+
+To confirm the placeholder is the problem, check the caBundle (a value of `Cg==`
+is the tell) and test the proxy to the hub's own `local` cluster, which involves
+no SpokeCluster and no AWS. If `local` also fails with the PEM error, the fault
+is the caBundle, not your credential:
+
+```bash
+kubectl get apiservice v1alpha1.cluster.core.oam.dev -o jsonpath='{.spec.caBundle}'
+kubectl get --raw /apis/cluster.core.oam.dev/v1alpha1/clustergateways/local/proxy/healthz
+```
+
+> This is an operational/cluster-gateway concern, not a SpokeCluster bug. It
+> affects any cluster-gateway consumer when the cert job is skipped. Note that
+> cluster-gateway `v1.9.0-alpha.2` works fine on EKS 1.35 once the caBundle is
+> valid; the "1.35 breaks cluster-gateway" folklore did not reproduce here once
+> the placeholder was fixed.
+
+### 7.11 Full real-EKS test record
+
+A complete blow-by-blow record of an actual two-cluster EKS test (every command,
+every hurdle with root cause and fix, the exact IAM JSON, and the full cleanup)
+lives in the internal runbook `AWS EKS Pod Identity Connect - Full Test Runbook`.
+It is the authoritative reference if you are reproducing this against real EKS.
 
 ---
 
@@ -1077,12 +1178,15 @@ same path by hand.
 | `kubectl get spokeclusters` errors with "no matches for kind" | The CRD is not installed. Install the chart with `--set featureGates.enableSpokeClusterCRD=true`. |
 | SpokeCluster stuck with `CredentialValid=False` | The source Secret is missing or malformed (kubeconfig arm), or AssumeRole/DescribeCluster failed (aws arm). Check the vela-cluster-core pod logs. |
 | `Registered=True` but `Connected=False` | The gateway Secret exists but the probe cannot reach the spoke. The endpoint in the credential is not routable from the hub gateway pod (common on k3d if you used `0.0.0.0` or the serverlb IP instead of the `server-0` IP), or a firewall/security group blocks it. |
-| `unable to parse bytes as PEM block` from cluster-gateway | k8s 1.35 incompatibility. Pin k3s to `v1.31.5-k3s1`. |
+| `unable to parse bytes as PEM block` from cluster-gateway | The cluster-gateway APIService `caBundle` is the placeholder `Cg==` because the cert-patch job did not run (common when `admissionWebhooks.enabled=false`). Keep admission webhooks enabled, or patch the caBundle from the gateway TLS secret. See [section 7.10](#710-cluster-gateway-cabundle-must-be-real). This reproduces the [kubevela/workflow#224](https://github.com/kubevela/workflow/pull/224) pattern and is NOT the k8s-1.35 folklore (cluster-gateway `v1.9.0-alpha.2` works on 1.35 once the caBundle is valid). On k3d, still pin k3s to `v1.31.5-k3s1`. |
+| vela-core CrashLoopBackOff on `/cluster-gateway-tls-cert/ca: no such file or directory` | The chart default `multicluster.clusterGateway.direct=true` makes vela-core mount a gateway TLS cert that is not provisioned. Reinstall with `--set multicluster.clusterGateway.direct=false`. |
+| AWS spoke `Connected=False` with `401 Unauthorized` after `CredentialValid=True` and a valid caBundle | The minted EKS token is missing `X-Amz-Expires`, which EKS requires. This is fixed in the provider (Build-step middleware sets `X-Amz-Expires=60`); if you forked or edited `aws_token.go`, restore it. Decode the token and check the query params (see [section 7.1](#71-what-the-aws-credential-provider-does) and the Appendix C snippet in the vault runbook). |
+| AWS `AssumeRole` denied | Either the spoke role's trust `sts:ExternalId` does not match the EKS-generated externalId `<region>/<hubAccount>/<hubCluster>/<namespace>/<serviceAccount>`, or the SA segment is wrong (the pod runs as `vela-core` unless `clusterCore.aws.serviceAccountRoleArn` is set, which creates `<release>-cluster-core`). Align the SpokeCluster `externalId`, the trust policy, and the actual SA name. |
+| AWS spoke `CredentialValid=True` but `Connected=False` with 401/403 (caBundle valid, token has expiry) | The assumed role has no Kubernetes access entry on the spoke, or the access policy is missing. Create the access entry and associate a policy (`AmazonEKSViewPolicy` for read-only). See section 7.5, step 3. |
+| AWS spoke connected, then drops after ~1 minute | Pod Identity association was created after the pod started, so the running pod never got the identity, or the token refresh is not firing. Restart `deploy/<release>-cluster-core` and confirm `AWS_CONTAINER_CREDENTIALS_FULL_URI` is in the pod env. |
 | `aws: The config profile () could not be found` | The devcontainer sets `AWS_PROFILE=""`. Run `unset AWS_PROFILE` before kubectl/helm/aws. |
 | `go test` prints a few dots then FAIL with no detail | A stale `KUBECONFIG` points at a nonexistent path and `config.GetConfigOrDie()` exits silently. Run `unset KUBECONFIG`. |
-| EKS token works then fails after ~15 min | The refresh loop is not running (the controller is not reconciling this SpokeCluster). Check the pod is up and the requeue is firing; the token is reminted ~1 minute before expiry. |
-| AWS spoke `CredentialValid=True` but `Connected=False` with a 401/403 | The assumed role has no Kubernetes access entry on the spoke, or the access policy is missing. Create the access entry and associate `AmazonEKSViewPolicy` (section 7.5, step 3). |
-| Cross-account AssumeRole denied | The spoke role's trust `sts:ExternalId` does not match the EKS-generated externalId `<region>/<hubAccount>/<hubCluster>/<namespace>/<serviceAccount>`. Align the SpokeCluster `externalId` and the trust policy. |
+| `helm install --wait` appears to hang or time out | Normal for a slow rollout; the release still deploys. Check `helm list -a -n vela-system` and `kubectl get pods -n vela-system` rather than trusting the client exit. |
 
 To read controller logs:
 
@@ -1124,7 +1228,12 @@ deterministically.
 which k3d does not have by default. The CRD-level kubebuilder validation markers
 (enums, required, min/max) are enforced by the apiserver regardless and are the
 admission backstop; the envtest suite confirms them. Turn the Go webhook on where
-cert-manager is available for the richer cross-field checks.
+cert-manager is available for the richer cross-field checks. Note this is the
+SpokeCluster webhook toggle and is distinct from the chart's
+`admissionWebhooks.enabled` flag (which governs vela-core's own webhooks and, more
+importantly, the cluster-gateway cert-patch job). Do not disable
+`admissionWebhooks.enabled` to turn off the SpokeCluster webhook, or you will hit
+the caBundle issue in [section 7.10](#710-cluster-gateway-cabundle-must-be-real).
 
 **Does hub downtime affect the spoke?** No. The hub only reads; the spoke runs
 nothing for this feature and reports nothing. Hub downtime pauses status refresh,
