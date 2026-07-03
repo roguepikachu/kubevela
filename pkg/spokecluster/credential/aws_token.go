@@ -20,12 +20,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
@@ -41,7 +43,33 @@ const (
 	tokenRefreshLead = 1 * time.Minute
 	// stsGetCallerIdentityAction is the action encoded in the presigned request.
 	stsGetCallerIdentityAction = "Action=GetCallerIdentity&Version=2011-06-15"
+	// presignTokenExpirySeconds is the X-Amz-Expires value on the presigned URL. EKS requires the
+	// presigned request to carry an explicit expiry; `aws eks get-token` uses 60 seconds.
+	presignTokenExpirySeconds = 60
 )
+
+// setExpiresMiddleware injects X-Amz-Expires into the request query in the Build step, before the
+// presign signer runs in Finalize, so the expiry is part of the signed URL. Without it the STS
+// presign omits X-Amz-Expires and EKS rejects the token with 401 Unauthorized.
+type setExpiresMiddleware struct{ seconds int }
+
+func (m setExpiresMiddleware) ID() string { return "SpokeClusterSetPresignExpires" }
+
+func (m setExpiresMiddleware) HandleBuild(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
+	if req, ok := in.Request.(*smithyhttp.Request); ok {
+		q := req.URL.Query()
+		q.Set("X-Amz-Expires", strconv.Itoa(m.seconds))
+		req.URL.RawQuery = q.Encode()
+	}
+	return next.HandleBuild(ctx, in)
+}
+
+// withPresignExpires returns an API option that registers setExpiresMiddleware on the Build step.
+func withPresignExpires(seconds int) func(*middleware.Stack) error {
+	return func(stack *middleware.Stack) error {
+		return stack.Build.Add(setExpiresMiddleware{seconds: seconds}, middleware.After)
+	}
+}
 
 // stsPresignAPI is the subset of the STS presign client the token generator needs. It is an
 // interface so tests can supply a deterministic presigner without calling AWS.
@@ -61,7 +89,10 @@ func generateEKSToken(ctx context.Context, presigner stsPresignAPI, clusterName 
 	}
 	presigned, err := presigner.PresignGetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}, func(o *sts.PresignOptions) {
 		o.ClientOptions = append(o.ClientOptions, func(so *sts.Options) {
-			so.APIOptions = append(so.APIOptions, smithyhttp.SetHeaderValue(clusterIDHeader, clusterName))
+			so.APIOptions = append(so.APIOptions,
+				smithyhttp.SetHeaderValue(clusterIDHeader, clusterName),
+				withPresignExpires(presignTokenExpirySeconds),
+			)
 		})
 	})
 	if err != nil {
