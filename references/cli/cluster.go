@@ -107,6 +107,7 @@ func ClusterCommandGroup(f velacmd.Factory, order string, c common.Args, ioStrea
 		NewClusterLabelCommandGroup(&c),
 		NewClusterAliasCommand(&c),
 		NewClusterExportConfigCommand(f, ioStreams),
+		NewSpokeClusterCommandGroup(&c),
 	)
 	return cmd
 }
