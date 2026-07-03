@@ -119,6 +119,15 @@ var (
 	ResourceTrackerKindVersionKind = SchemeGroupVersion.WithKind(ResourceTrackerKind)
 )
 
+// SpokeCluster type metadata.
+var (
+	SpokeClusterKind             = reflect.TypeOf(SpokeCluster{}).Name()
+	SpokeClusterGroupKind        = schema.GroupKind{Group: Group, Kind: SpokeClusterKind}.String()
+	SpokeClusterKindAPIVersion   = SpokeClusterKind + "." + SchemeGroupVersion.String()
+	SpokeClusterGroupVersionKind = SchemeGroupVersion.WithKind(SpokeClusterKind)
+	SpokeClusterGVR              = SchemeGroupVersion.WithResource("spokeclusters")
+)
+
 // DefinitionTypeInfo contains the mapping information for a definition type
 type DefinitionTypeInfo struct {
 	GVR  schema.GroupVersionResource
@@ -143,6 +152,7 @@ func init() {
 	SchemeBuilder.Register(&Application{}, &ApplicationList{})
 	SchemeBuilder.Register(&ApplicationRevision{}, &ApplicationRevisionList{})
 	SchemeBuilder.Register(&ResourceTracker{}, &ResourceTrackerList{})
+	SchemeBuilder.Register(&SpokeCluster{}, &SpokeClusterList{})
 	_ = SchemeBuilder.AddToScheme(k8sscheme.Scheme)
 }
 

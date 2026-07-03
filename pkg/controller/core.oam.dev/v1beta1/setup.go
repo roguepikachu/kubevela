@@ -29,6 +29,10 @@ import (
 )
 
 // Setup workload controllers.
+//
+// Note: cluster-infrastructure controllers (SpokeCluster, and later Cluster/ClusterBlueprint)
+// are NOT registered here. They run in the separate vela-cluster-core manager
+// (cmd/cluster-core), so vela-core never reconciles them.
 func Setup(mgr ctrl.Manager, args controller.Args) error {
 	for _, setup := range []func(ctrl.Manager, controller.Args) error{
 		application.Setup, traitdefinition.Setup, componentdefinition.Setup, policydefinition.Setup, workflowstepdefinition.Setup,

@@ -138,6 +138,11 @@ const (
 	// CUE definition schema. When enabled, any parameter field not present in the template's
 	// parameter stanza will cause a validation error at admission time.
 	ValidateUndeclaredParameters = "ValidateUndeclaredParameters"
+
+	// EnableSpokeClusterCRD enables the SpokeCluster CRD reconciliation, webhook, and CLI for
+	// hub-to-spoke cluster connect (Cluster Infrastructure KEP, Connect Phase 1). When disabled,
+	// the SpokeCluster controller and webhook are not started, so the CRD is inert.
+	EnableSpokeClusterCRD featuregate.Feature = "EnableSpokeClusterCRD"
 )
 
 var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
@@ -169,6 +174,7 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	EnableGlobalPolicies:                          {Default: false, PreRelease: featuregate.Alpha},
 	EnableApplicationScopedPolicies:               {Default: false, PreRelease: featuregate.Alpha},
 	ValidateUndeclaredParameters:                  {Default: false, PreRelease: featuregate.Alpha},
+	EnableSpokeClusterCRD:                         {Default: false, PreRelease: featuregate.Alpha},
 }
 
 func init() {
