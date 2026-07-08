@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	velaclient "github.com/kubevela/pkg/controller/client"
@@ -30,6 +31,8 @@ import (
 	"github.com/kubevela/pkg/meta"
 	"github.com/kubevela/pkg/util/profiling"
 	"github.com/kubevela/workflow/pkg/cue/packages"
+	workflowfeatures "github.com/kubevela/workflow/pkg/features"
+	"github.com/kubevela/workflow/pkg/utils/httpguard"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -157,6 +160,22 @@ func run(ctx context.Context, s *options.CoreOptions) error {
 	})
 	if err != nil {
 		klog.ErrorS(err, "Unable to create a controller manager")
+		return err
+	}
+
+	controllerNamespace := resolveControllerNamespace(s.LeaderElectionNamespace)
+	httpguard.SetEnhancer(func(p httpguard.Policy) httpguard.Policy {
+		if utilfeature.DefaultMutableFeatureGate.Enabled(workflowfeatures.BlockPrivateHTTPAddresses) {
+			p.BlockPrivate = true
+		}
+		return p
+	})
+	if err := httpguard.LoadConfigMap(ctx, mgr.GetClient(), s.WorkflowHTTPDenyConfigMapName, controllerNamespace); err != nil {
+		klog.ErrorS(err, "unable to initialize workflow HTTP deny ConfigMap", "name", s.WorkflowHTTPDenyConfigMapName, "namespace", controllerNamespace)
+		return err
+	}
+	if err := httpguard.SetupWatcher(mgr, s.WorkflowHTTPDenyConfigMapName, controllerNamespace); err != nil {
+		klog.ErrorS(err, "unable to watch workflow HTTP deny ConfigMap", "name", s.WorkflowHTTPDenyConfigMapName, "namespace", controllerNamespace)
 		return err
 	}
 
@@ -309,4 +328,14 @@ func waitWebhookSecretVolume(certDir string, timeout, interval time.Duration) er
 			}
 		}
 	}
+}
+
+func resolveControllerNamespace(leaderElectionNamespace string) string {
+	if ns := strings.TrimSpace(leaderElectionNamespace); ns != "" {
+		return ns
+	}
+	if ns := strings.TrimSpace(os.Getenv("POD_NAMESPACE")); ns != "" {
+		return ns
+	}
+	return "vela-system"
 }

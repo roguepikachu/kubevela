@@ -61,6 +61,7 @@ type CoreOptions struct {
 	EnableClusterGateway       bool
 	EnableClusterMetrics       bool
 	ClusterMetricsInterval     time.Duration
+	WorkflowHTTPDenyConfigMapName string
 }
 
 // NewCoreOptions creates a new NewVelaCoreOptions object with default parameters
@@ -96,6 +97,7 @@ func NewCoreOptions() *CoreOptions {
 		EnableClusterGateway:       false,
 		EnableClusterMetrics:       false,
 		ClusterMetricsInterval:     15 * time.Second,
+		WorkflowHTTPDenyConfigMapName: "",
 	}
 	return s
 }
@@ -152,6 +154,7 @@ func (s *CoreOptions) Flags() cliflag.NamedFlagSets {
 	wfs.IntVar(&wfTypes.MaxWorkflowWaitBackoffTime, "max-workflow-wait-backoff-time", 60, "Set the max workflow wait backoff time, default is 60")
 	wfs.IntVar(&wfTypes.MaxWorkflowFailedBackoffTime, "max-workflow-failed-backoff-time", 300, "Set the max workflow failed backoff time, default is 300")
 	wfs.IntVar(&wfTypes.MaxWorkflowStepErrorRetryTimes, "max-workflow-step-error-retry-times", 10, "Set the max workflow step error retry times, default is 10")
+	wfs.StringVar(&s.WorkflowHTTPDenyConfigMapName, "workflow-http-deny-configmap-name", s.WorkflowHTTPDenyConfigMapName, "ConfigMap name (in controller namespace) containing workflow HTTP denylist")
 
 	pkgmulticluster.AddFlags(fss.FlagSet("multicluster"))
 	ctrlrec.AddFlags(fss.FlagSet("controllerreconciles"))
