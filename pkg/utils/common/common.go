@@ -40,8 +40,8 @@ import (
 	"github.com/hashicorp/hcl/v2/hclparse"
 	cuexv1alpha1 "github.com/kubevela/pkg/apis/cue/v1alpha1"
 	"github.com/kubevela/pkg/cue/cuex"
-	workflowfeatures "github.com/kubevela/workflow/pkg/features"
 	workflowv1alpha1 "github.com/kubevela/workflow/api/v1alpha1"
+	workflowfeatures "github.com/kubevela/workflow/pkg/features"
 	"github.com/kubevela/workflow/pkg/utils/httpguard"
 	clustergatewayapi "github.com/oam-dev/cluster-gateway/pkg/apis/cluster/v1alpha1"
 	"github.com/oam-dev/terraform-config-inspect/tfconfig"
@@ -133,7 +133,7 @@ func InitBaseRestConfig() (Args, error) {
 }
 
 func outboundHTTPPolicy() httpguard.Policy {
-	policy := httpguard.DefaultPolicy()
+	policy := httpguard.Current()
 	if utilfeature.DefaultMutableFeatureGate.Enabled(workflowfeatures.BlockPrivateHTTPAddresses) {
 		policy.BlockPrivate = true
 	}
@@ -154,8 +154,15 @@ func HTTPGetResponse(ctx context.Context, url string, opts *HTTPOption) (*http.R
 	if err != nil {
 		return nil, err
 	}
+	policy := outboundHTTPPolicy()
+	if err := policy.BlockedHost(req.URL.Host); err != nil {
+		return nil, err
+	}
 	httpClient := &http.Client{
 		Transport: secureHTTPTransport(http.DefaultTransport.(*http.Transport).Clone()),
+		CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+			return policy.BlockedHost(req.URL.Host)
+		},
 	}
 	if opts != nil && len(opts.Username) != 0 && len(opts.Password) != 0 {
 		req.SetBasicAuth(opts.Username, opts.Password)

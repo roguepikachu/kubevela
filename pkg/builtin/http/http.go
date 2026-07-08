@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"time"
 
 	"cuelang.org/go/cue"
@@ -48,7 +49,7 @@ func newHTTPCmd(_ cue.Value) (registry.Runner, error) {
 }
 
 func workflowHTTPPolicy() httpguard.Policy {
-	policy := httpguard.DefaultPolicy()
+	policy := httpguard.Current()
 	if utilfeature.DefaultMutableFeatureGate.Enabled(workflowfeatures.BlockPrivateHTTPAddresses) {
 		policy.BlockPrivate = true
 	}
@@ -67,9 +68,13 @@ func (c *HTTPCmd) Run(meta *registry.Meta) (res interface{}, err error) {
 	)
 	var (
 		r      io.Reader
+		policy = workflowHTTPPolicy()
 		client = &http.Client{
-			Transport: httpguard.SecureTransport(http.DefaultTransport.(*http.Transport).Clone(), workflowHTTPPolicy()),
+			Transport: httpguard.SecureTransport(http.DefaultTransport.(*http.Transport).Clone(), policy),
 			Timeout:   time.Second * 3,
+			CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+				return policy.BlockedHost(req.URL.Host)
+			},
 		}
 	)
 	if obj := meta.Obj.LookupPath(value.FieldPath("request")); obj.Exists() {
@@ -97,6 +102,11 @@ func (c *HTTPCmd) Run(meta *registry.Meta) (res interface{}, err error) {
 	req, err := http.NewRequestWithContext(context.Background(), method, u, r)
 	if err != nil {
 		return nil, err
+	}
+	if parsed, err := neturl.Parse(u); err == nil {
+		if err := policy.BlockedHost(parsed.Host); err != nil {
+			return nil, err
+		}
 	}
 	req.Header = header
 	req.Trailer = trailer

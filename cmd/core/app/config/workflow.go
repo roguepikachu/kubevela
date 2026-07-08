@@ -27,6 +27,7 @@ type WorkflowConfig struct {
 	MaxWaitBackoffTime     int
 	MaxFailedBackoffTime   int
 	MaxStepErrorRetryTimes int
+	HTTPDenyConfigMapName  string
 }
 
 // NewWorkflowConfig creates a new WorkflowConfig with defaults.
@@ -35,6 +36,7 @@ func NewWorkflowConfig() *WorkflowConfig {
 		MaxWaitBackoffTime:     60,
 		MaxFailedBackoffTime:   300,
 		MaxStepErrorRetryTimes: 10,
+		HTTPDenyConfigMapName:  "",
 	}
 }
 
@@ -52,6 +54,10 @@ func (c *WorkflowConfig) AddFlags(fs *pflag.FlagSet) {
 		"max-workflow-step-error-retry-times",
 		c.MaxStepErrorRetryTimes,
 		"Set the max workflow step error retry times, default is 10")
+	fs.StringVar(&c.HTTPDenyConfigMapName,
+		"workflow-http-deny-configmap-name",
+		c.HTTPDenyConfigMapName,
+		"ConfigMap name (in controller namespace) containing workflow HTTP denylist")
 }
 
 // SyncToWorkflowGlobals syncs the parsed configuration values to workflow package global variables.

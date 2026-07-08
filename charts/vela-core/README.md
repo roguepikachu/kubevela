@@ -58,6 +58,7 @@ helm install --create-namespace -n vela-system kubevela kubevela/vela-core --wai
 | `workflow.backoff.maxTime.waitState`                    | The max backoff time of workflow in a wait condition                                                | `60`    |
 | `workflow.backoff.maxTime.failedState`                  | The max backoff time of workflow in a failed condition                                              | `300`   |
 | `workflow.step.errorRetryTimes`                         | The max retry times of a failed workflow step                                                       | `10`    |
+| `workflow.httpDeny.configMapName`                       | ConfigMap name in release namespace containing extra workflow HTTP denylist entries                  | `""`    |
 
 ### KubeVela controller parameters
 
