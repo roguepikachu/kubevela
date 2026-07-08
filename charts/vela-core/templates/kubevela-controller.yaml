@@ -296,9 +296,14 @@ spec:
             - "--max-workflow-wait-backoff-time={{ .Values.workflow.backoff.maxTime.waitState }}"
             - "--max-workflow-failed-backoff-time={{ .Values.workflow.backoff.maxTime.failedState }}"
             - "--max-workflow-step-error-retry-times={{ .Values.workflow.step.errorRetryTimes }}"
+            {{ if .Values.workflow.httpDeny.configMapName }}
+            - "--workflow-http-deny-configmap-name={{ .Values.workflow.httpDeny.configMapName }}"
+            {{ end }}
             - "--enable-external-package-for-default-compiler={{ .Values.workflow.enableExternalPackageForDefaultCompiler }}"
             - "--enable-external-package-watch-for-default-compiler={{ .Values.workflow.enableExternalPackageWatchForDefaultCompiler }}"
             - "--feature-gates=EnableSuspendOnFailure={{- .Values.workflow.enableSuspendOnFailure | toString -}}"
+            - "--feature-gates=DisableWorkflowHTTP={{- .Values.workflow.disableWorkflowHTTP | toString -}}"
+            - "--feature-gates=BlockPrivateHTTPAddresses={{- .Values.workflow.blockPrivateHTTPAddresses | toString -}}"
             - "--feature-gates=GzipResourceTracker={{- .Values.featureGates.gzipResourceTracker | toString -}}"
             - "--feature-gates=AuthenticateApplication={{- .Values.authentication.enabled | toString -}}"
             - "--feature-gates=ZstdResourceTracker={{- .Values.featureGates.zstdResourceTracker | toString -}}"
@@ -331,6 +336,12 @@ spec:
             - "--dev-logs={{ .Values.devLogs }}"
           image: {{ .Values.imageRegistry }}{{ .Values.image.repository }}:{{ .Values.image.tag }}
           imagePullPolicy: {{ quote .Values.image.pullPolicy }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.namespace
           resources:
           {{- toYaml .Values.resources | nindent 12 }}
           {{ if .Values.admissionWebhooks.enabled }}
