@@ -132,6 +132,8 @@ optimize:
 ##@param featureGates.validateResourcesExist enable webhook validation to check if resource types referenced in definition templates exist in the cluster
 ##@param featureGates.enableApplicationScopedPolicies enable Application-scoped PolicyDefinitions that transform Application CR before rendering (Alpha)
 ##@param featureGates.enableGlobalPolicies enable automatic discovery and application of global PolicyDefinitions to all Applications (Alpha)
+##@param featureGates.disableWorkflowHTTP disable outbound HTTP from workflow request/webhook steps
+##@param featureGates.blockPrivateHTTPAddresses block workflow outbound HTTP to RFC-1918 and ULA destinations
 ##@param
 featureGates:
   gzipResourceTracker: false
@@ -152,6 +154,8 @@ featureGates:
   validateResourcesExist: false
   enableApplicationScopedPolicies: false
   enableGlobalPolicies: false
+  disableWorkflowHTTP: false
+  blockPrivateHTTPAddresses: false
 
 ## @section MultiCluster parameters
 
