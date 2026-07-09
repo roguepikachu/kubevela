@@ -1,0 +1,131 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package v1beta1
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/discovery"
+	k8sscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
+	"sigs.k8s.io/yaml"
+)
+
+// splitYAMLDocuments splits a multi-document YAML file (separated by "---")
+// into its individual document strings.
+func splitYAMLDocuments(t *testing.T, path string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	var docs []string
+	for _, doc := range strings.Split(string(raw), "\n---\n") {
+		if strings.TrimSpace(doc) != "" {
+			docs = append(docs, doc)
+		}
+	}
+	return docs
+}
+
+// TestSpokeClusterCRD_InstallAndApply installs the generated SpokeCluster CRD
+// into a real envtest API server, applies both worked examples, and retrieves
+// them back (Requirement 1, criterion 1; Requirement 7, criterion 1).
+func TestSpokeClusterCRD_InstallAndApply(t *testing.T) {
+	r := require.New(t)
+
+	testEnv := &envtest.Environment{
+		ControlPlaneStartTimeout: 2 * time.Minute,
+		ControlPlaneStopTimeout:  time.Minute,
+		UseExistingCluster:       ptr.To(false),
+		CRDDirectoryPaths:        []string{spokeClusterCRDPath},
+	}
+
+	cfg, err := testEnv.Start()
+	r.NoError(err, "envtest environment must start (requires KUBEBUILDER_ASSETS)")
+	t.Cleanup(func() {
+		r.NoError(testEnv.Stop())
+	})
+
+	k8sClient, err := client.New(cfg, client.Options{Scheme: k8sscheme.Scheme})
+	r.NoError(err)
+
+	ctx := context.Background()
+	r.NoError(k8sClient.Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "vela-system"},
+	}))
+
+	// The installed CRD must be namespaced: kubectl get spokeclusters lists
+	// within a namespace, not cluster-wide (Requirement 1, criterion 3).
+	disco, err := discovery.NewDiscoveryClientForConfig(cfg)
+	r.NoError(err)
+	resources, err := disco.ServerResourcesForGroupVersion(SchemeGroupVersion.String())
+	r.NoError(err)
+	var found bool
+	for _, res := range resources.APIResources {
+		if res.Name == "spokeclusters" {
+			found = true
+			r.True(res.Namespaced, "spokeclusters must be namespaced")
+		}
+	}
+	r.True(found, "spokeclusters resource must be registered with the API server")
+
+	// AWS Pod Identity example.
+	awsDocs := splitYAMLDocuments(t, "../../../examples/spokecluster-aws.yaml")
+	r.Len(awsDocs, 1)
+	awsCluster := &SpokeCluster{}
+	r.NoError(yaml.Unmarshal([]byte(awsDocs[0]), awsCluster))
+	r.NoError(k8sClient.Create(ctx, awsCluster))
+
+	gotAWS := &SpokeCluster{}
+	r.NoError(k8sClient.Get(ctx, types.NamespacedName{Name: "prod-us-east-1", Namespace: "vela-system"}, gotAWS))
+	r.Equal(SpokeClusterModeConnect, gotAWS.Spec.Mode)
+	r.Equal(CredentialTypeAWS, gotAWS.Spec.Credential.Type)
+
+	// Static kubeconfig example: a source Secret plus the SpokeCluster that
+	// references it.
+	kubeconfigDocs := splitYAMLDocuments(t, "../../../examples/spokecluster-kubeconfig.yaml")
+	r.Len(kubeconfigDocs, 2)
+
+	secret := &corev1.Secret{}
+	r.NoError(yaml.Unmarshal([]byte(kubeconfigDocs[0]), secret))
+	r.NoError(k8sClient.Create(ctx, secret))
+
+	kubeconfigCluster := &SpokeCluster{}
+	r.NoError(yaml.Unmarshal([]byte(kubeconfigDocs[1]), kubeconfigCluster))
+	r.NoError(k8sClient.Create(ctx, kubeconfigCluster))
+
+	gotKubeconfig := &SpokeCluster{}
+	r.NoError(k8sClient.Get(ctx, types.NamespacedName{Name: "dev-spoke", Namespace: "vela-system"}, gotKubeconfig))
+	r.Equal(CredentialTypeKubeconfig, gotKubeconfig.Spec.Credential.Type)
+	r.Equal("dev-spoke-kubeconfig", gotKubeconfig.Spec.Credential.Kubeconfig.SecretRef.Name)
+
+	// kubectl get spokeclusters must list both, cluster-wide retrieval within
+	// the namespace (Requirement 1, criterion 1).
+	list := &SpokeClusterList{}
+	r.NoError(k8sClient.List(ctx, list, client.InNamespace("vela-system")))
+	r.Len(list.Items, 2)
+}

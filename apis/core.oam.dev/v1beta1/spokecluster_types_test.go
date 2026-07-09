@@ -32,7 +32,7 @@ func sampleAWSSpokeCluster() *SpokeCluster {
 			APIVersion: SchemeGroupVersion.String(),
 			Kind:       "SpokeCluster",
 		},
-		ObjectMeta: metav1.ObjectMeta{Name: "prod-us-east-1"},
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-us-east-1", Namespace: "vela-system"},
 		Spec: SpokeClusterSpec{
 			Mode: SpokeClusterModeConnect,
 			Credential: Credential{
@@ -104,19 +104,19 @@ func TestSpokeCluster_RegisteredInScheme(t *testing.T) {
 }
 
 // TestSpokeCluster_KubeconfigCredential proves the kubeconfig arm round-trips
-// with a required Secret namespace (cluster-scoped object has none to default).
+// with an optional Secret namespace (webhook rejects cross-namespace refs by
+// default policy; the same-namespace case needs no explicit namespace).
 func TestSpokeCluster_KubeconfigCredential(t *testing.T) {
 	r := require.New(t)
 	sc := &SpokeCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: "dev-spoke"},
+		ObjectMeta: metav1.ObjectMeta{Name: "dev-spoke", Namespace: "vela-system"},
 		Spec: SpokeClusterSpec{
 			Mode: SpokeClusterModeConnect,
 			Credential: Credential{
 				Type: CredentialTypeKubeconfig,
 				Kubeconfig: &KubeconfigCredential{
 					SecretRef: SecretReference{
-						Name:      "dev-spoke-kubeconfig",
-						Namespace: "vela-system",
+						Name: "dev-spoke-kubeconfig",
 					},
 				},
 			},
@@ -125,10 +125,13 @@ func TestSpokeCluster_KubeconfigCredential(t *testing.T) {
 
 	data, err := json.Marshal(sc)
 	r.NoError(err)
-	// Namespace is required (no omitempty): it must always serialize.
-	r.Contains(string(data), `"namespace":"vela-system"`)
 
 	decoded := &SpokeCluster{}
 	r.NoError(json.Unmarshal(data, decoded))
-	r.Equal("vela-system", decoded.Spec.Credential.Kubeconfig.SecretRef.Namespace)
+	r.Empty(decoded.Spec.Credential.Kubeconfig.SecretRef.Namespace)
+
+	// SecretRef.Namespace is optional (omitempty): it must not serialize when unset.
+	secretRefData, err := json.Marshal(sc.Spec.Credential.Kubeconfig.SecretRef)
+	r.NoError(err)
+	r.NotContains(string(secretRefData), `"namespace"`)
 }

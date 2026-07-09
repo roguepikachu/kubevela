@@ -16,7 +16,7 @@ spec:
     shortNames:
     - spc
     singular: spokecluster
-  scope: Cluster
+  scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.mode
@@ -69,9 +69,9 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          SpokeCluster is the first-class hub representation of one managed cluster. It
-          is cluster-scoped: the hub maintains a single fleet registry and a managed
-          cluster is a cluster-wide entity.
+          SpokeCluster is the first-class hub representation of one managed cluster. A
+          cluster acting as a hub for downstream clusters can hold SpokeCluster
+          objects at any level of the tree.
         properties:
           apiVersion:
             description: |-
@@ -161,12 +161,11 @@ spec:
                             type: string
                           namespace:
                             description: |-
-                              Namespace is the Secret namespace. Required: a cluster-scoped object has
-                              no namespace to default to.
+                              Namespace is the Secret namespace. Cross-namespace references are
+                              rejected by the webhook's default policy.
                             type: string
                         required:
                         - name
-                        - namespace
                         type: object
                     required:
                     - secretRef

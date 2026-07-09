@@ -1,9 +1,9 @@
 # SpokeCluster connecting to an EKS cluster via AWS Pod Identity.
-# SpokeCluster is cluster-scoped, so the object carries no metadata.namespace.
 apiVersion: core.oam.dev/v1beta1
 kind: SpokeCluster
 metadata:
   name: prod-us-east-1
+  namespace: vela-system
   labels:
     provider: aws
     region: us-east-1

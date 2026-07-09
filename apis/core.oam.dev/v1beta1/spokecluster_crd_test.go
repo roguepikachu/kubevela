@@ -49,13 +49,13 @@ func v1beta1Schema(t *testing.T, crd *apiextv1.CustomResourceDefinition) *apiext
 	return nil
 }
 
-// TestSpokeClusterCRD_ClusterScoped asserts the installed CRD is cluster-scoped
+// TestSpokeClusterCRD_Namespaced asserts the installed CRD is namespaced
 // and named to avoid the Cluster API collision (Requirement 1).
-func TestSpokeClusterCRD_ClusterScoped(t *testing.T) {
+func TestSpokeClusterCRD_Namespaced(t *testing.T) {
 	r := require.New(t)
 	crd := loadSpokeClusterCRD(t)
 
-	r.Equal(apiextv1.ClusterScoped, crd.Spec.Scope)
+	r.Equal(apiextv1.NamespaceScoped, crd.Spec.Scope)
 	r.Equal("spokeclusters", crd.Spec.Names.Plural)
 	r.Equal("SpokeCluster", crd.Spec.Names.Kind)
 	r.Equal("core.oam.dev", crd.Spec.Group)
@@ -122,10 +122,11 @@ func TestSpokeClusterCRD_Enums(t *testing.T) {
 	r.ElementsMatch([]string{`"Connected"`, `"Disconnected"`, `"Unknown"`}, enumValues(status.Properties["connection"]))
 }
 
-// TestSpokeClusterCRD_RequiredSecretNamespace asserts the kubeconfig Secret
-// reference requires a namespace, since a cluster-scoped object has none to
-// default to (Requirement 2, criterion 2).
-func TestSpokeClusterCRD_RequiredSecretNamespace(t *testing.T) {
+// TestSpokeClusterCRD_OptionalSecretNamespace asserts the kubeconfig Secret
+// reference only requires a name; namespace is optional and cross-namespace
+// references are rejected by the webhook's default policy later
+// (Requirement 2, criterion 2).
+func TestSpokeClusterCRD_OptionalSecretNamespace(t *testing.T) {
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
 
@@ -136,5 +137,5 @@ func TestSpokeClusterCRD_RequiredSecretNamespace(t *testing.T) {
 		Properties["secretRef"]
 
 	r.Contains(secretRef.Required, "name")
-	r.Contains(secretRef.Required, "namespace")
+	r.NotContains(secretRef.Required, "namespace")
 }

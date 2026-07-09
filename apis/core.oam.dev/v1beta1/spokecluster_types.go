@@ -144,16 +144,15 @@ type AzureCredential struct{}
 // GCPCredential connects to a GKE cluster via GCP cloud-native identity.
 type GCPCredential struct{}
 
-// SecretReference references a Secret. Namespace is required because a
-// cluster-scoped SpokeCluster has no namespace of its own for the reference to
-// default to.
+// SecretReference references a Secret.
 type SecretReference struct {
 	// Name is the Secret name.
 	Name string `json:"name"`
 
-	// Namespace is the Secret namespace. Required: a cluster-scoped object has
-	// no namespace to default to.
-	Namespace string `json:"namespace"`
+	// Namespace is the Secret namespace. Cross-namespace references are
+	// rejected by the webhook's default policy.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
 
 	// Key is the data key within the Secret. Defaults to "kubeconfig".
 	// +optional
@@ -239,7 +238,7 @@ type SpokeClusterInfo struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,categories={oam},shortName=spc
+// +kubebuilder:resource:categories={oam},shortName=spc
 // +kubebuilder:printcolumn:name="MODE",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="VERSION",type=string,JSONPath=`.status.clusterInfo.kubernetesVersion`
 // +kubebuilder:printcolumn:name="NODES",type=integer,JSONPath=`.status.clusterInfo.nodeCount`
@@ -254,12 +253,11 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="AUTH",type=string,JSONPath=`.status.authMethod`,priority=1
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
 // +genclient
-// +genclient:nonNamespaced
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
-// SpokeCluster is the first-class hub representation of one managed cluster. It
-// is cluster-scoped: the hub maintains a single fleet registry and a managed
-// cluster is a cluster-wide entity.
+// SpokeCluster is the first-class hub representation of one managed cluster. A
+// cluster acting as a hub for downstream clusters can hold SpokeCluster
+// objects at any level of the tree.
 type SpokeCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
