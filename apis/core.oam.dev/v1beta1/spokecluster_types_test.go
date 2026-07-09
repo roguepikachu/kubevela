@@ -35,7 +35,7 @@ func sampleAWSSpokeCluster() *SpokeCluster {
 		ObjectMeta: metav1.ObjectMeta{Name: "prod-us-east-1", Namespace: "vela-system"},
 		Spec: SpokeClusterSpec{
 			Mode: SpokeClusterModeConnect,
-			Credential: Credential{
+			Credential: CredentialSpec{
 				Type: CredentialTypeAWS,
 				AWS: &AWSCredential{
 					AuthMode:    AWSAuthModePodIdentity,
@@ -46,7 +46,7 @@ func sampleAWSSpokeCluster() *SpokeCluster {
 			},
 		},
 		Status: SpokeClusterStatus{
-			Connection: SpokeClusterConnectionConnected,
+			Connection: ConnectionStateConnected,
 			ClusterInfo: &SpokeClusterInfo{
 				KubernetesVersion: "v1.30.0",
 				Platform:          "eks",
@@ -112,10 +112,10 @@ func TestSpokeCluster_KubeconfigCredential(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "dev-spoke", Namespace: "vela-system"},
 		Spec: SpokeClusterSpec{
 			Mode: SpokeClusterModeConnect,
-			Credential: Credential{
+			Credential: CredentialSpec{
 				Type: CredentialTypeKubeconfig,
 				Kubeconfig: &KubeconfigCredential{
-					SecretRef: SecretReference{
+					SecretRef: SecretKeyRef{
 						Name: "dev-spoke-kubeconfig",
 					},
 				},

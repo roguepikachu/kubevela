@@ -121,11 +121,11 @@ var (
 
 // SpokeCluster type metadata.
 var (
-	SpokeClusterKind            = reflect.TypeOf(SpokeCluster{}).Name()
-	SpokeClusterGroupKind       = schema.GroupKind{Group: Group, Kind: SpokeClusterKind}.String()
-	SpokeClusterKindAPIVersion  = SpokeClusterKind + "." + SchemeGroupVersion.String()
-	SpokeClusterKindVersionKind = SchemeGroupVersion.WithKind(SpokeClusterKind)
-	SpokeClusterGVR             = SchemeGroupVersion.WithResource("spokeclusters")
+	SpokeClusterKind             = reflect.TypeOf(SpokeCluster{}).Name()
+	SpokeClusterGroupKind        = schema.GroupKind{Group: Group, Kind: SpokeClusterKind}.String()
+	SpokeClusterKindAPIVersion   = SpokeClusterKind + "." + SchemeGroupVersion.String()
+	SpokeClusterGroupVersionKind = SchemeGroupVersion.WithKind(SpokeClusterKind)
+	SpokeClusterGVR              = SchemeGroupVersion.WithResource("spokeclusters")
 )
 
 // DefinitionTypeInfo contains the mapping information for a definition type

@@ -111,6 +111,7 @@ func TestSpokeClusterCRD_Enums(t *testing.T) {
 
 	spec := schema.Properties["spec"]
 	r.ElementsMatch([]string{`"connect"`, `"provision"`, `"adopt"`}, enumValues(spec.Properties["mode"]))
+	r.ElementsMatch([]string{`"detach"`, `"orphan"`}, enumValues(spec.Properties["deletionPolicy"]))
 
 	credential := spec.Properties["credential"]
 	r.ElementsMatch([]string{`"kubeconfig"`, `"aws"`, `"azure"`, `"gcp"`}, enumValues(credential.Properties["type"]))
@@ -138,4 +139,27 @@ func TestSpokeClusterCRD_OptionalSecretNamespace(t *testing.T) {
 
 	r.Contains(secretRef.Required, "name")
 	r.NotContains(secretRef.Required, "namespace")
+}
+
+// TestSpokeClusterCRD_AuthColumnFromSpec asserts the wide AUTH column reads the
+// credential type from spec, not a status field (there is no status.authMethod).
+func TestSpokeClusterCRD_AuthColumnFromSpec(t *testing.T) {
+	r := require.New(t)
+	crd := loadSpokeClusterCRD(t)
+
+	var version *apiextv1.CustomResourceDefinitionVersion
+	for i := range crd.Spec.Versions {
+		if crd.Spec.Versions[i].Name == "v1beta1" {
+			version = &crd.Spec.Versions[i]
+		}
+	}
+	r.NotNil(version)
+
+	var authPath string
+	for _, c := range version.AdditionalPrinterColumns {
+		if c.Name == "AUTH" {
+			authPath = c.JSONPath
+		}
+	}
+	r.Equal(".spec.credential.type", authPath)
 }

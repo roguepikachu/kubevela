@@ -18,6 +18,8 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 )
 
 // SpokeClusterMode is the lifecycle mode of a SpokeCluster.
@@ -56,41 +58,86 @@ const (
 	AWSAuthModeIRSA AWSAuthMode = "irsa"
 )
 
-// SpokeClusterConnection is the observed connectivity state of the spoke.
-type SpokeClusterConnection string
+// ConnectionState is the observed connectivity state of the spoke.
+type ConnectionState string
 
 const (
-	// SpokeClusterConnectionConnected means the hub reached the spoke API server.
-	SpokeClusterConnectionConnected SpokeClusterConnection = "Connected"
-	// SpokeClusterConnectionDisconnected means the last probe failed.
-	SpokeClusterConnectionDisconnected SpokeClusterConnection = "Disconnected"
-	// SpokeClusterConnectionUnknown means the spoke has not yet been probed.
-	SpokeClusterConnectionUnknown SpokeClusterConnection = "Unknown"
+	// ConnectionStateConnected means the hub reached the spoke API server.
+	ConnectionStateConnected ConnectionState = "Connected"
+	// ConnectionStateDisconnected means the last probe failed.
+	ConnectionStateDisconnected ConnectionState = "Disconnected"
+	// ConnectionStateUnknown means the spoke has not yet been probed.
+	ConnectionStateUnknown ConnectionState = "Unknown"
+)
+
+// SpokeDeletionPolicy controls what happens to a connected spoke's registration
+// when its SpokeCluster is deleted.
+type SpokeDeletionPolicy string
+
+const (
+	// SpokeDeletionPolicyDetach removes the hub-side registration on delete.
+	SpokeDeletionPolicyDetach SpokeDeletionPolicy = "detach"
+	// SpokeDeletionPolicyOrphan leaves the registration in place on delete.
+	SpokeDeletionPolicyOrphan SpokeDeletionPolicy = "orphan"
+)
+
+// SpokeCluster status condition types. Downstream slices (the reconcile loop,
+// GWCP-102132) set these; the constants live here so every consumer shares them.
+const (
+	// SpokeClusterConditionRegistered is true once the hub-side registration exists.
+	SpokeClusterConditionRegistered = "Registered"
+	// SpokeClusterConditionCredentialValid is true once the credential materialized.
+	SpokeClusterConditionCredentialValid = "CredentialValid"
+	// SpokeClusterConditionConnected is true once the hub reached the spoke.
+	SpokeClusterConditionConnected = "Connected"
+	// SpokeClusterConditionInfoSynced is true once cluster inventory was discovered.
+	SpokeClusterConditionInfoSynced = "InfoSynced"
 )
 
 // SpokeClusterSpec is the desired state of a managed cluster on the hub.
 type SpokeClusterSpec struct {
 	// Mode is the cluster lifecycle mode.
 	// +kubebuilder:validation:Enum=connect;provision;adopt
+	// +kubebuilder:default=connect
 	Mode SpokeClusterMode `json:"mode"`
 
 	// Credential is the hub-to-spoke connectivity credential, a discriminated
 	// union keyed by type.
-	Credential Credential `json:"credential"`
+	Credential CredentialSpec `json:"credential"`
+
+	// ProbeIntervalSeconds is how often the hub probes the spoke for reachability.
+	// +optional
+	// +kubebuilder:default=30
+	// +kubebuilder:validation:Minimum=10
+	// +kubebuilder:validation:Maximum=600
+	ProbeIntervalSeconds int32 `json:"probeIntervalSeconds,omitempty"`
+
+	// ProbeTimeoutSeconds is the per-probe timeout.
+	// +optional
+	// +kubebuilder:default=10
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=120
+	ProbeTimeoutSeconds int32 `json:"probeTimeoutSeconds,omitempty"`
+
+	// DeletionPolicy controls the fate of the hub-side registration on delete.
+	// +optional
+	// +kubebuilder:validation:Enum=detach;orphan
+	// +kubebuilder:default=detach
+	DeletionPolicy SpokeDeletionPolicy `json:"deletionPolicy,omitempty"`
 
 	// BlueprintRef references the ClusterBlueprint to apply to the cluster.
 	// +optional
-	BlueprintRef *BlueprintRef `json:"blueprintRef,omitempty"`
+	BlueprintRef *common.ClusterObjectReference `json:"blueprintRef,omitempty"`
 
 	// RolloutStrategyRef references the ClusterRolloutStrategy that gates
 	// blueprint changes for the cluster.
 	// +optional
-	RolloutStrategyRef *RolloutStrategyRef `json:"rolloutStrategyRef,omitempty"`
+	RolloutStrategyRef *common.ClusterObjectReference `json:"rolloutStrategyRef,omitempty"`
 }
 
-// Credential is a discriminated union of hub-to-spoke credentials keyed by
+// CredentialSpec is a discriminated union of hub-to-spoke credentials keyed by
 // Type. Exactly one arm must be set.
-type Credential struct {
+type CredentialSpec struct {
 	// Type selects the credential arm.
 	// +kubebuilder:validation:Enum=kubeconfig;aws;azure;gcp
 	Type CredentialType `json:"type"`
@@ -115,7 +162,7 @@ type Credential struct {
 // KubeconfigCredential connects to the spoke via a kubeconfig held in a Secret.
 type KubeconfigCredential struct {
 	// SecretRef points at the Secret holding the kubeconfig.
-	SecretRef SecretReference `json:"secretRef"`
+	SecretRef SecretKeyRef `json:"secretRef"`
 }
 
 // AWSCredential connects to an EKS cluster via AWS cloud-native identity.
@@ -144,8 +191,8 @@ type AzureCredential struct{}
 // GCPCredential connects to a GKE cluster via GCP cloud-native identity.
 type GCPCredential struct{}
 
-// SecretReference references a Secret.
-type SecretReference struct {
+// SecretKeyRef references a key within a Secret.
+type SecretKeyRef struct {
 	// Name is the Secret name.
 	Name string `json:"name"`
 
@@ -159,28 +206,16 @@ type SecretReference struct {
 	Key string `json:"key,omitempty"`
 }
 
-// BlueprintRef references a ClusterBlueprint.
-type BlueprintRef struct {
-	// Name is the ClusterBlueprint name.
-	Name string `json:"name"`
-
-	// Revision pins a specific blueprint revision.
-	// +optional
-	Revision string `json:"revision,omitempty"`
-}
-
-// RolloutStrategyRef references a ClusterRolloutStrategy.
-type RolloutStrategyRef struct {
-	// Name is the ClusterRolloutStrategy name.
-	Name string `json:"name"`
-}
-
 // SpokeClusterStatus is the observed state of a managed cluster.
 type SpokeClusterStatus struct {
+	// ObservedGeneration is the most recent generation observed by the controller.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
 	// Connection is the observed connectivity state.
 	// +kubebuilder:validation:Enum=Connected;Disconnected;Unknown
 	// +optional
-	Connection SpokeClusterConnection `json:"connection,omitempty"`
+	Connection ConnectionState `json:"connection,omitempty"`
 
 	// Conditions is the list of standard Kubernetes conditions.
 	// +optional
@@ -192,32 +227,28 @@ type SpokeClusterStatus struct {
 	// +optional
 	ClusterInfo *SpokeClusterInfo `json:"clusterInfo,omitempty"`
 
-	// AuthMethod is the effective auth method used to connect.
-	// +optional
-	AuthMethod string `json:"authMethod,omitempty"`
-
 	// LastProbeTime is when the hub last probed the spoke.
 	// +optional
 	LastProbeTime *metav1.Time `json:"lastProbeTime,omitempty"`
-
-	// DispatchedRevision records the blueprint revision applied to the spoke.
-	// +optional
-	DispatchedRevision string `json:"dispatchedRevision,omitempty"`
 }
 
 // SpokeClusterInfo is the discovered inventory of a managed cluster.
 type SpokeClusterInfo struct {
 	// KubernetesVersion is the spoke API server version.
-	KubernetesVersion string `json:"kubernetesVersion"`
+	// +optional
+	KubernetesVersion string `json:"kubernetesVersion,omitempty"`
 
 	// Platform is the discovered cluster flavour (eks, gke, aks, kind, k3s).
-	Platform string `json:"platform"`
+	// +optional
+	Platform string `json:"platform,omitempty"`
 
 	// Region is the cloud region the spoke runs in.
-	Region string `json:"region"`
+	// +optional
+	Region string `json:"region,omitempty"`
 
 	// NodeCount is the number of nodes in the spoke.
-	NodeCount int32 `json:"nodeCount"`
+	// +optional
+	NodeCount int `json:"nodeCount,omitempty"`
 
 	// TotalCPU is the aggregate allocatable CPU across nodes.
 	// +optional
@@ -233,7 +264,7 @@ type SpokeClusterInfo struct {
 
 	// LatencyMillis is the last observed hub-to-spoke round-trip latency.
 	// +optional
-	LatencyMillis int32 `json:"latencyMillis,omitempty"`
+	LatencyMillis int64 `json:"latencyMillis,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -250,7 +281,7 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="CPU",type=string,JSONPath=`.status.clusterInfo.totalCPU`,priority=1
 // +kubebuilder:printcolumn:name="MEMORY",type=string,JSONPath=`.status.clusterInfo.totalMemory`,priority=1
 // +kubebuilder:printcolumn:name="LATENCY",type=integer,JSONPath=`.status.clusterInfo.latencyMillis`,priority=1
-// +kubebuilder:printcolumn:name="AUTH",type=string,JSONPath=`.status.authMethod`,priority=1
+// +kubebuilder:printcolumn:name="AUTH",type=string,JSONPath=`.spec.credential.type`,priority=1
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
