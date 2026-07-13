@@ -155,6 +155,26 @@ func TestSpokeClusterCRD_OptionalSecretNamespace(t *testing.T) {
 	r.NotContains(secretRef.Required, "namespace")
 }
 
+// TestSpokeClusterCRD_RequiredFields asserts credential is the only required
+// spec field. mode carries a default, so it is optional (a required field with
+// a default is contradictory), and root spec stays optional to match every
+// other core.oam.dev CRD.
+func TestSpokeClusterCRD_RequiredFields(t *testing.T) {
+	r := require.New(t)
+	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
+
+	r.NotContains(schema.Required, "spec")
+
+	spec := schema.Properties["spec"]
+	r.Contains(spec.Required, "credential")
+	r.NotContains(spec.Required, "mode")
+
+	// mode is optional because it defaults to connect (JSON default is a quoted string).
+	mode := spec.Properties["mode"]
+	r.NotNil(mode.Default)
+	r.JSONEq(`"connect"`, string(mode.Default.Raw))
+}
+
 // TestSpokeClusterCRD_AuthColumnFromSpec asserts the wide AUTH column reads the
 // credential type from spec, not a status field (there is no status.authMethod).
 func TestSpokeClusterCRD_AuthColumnFromSpec(t *testing.T) {

@@ -114,10 +114,11 @@ const (
 
 // SpokeClusterSpec is the desired state of a managed cluster on the hub.
 type SpokeClusterSpec struct {
-	// Mode is the cluster lifecycle mode.
+	// Mode is the cluster lifecycle mode. Defaults to connect when unset.
 	// +kubebuilder:validation:Enum=connect;provision;adopt
 	// +kubebuilder:default=connect
-	Mode SpokeClusterMode `json:"mode"`
+	// +optional
+	Mode SpokeClusterMode `json:"mode,omitempty"`
 
 	// Credential is the hub-to-spoke connectivity credential, a discriminated
 	// union keyed by type.
@@ -440,7 +441,7 @@ type SpokeCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SpokeClusterSpec   `json:"spec"`
+	Spec   SpokeClusterSpec   `json:"spec,omitempty"`
 	Status SpokeClusterStatus `json:"status,omitempty"`
 }
 
