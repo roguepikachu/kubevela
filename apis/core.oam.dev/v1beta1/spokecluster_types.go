@@ -417,7 +417,7 @@ type SpokeClusterInfo struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:categories={oam},shortName={sc,spc}
+// +kubebuilder:resource:categories={oam},shortName=spc
 // +kubebuilder:printcolumn:name="MODE",type=string,JSONPath=`.spec.mode`
 // +kubebuilder:printcolumn:name="VERSION",type=string,JSONPath=`.status.clusterInfo.kubernetesVersion`
 // +kubebuilder:printcolumn:name="NODES",type=integer,JSONPath=`.status.clusterInfo.nodeCount`

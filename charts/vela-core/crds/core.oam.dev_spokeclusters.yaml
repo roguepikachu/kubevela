@@ -14,7 +14,6 @@ spec:
     listKind: SpokeClusterList
     plural: spokeclusters
     shortNames:
-    - sc
     - spc
     singular: spokecluster
   scope: Namespaced
