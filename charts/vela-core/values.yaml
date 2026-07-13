@@ -152,6 +152,38 @@ featureGates:
   validateResourcesExist: false
   enableApplicationScopedPolicies: false
   enableGlobalPolicies: false
+  ## @param featureGates.enableSpokeClusterCRD Enable the SpokeCluster CRD, controller, and webhook (Cluster Connect Phase 1). Runs the separate vela-cluster-core pod.
+  enableSpokeClusterCRD: false
+
+## @section vela-cluster-core parameters
+## vela-cluster-core is a separate controller-manager pod that reconciles cluster-infrastructure
+## resources (SpokeCluster, and later Cluster/ClusterBlueprint). It only runs when
+## featureGates.enableSpokeClusterCRD is true.
+clusterCore:
+  ## @param clusterCore.replicaCount Replicas for the vela-cluster-core deployment
+  replicaCount: 1
+  ## @param clusterCore.concurrentReconciles Concurrent reconciles for cluster-infrastructure controllers
+  concurrentReconciles: 5
+  ## @param clusterCore.webhook.enabled Serve the SpokeCluster admission webhooks from vela-cluster-core (requires cert-manager). When false, CRD-level validation is the admission backstop.
+  webhook:
+    enabled: false
+    port: 9445
+  ## @param clusterCore.resources Resource requests/limits for the vela-cluster-core container
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  ## @param clusterCore.healthCheck.port Health probe port for vela-cluster-core
+  healthCheck:
+    port: 9441
+  ## @param clusterCore.metricsPort Metrics port for vela-cluster-core
+  metricsPort: 8080
+  ## @param clusterCore.aws.serviceAccountRoleArn AWS role ARN annotation for the vela-cluster-core service account (EKS Pod Identity / IRSA) for hub-to-spoke EKS auth.
+  aws:
+    serviceAccountRoleArn: ""
 
 ## @section MultiCluster parameters
 
