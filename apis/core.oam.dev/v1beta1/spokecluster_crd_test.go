@@ -119,6 +119,15 @@ func TestSpokeClusterCRD_Enums(t *testing.T) {
 	aws := credential.Properties["aws"]
 	r.ElementsMatch([]string{`"podIdentity"`, `"irsa"`}, enumValues(aws.Properties["authMode"]))
 
+	// The azure and gcp arms are Phase 1 placeholders with no provider behind
+	// them, but the union still carries their auth-mode enums so a later
+	// provider inherits a stable schema.
+	azure := credential.Properties["azure"]
+	r.ElementsMatch([]string{`"workloadIdentity"`, `"managedIdentity"`}, enumValues(azure.Properties["authMode"]))
+
+	gcp := credential.Properties["gcp"]
+	r.ElementsMatch([]string{`"workloadIdentityFederation"`, `"serviceAccount"`}, enumValues(gcp.Properties["authMode"]))
+
 	status := schema.Properties["status"]
 	r.ElementsMatch([]string{`"Connected"`, `"Disconnected"`, `"Unknown"`}, enumValues(status.Properties["connection"]))
 }

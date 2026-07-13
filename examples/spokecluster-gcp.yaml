@@ -1,0 +1,23 @@
+# SpokeCluster connecting to a GKE cluster via GCP cloud-native identity.
+#
+# Phase 1 placeholder: the gcp arm is accepted by the schema, but no provider
+# materializes it yet, so this manifest does not connect a cluster today. It
+# documents the shape a future GKE provider will consume.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: prod-us-central1
+  namespace: vela-system
+  labels:
+    provider: gcp
+    region: us-central1
+spec:
+  mode: connect
+  credential:
+    type: gcp
+    gcp:
+      authMode: workloadIdentityFederation   # workloadIdentityFederation | serviceAccount
+      projectID: my-gcp-project
+      location: us-central1
+      clusterName: prod-us-central1
+      # serviceAccountEmail: <optional>

@@ -177,9 +177,66 @@ spec:
                     type: object
                   azure:
                     description: Azure holds Azure cloud-native identity configuration.
+                    properties:
+                      authMode:
+                        description: AuthMode is the Azure authentication mode.
+                        enum:
+                        - workloadIdentity
+                        - managedIdentity
+                        type: string
+                      clientID:
+                        description: ClientID is the workload or managed identity
+                          the hub authenticates as.
+                        type: string
+                      clusterName:
+                        description: ClusterName is the AKS cluster name.
+                        type: string
+                      resourceGroup:
+                        description: ResourceGroup is the resource group the AKS cluster
+                          lives in.
+                        type: string
+                      subscriptionID:
+                        description: SubscriptionID is the Azure subscription that
+                          owns the AKS cluster.
+                        type: string
+                      tenantID:
+                        description: TenantID is the Entra tenant the federated identity
+                          belongs to.
+                        type: string
+                    required:
+                    - authMode
+                    - clusterName
+                    - resourceGroup
+                    - subscriptionID
                     type: object
                   gcp:
                     description: GCP holds GCP cloud-native identity configuration.
+                    properties:
+                      authMode:
+                        description: AuthMode is the GCP authentication mode.
+                        enum:
+                        - workloadIdentityFederation
+                        - serviceAccount
+                        type: string
+                      clusterName:
+                        description: ClusterName is the GKE cluster name.
+                        type: string
+                      location:
+                        description: Location is the cluster's region or zone.
+                        type: string
+                      projectID:
+                        description: ProjectID is the GCP project that owns the GKE
+                          cluster.
+                        type: string
+                      serviceAccountEmail:
+                        description: ServiceAccountEmail is the Google service account
+                          the hub impersonates.
+                        type: string
+                    required:
+                    - authMode
+                    - clusterName
+                    - location
+                    - projectID
                     type: object
                   kubeconfig:
                     description: Kubeconfig holds a reference to a kubeconfig Secret.

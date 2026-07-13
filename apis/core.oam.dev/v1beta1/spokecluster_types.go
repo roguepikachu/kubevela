@@ -58,6 +58,26 @@ const (
 	AWSAuthModeIRSA AWSAuthMode = "irsa"
 )
 
+// AzureAuthMode is the Azure hub-to-spoke authentication mode.
+type AzureAuthMode string
+
+const (
+	// AzureAuthModeWorkloadIdentity uses Microsoft Entra Workload ID federation.
+	AzureAuthModeWorkloadIdentity AzureAuthMode = "workloadIdentity"
+	// AzureAuthModeManagedIdentity uses an assigned managed identity.
+	AzureAuthModeManagedIdentity AzureAuthMode = "managedIdentity"
+)
+
+// GCPAuthMode is the GCP hub-to-spoke authentication mode.
+type GCPAuthMode string
+
+const (
+	// GCPAuthModeWorkloadIdentityFederation uses Workload Identity Federation.
+	GCPAuthModeWorkloadIdentityFederation GCPAuthMode = "workloadIdentityFederation"
+	// GCPAuthModeServiceAccount impersonates a Google service account.
+	GCPAuthModeServiceAccount GCPAuthMode = "serviceAccount"
+)
+
 // ConnectionState is the observed connectivity state of the spoke.
 type ConnectionState string
 
@@ -186,10 +206,58 @@ type AWSCredential struct {
 }
 
 // AzureCredential connects to an AKS cluster via Azure cloud-native identity.
-type AzureCredential struct{}
+//
+// Phase 1 placeholder: the credential union accepts this arm and the webhook may
+// structurally validate it, but no provider materializes it yet. The fields
+// mirror what an AKS provider needs to locate the cluster and name the workload
+// identity the hub federates to. See the aws arm for the working reference.
+type AzureCredential struct {
+	// AuthMode is the Azure authentication mode.
+	// +kubebuilder:validation:Enum=workloadIdentity;managedIdentity
+	AuthMode AzureAuthMode `json:"authMode"`
+
+	// SubscriptionID is the Azure subscription that owns the AKS cluster.
+	SubscriptionID string `json:"subscriptionID"`
+
+	// ResourceGroup is the resource group the AKS cluster lives in.
+	ResourceGroup string `json:"resourceGroup"`
+
+	// ClusterName is the AKS cluster name.
+	ClusterName string `json:"clusterName"`
+
+	// TenantID is the Entra tenant the federated identity belongs to.
+	// +optional
+	TenantID string `json:"tenantID,omitempty"`
+
+	// ClientID is the workload or managed identity the hub authenticates as.
+	// +optional
+	ClientID string `json:"clientID,omitempty"`
+}
 
 // GCPCredential connects to a GKE cluster via GCP cloud-native identity.
-type GCPCredential struct{}
+//
+// Phase 1 placeholder: the credential union accepts this arm and the webhook may
+// structurally validate it, but no provider materializes it yet. The fields
+// mirror what a GKE provider needs to locate the cluster and name the service
+// account the hub impersonates. See the aws arm for the working reference.
+type GCPCredential struct {
+	// AuthMode is the GCP authentication mode.
+	// +kubebuilder:validation:Enum=workloadIdentityFederation;serviceAccount
+	AuthMode GCPAuthMode `json:"authMode"`
+
+	// ProjectID is the GCP project that owns the GKE cluster.
+	ProjectID string `json:"projectID"`
+
+	// Location is the cluster's region or zone.
+	Location string `json:"location"`
+
+	// ClusterName is the GKE cluster name.
+	ClusterName string `json:"clusterName"`
+
+	// ServiceAccountEmail is the Google service account the hub impersonates.
+	// +optional
+	ServiceAccountEmail string `json:"serviceAccountEmail,omitempty"`
+}
 
 // SecretKeyRef references a key within a Secret.
 type SecretKeyRef struct {
