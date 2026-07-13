@@ -93,6 +93,10 @@ type Materialized struct {
 	// CAData is the PEM CA bundle; empty means the endpoint is trusted without
 	// verification.
 	CAData []byte
+	// ServerName overrides the hostname the endpoint's certificate is verified
+	// against (kubeconfig tls-server-name). Empty means verify against the
+	// endpoint host.
+	ServerName string
 	// Token is a bearer token (aws arm, token-based kubeconfigs).
 	Token string
 	// ClientCertData is the mTLS client certificate (x509 kubeconfigs).
@@ -141,7 +145,17 @@ func (r Registry) For(t v1beta1.CredentialType) (Provider, error) {
 }
 
 // DefaultRegistry returns the built-in provider set and is the single
-// registration point for built-in providers.
+// registration point for built-in providers. All four credential arms are
+// registered: kubeconfig and AWS EKS have a working Materialize, while azure and
+// gcp are registered stubs whose Materialize returns a not-implemented error.
+// Registering the stubs means a misconfigured azure/gcp SpokeCluster fails with
+// an arm-specific "not implemented yet" message instead of a generic "no
+// provider registered", and finishing them is a single-file change.
 func DefaultRegistry() Registry {
-	return Registry{}
+	return Registry{
+		v1beta1.CredentialTypeKubeconfig: NewKubeconfigProvider(),
+		v1beta1.CredentialTypeAWS:        NewAWSProvider(),
+		v1beta1.CredentialTypeAzure:      NewAzureProvider(),
+		v1beta1.CredentialTypeGCP:        NewGCPProvider(),
+	}
 }

@@ -18,8 +18,6 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 )
 
 // SpokeClusterMode is the lifecycle mode of a SpokeCluster.
@@ -56,6 +54,26 @@ const (
 	AWSAuthModePodIdentity AWSAuthMode = "podIdentity"
 	// AWSAuthModeIRSA uses IAM Roles for Service Accounts.
 	AWSAuthModeIRSA AWSAuthMode = "irsa"
+)
+
+// AzureAuthMode is the Azure hub-to-spoke authentication mode.
+type AzureAuthMode string
+
+const (
+	// AzureAuthModeWorkloadIdentity uses Microsoft Entra Workload ID federation.
+	AzureAuthModeWorkloadIdentity AzureAuthMode = "workloadIdentity"
+	// AzureAuthModeManagedIdentity uses an assigned managed identity.
+	AzureAuthModeManagedIdentity AzureAuthMode = "managedIdentity"
+)
+
+// GCPAuthMode is the GCP hub-to-spoke authentication mode.
+type GCPAuthMode string
+
+const (
+	// GCPAuthModeWorkloadIdentityFederation uses Workload Identity Federation.
+	GCPAuthModeWorkloadIdentityFederation GCPAuthMode = "workloadIdentityFederation"
+	// GCPAuthModeServiceAccount impersonates a Google service account.
+	GCPAuthModeServiceAccount GCPAuthMode = "serviceAccount"
 )
 
 // ConnectionState is the observed connectivity state of the spoke.
@@ -96,10 +114,11 @@ const (
 
 // SpokeClusterSpec is the desired state of a managed cluster on the hub.
 type SpokeClusterSpec struct {
-	// Mode is the cluster lifecycle mode.
+	// Mode is the cluster lifecycle mode. Defaults to connect when unset.
 	// +kubebuilder:validation:Enum=connect;provision;adopt
 	// +kubebuilder:default=connect
-	Mode SpokeClusterMode `json:"mode"`
+	// +optional
+	Mode SpokeClusterMode `json:"mode,omitempty"`
 
 	// Credential is the hub-to-spoke connectivity credential, a discriminated
 	// union keyed by type.
@@ -125,14 +144,54 @@ type SpokeClusterSpec struct {
 	// +kubebuilder:default=detach
 	DeletionPolicy SpokeDeletionPolicy `json:"deletionPolicy,omitempty"`
 
-	// BlueprintRef references the ClusterBlueprint to apply to the cluster.
+	// InfraProvisioning references the shared cloud infrastructure the hub
+	// reconciles against cloud APIs before the cluster is dispatched to (VPC,
+	// IAM, DNS, and cluster creation when mode is provision).
+	//
+	// Phase 2 stub: defined so the schema is forward-compatible. No Phase 1
+	// controller reconciles it, and the admission webhook that will reject it in
+	// connect mode does not exist yet, so today it is accepted and ignored.
 	// +optional
-	BlueprintRef *common.ClusterObjectReference `json:"blueprintRef,omitempty"`
+	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
-	// RolloutStrategyRef references the ClusterRolloutStrategy that gates
-	// blueprint changes for the cluster.
+	// BlueprintRef references the ClusterBlueprint revision to dispatch to the
+	// cluster.
 	// +optional
-	RolloutStrategyRef *common.ClusterObjectReference `json:"rolloutStrategyRef,omitempty"`
+	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
+
+	// RolloutStrategyRef references the ClusterRolloutStrategy that gates when a
+	// new blueprint revision is dispatched to the cluster.
+	// +optional
+	RolloutStrategyRef *BlueprintReference `json:"rolloutStrategyRef,omitempty"`
+}
+
+// InfraProvisioning is the hub-reconciled shared cloud infrastructure for a
+// SpokeCluster. It is applied on the hub against cloud APIs before any blueprint
+// is dispatched to the spoke, and shared outputs are consumed by every
+// SpokeCluster that references the same blueprint.
+//
+// Phase 2 stub: only the blueprint reference is modeled; provisioning behaviour
+// and shared-output consumption arrive with the dispatch controller.
+type InfraProvisioning struct {
+	// BlueprintRef references the ClusterBlueprint that describes the shared
+	// infrastructure to reconcile on the hub.
+	// +optional
+	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
+}
+
+// BlueprintReference points at a KubeVela cluster-infrastructure object by name
+// and an optional immutable revision. Blueprints are immutable once published,
+// so revision pins an exact version to dispatch; leaving it empty tracks the
+// object by name. It is the shared reference shape for the Phase 2 dispatch and
+// rollout fields (blueprintRef, rolloutStrategyRef, and the blueprint references
+// on Cluster), so a name-only consumer just omits revision.
+type BlueprintReference struct {
+	// Name of the referenced object.
+	Name string `json:"name"`
+
+	// Revision pins an immutable revision of the referenced object.
+	// +optional
+	Revision string `json:"revision,omitempty"`
 }
 
 // CredentialSpec is a discriminated union of hub-to-spoke credentials keyed by
@@ -186,10 +245,58 @@ type AWSCredential struct {
 }
 
 // AzureCredential connects to an AKS cluster via Azure cloud-native identity.
-type AzureCredential struct{}
+//
+// Phase 1 placeholder: the credential union accepts this arm and the webhook may
+// structurally validate it, but no provider materializes it yet. The fields
+// mirror what an AKS provider needs to locate the cluster and name the workload
+// identity the hub federates to. See the aws arm for the working reference.
+type AzureCredential struct {
+	// AuthMode is the Azure authentication mode.
+	// +kubebuilder:validation:Enum=workloadIdentity;managedIdentity
+	AuthMode AzureAuthMode `json:"authMode"`
+
+	// SubscriptionID is the Azure subscription that owns the AKS cluster.
+	SubscriptionID string `json:"subscriptionID"`
+
+	// ResourceGroup is the resource group the AKS cluster lives in.
+	ResourceGroup string `json:"resourceGroup"`
+
+	// ClusterName is the AKS cluster name.
+	ClusterName string `json:"clusterName"`
+
+	// TenantID is the Entra tenant the federated identity belongs to.
+	// +optional
+	TenantID string `json:"tenantID,omitempty"`
+
+	// ClientID is the workload or managed identity the hub authenticates as.
+	// +optional
+	ClientID string `json:"clientID,omitempty"`
+}
 
 // GCPCredential connects to a GKE cluster via GCP cloud-native identity.
-type GCPCredential struct{}
+//
+// Phase 1 placeholder: the credential union accepts this arm and the webhook may
+// structurally validate it, but no provider materializes it yet. The fields
+// mirror what a GKE provider needs to locate the cluster and name the service
+// account the hub impersonates. See the aws arm for the working reference.
+type GCPCredential struct {
+	// AuthMode is the GCP authentication mode.
+	// +kubebuilder:validation:Enum=workloadIdentityFederation;serviceAccount
+	AuthMode GCPAuthMode `json:"authMode"`
+
+	// ProjectID is the GCP project that owns the GKE cluster.
+	ProjectID string `json:"projectID"`
+
+	// Location is the cluster's region or zone.
+	Location string `json:"location"`
+
+	// ClusterName is the GKE cluster name.
+	ClusterName string `json:"clusterName"`
+
+	// ServiceAccountEmail is the Google service account the hub impersonates.
+	// +optional
+	ServiceAccountEmail string `json:"serviceAccountEmail,omitempty"`
+}
 
 // SecretKeyRef references a key within a Secret.
 type SecretKeyRef struct {
@@ -230,6 +337,47 @@ type SpokeClusterStatus struct {
 	// LastProbeTime is when the hub last probed the spoke.
 	// +optional
 	LastProbeTime *metav1.Time `json:"lastProbeTime,omitempty"`
+
+	// DispatchedRevision is the blueprint revision the hub last dispatched to the
+	// spoke. The dispatch controller advances a spoke when this differs from
+	// spec.blueprintRef.revision.
+	//
+	// Phase 2 stub: written by the dispatch controller once blueprint dispatch is
+	// built; empty in connect-only Phase 1.
+	// +optional
+	DispatchedRevision string `json:"dispatchedRevision,omitempty"`
+
+	// Health is the spoke's blueprint health, pulled from the spoke Cluster on
+	// demand while connected. The spoke never pushes it to the hub.
+	//
+	// Phase 2 stub: populated once blueprint dispatch and spoke-side health
+	// aggregation exist; nil in connect-only Phase 1.
+	// +optional
+	Health *SpokeClusterHealth `json:"health,omitempty"`
+}
+
+// SpokeClusterHealth is the blueprint health the hub pulls from the spoke
+// Cluster on demand. It summarizes how many of the dispatched blueprint's planes
+// are healthy at the time of the last pull.
+//
+// Phase 2 stub: no controller pulls this in Phase 1.
+type SpokeClusterHealth struct {
+	// Status is the aggregate blueprint health of the spoke (for example Healthy
+	// or Degraded).
+	// +optional
+	Status string `json:"status,omitempty"`
+
+	// PlanesHealthy is the number of blueprint planes reporting healthy.
+	// +optional
+	PlanesHealthy int `json:"planesHealthy,omitempty"`
+
+	// PlanesTotal is the total number of blueprint planes on the spoke.
+	// +optional
+	PlanesTotal int `json:"planesTotal,omitempty"`
+
+	// LastPulledAt is when the hub last pulled health from the spoke.
+	// +optional
+	LastPulledAt *metav1.Time `json:"lastPulledAt,omitempty"`
 }
 
 // SpokeClusterInfo is the discovered inventory of a managed cluster.
@@ -293,7 +441,7 @@ type SpokeCluster struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   SpokeClusterSpec   `json:"spec"`
+	Spec   SpokeClusterSpec   `json:"spec,omitempty"`
 	Status SpokeClusterStatus `json:"status,omitempty"`
 }
 

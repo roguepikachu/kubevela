@@ -81,3 +81,36 @@ func TestDefaultRegistryKeyedByType(t *testing.T) {
 		require.Equal(t, key, provider.Type(), "provider registered under key %q reports Type() %q", key, provider.Type())
 	}
 }
+
+func TestDefaultRegistryHasAllArms(t *testing.T) {
+	// All four credential arms are registered so lookups never fall through to a
+	// generic "no provider" error.
+	reg := DefaultRegistry()
+	for _, ct := range []v1beta1.CredentialType{
+		v1beta1.CredentialTypeKubeconfig,
+		v1beta1.CredentialTypeAWS,
+		v1beta1.CredentialTypeAzure,
+		v1beta1.CredentialTypeGCP,
+	} {
+		_, err := reg.For(ct)
+		require.NoError(t, err, "credential type %q should be registered", ct)
+	}
+}
+
+func TestStubProvidersNotImplemented(t *testing.T) {
+	// The azure and gcp arms are registered stubs: they materialize to an
+	// arm-specific not-implemented error, not a partial result. When they are
+	// implemented, these assertions flip and signal the tests to update.
+	sc := &v1beta1.SpokeCluster{}
+	for name, p := range map[string]Provider{
+		"azure": NewAzureProvider(),
+		"gcp":   NewGCPProvider(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, err := p.Materialize(context.Background(), nil, sc)
+			require.Nil(t, m)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "not implemented")
+		})
+	}
+}

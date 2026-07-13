@@ -59,6 +59,11 @@ func TestSpokeClusterCRD_Namespaced(t *testing.T) {
 	r.Equal("spokeclusters", crd.Spec.Names.Plural)
 	r.Equal("SpokeCluster", crd.Spec.Names.Kind)
 	r.Equal("core.oam.dev", crd.Spec.Group)
+
+	// Kubectl surface: the spc short name, and the oam category shared by every
+	// core.oam.dev CRD so `kubectl get oam` includes SpokeCluster.
+	r.Equal([]string{"spc"}, crd.Spec.Names.ShortNames)
+	r.Contains(crd.Spec.Names.Categories, "oam")
 }
 
 // TestSpokeClusterCRD_PrinterColumns asserts the default and wide fleet-summary
@@ -119,6 +124,15 @@ func TestSpokeClusterCRD_Enums(t *testing.T) {
 	aws := credential.Properties["aws"]
 	r.ElementsMatch([]string{`"podIdentity"`, `"irsa"`}, enumValues(aws.Properties["authMode"]))
 
+	// The azure and gcp arms are Phase 1 placeholders with no provider behind
+	// them, but the union still carries their auth-mode enums so a later
+	// provider inherits a stable schema.
+	azure := credential.Properties["azure"]
+	r.ElementsMatch([]string{`"workloadIdentity"`, `"managedIdentity"`}, enumValues(azure.Properties["authMode"]))
+
+	gcp := credential.Properties["gcp"]
+	r.ElementsMatch([]string{`"workloadIdentityFederation"`, `"serviceAccount"`}, enumValues(gcp.Properties["authMode"]))
+
 	status := schema.Properties["status"]
 	r.ElementsMatch([]string{`"Connected"`, `"Disconnected"`, `"Unknown"`}, enumValues(status.Properties["connection"]))
 }
@@ -139,6 +153,26 @@ func TestSpokeClusterCRD_OptionalSecretNamespace(t *testing.T) {
 
 	r.Contains(secretRef.Required, "name")
 	r.NotContains(secretRef.Required, "namespace")
+}
+
+// TestSpokeClusterCRD_RequiredFields asserts credential is the only required
+// spec field. mode carries a default, so it is optional (a required field with
+// a default is contradictory), and root spec stays optional to match every
+// other core.oam.dev CRD.
+func TestSpokeClusterCRD_RequiredFields(t *testing.T) {
+	r := require.New(t)
+	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
+
+	r.NotContains(schema.Required, "spec")
+
+	spec := schema.Properties["spec"]
+	r.Contains(spec.Required, "credential")
+	r.NotContains(spec.Required, "mode")
+
+	// mode is optional because it defaults to connect (JSON default is a quoted string).
+	mode := spec.Properties["mode"]
+	r.NotNil(mode.Default)
+	r.JSONEq(`"connect"`, string(mode.Default.Raw))
 }
 
 // TestSpokeClusterCRD_AuthColumnFromSpec asserts the wide AUTH column reads the
@@ -162,4 +196,34 @@ func TestSpokeClusterCRD_AuthColumnFromSpec(t *testing.T) {
 		}
 	}
 	r.Equal(".spec.credential.type", authPath)
+}
+
+// TestSpokeClusterCRD_Phase2Stubs asserts the forward-compatible Phase 2 fields
+// are present in the schema with their intended shape. No Phase 1 controller
+// reconciles them, but they are published now so the dispatch and rollout work
+// in a later phase does not require a breaking CRD change.
+func TestSpokeClusterCRD_Phase2Stubs(t *testing.T) {
+	r := require.New(t)
+	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
+
+	spec := schema.Properties["spec"]
+	status := schema.Properties["status"]
+
+	// spec.infraProvisioning.blueprintRef is a name/revision BlueprintReference.
+	infra := spec.Properties["infraProvisioning"]
+	infraBlueprint := infra.Properties["blueprintRef"]
+	r.Contains(infraBlueprint.Properties, "name")
+	r.Contains(infraBlueprint.Properties, "revision")
+	r.Equal([]string{"name"}, infraBlueprint.Required)
+
+	// status.dispatchedRevision is the revision the dispatch loop compares against
+	// spec.blueprintRef.revision.
+	r.Contains(status.Properties, "dispatchedRevision")
+	r.Equal("string", status.Properties["dispatchedRevision"].Type)
+
+	// status.health summarizes the blueprint health pulled from the spoke.
+	health := status.Properties["health"]
+	for _, field := range []string{"status", "planesHealthy", "planesTotal", "lastPulledAt"} {
+		r.Contains(health.Properties, field)
+	}
 }

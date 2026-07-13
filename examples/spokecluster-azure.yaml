@@ -1,0 +1,24 @@
+# SpokeCluster connecting to an AKS cluster via Azure cloud-native identity.
+#
+# Phase 1 placeholder: the azure arm is accepted by the schema, but no provider
+# materializes it yet, so this manifest does not connect a cluster today. It
+# documents the shape a future AKS provider will consume.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: prod-westeurope
+  namespace: vela-system
+  labels:
+    provider: azure
+    region: westeurope
+spec:
+  mode: connect
+  credential:
+    type: azure
+    azure:
+      authMode: workloadIdentity   # workloadIdentity | managedIdentity
+      subscriptionID: 00000000-0000-0000-0000-000000000000
+      resourceGroup: prod-rg
+      clusterName: prod-westeurope
+      # tenantID: <optional>
+      # clientID: <optional>
