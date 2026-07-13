@@ -59,6 +59,11 @@ func TestSpokeClusterCRD_Namespaced(t *testing.T) {
 	r.Equal("spokeclusters", crd.Spec.Names.Plural)
 	r.Equal("SpokeCluster", crd.Spec.Names.Kind)
 	r.Equal("core.oam.dev", crd.Spec.Group)
+
+	// Kubectl surface: sc and spc short names, and the oam category shared by
+	// every core.oam.dev CRD so `kubectl get oam` includes SpokeCluster.
+	r.ElementsMatch([]string{"sc", "spc"}, crd.Spec.Names.ShortNames)
+	r.Contains(crd.Spec.Names.Categories, "oam")
 }
 
 // TestSpokeClusterCRD_PrinterColumns asserts the default and wide fleet-summary
