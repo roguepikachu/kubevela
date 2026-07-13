@@ -93,6 +93,10 @@ type Materialized struct {
 	// CAData is the PEM CA bundle; empty means the endpoint is trusted without
 	// verification.
 	CAData []byte
+	// ServerName overrides the hostname the endpoint's certificate is verified
+	// against (kubeconfig tls-server-name). Empty means verify against the
+	// endpoint host.
+	ServerName string
 	// Token is a bearer token (aws arm, token-based kubeconfigs).
 	Token string
 	// ClientCertData is the mTLS client certificate (x509 kubeconfigs).

@@ -181,7 +181,7 @@ clusterCore:
     port: 9441
   ## @param clusterCore.metricsPort Metrics port for vela-cluster-core
   metricsPort: 8080
-  ## @param clusterCore.aws.serviceAccountRoleArn AWS role ARN annotation for the vela-cluster-core service account (EKS Pod Identity / IRSA) for hub-to-spoke EKS auth.
+  ## @param clusterCore.aws.serviceAccountRoleArn AWS role ARN for the vela-cluster-core pod's base IAM identity, applied via the eks.amazonaws.com/role-arn service account annotation. The pod holds this single base identity for its lifetime and calls sts:AssumeRole to mint short-lived credentials for each spoke's per-cluster role (one assume call per cluster, same pod, for both the podIdentity and irsa auth modes).
   aws:
     serviceAccountRoleArn: ""
 

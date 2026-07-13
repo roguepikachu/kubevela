@@ -89,8 +89,20 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		return nil, fmt.Errorf("kubeconfig references unknown user %q", kubeCtx.AuthInfo)
 	}
 
+	// A file-path certificate-authority cannot be honored here: the kubeconfig
+	// arrives as Secret data, so the path refers to the machine that produced the
+	// kubeconfig, not the hub controller's filesystem, and reading a
+	// Secret-supplied path would be an untrusted file read. Reject it rather than
+	// silently dropping the trust anchor (which would leave CAData empty and skip
+	// verification). This matches how exec and file-path auth credentials are
+	// rejected below; connect requires inline certificate-authority-data.
+	if cluster.CertificateAuthority != "" {
+		return nil, fmt.Errorf("kubeconfig cluster %q uses a file-path certificate-authority; only inline certificate-authority-data is supported for connect", kubeCtx.Cluster)
+	}
+
 	m := &Materialized{
-		Endpoint: cluster.Server,
+		Endpoint:   cluster.Server,
+		ServerName: cluster.TLSServerName,
 	}
 	if !cluster.InsecureSkipTLSVerify {
 		m.CAData = cluster.CertificateAuthorityData

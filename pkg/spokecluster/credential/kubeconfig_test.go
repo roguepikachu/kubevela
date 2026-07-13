@@ -189,3 +189,60 @@ contexts:
 		t.Fatal("expected exec credentials to be rejected for connect")
 	}
 }
+
+func TestMaterializeFromKubeconfigFilePathCARejected(t *testing.T) {
+	// A file-path certificate-authority must be rejected, not silently dropped:
+	// dropping it would leave CAData empty and skip TLS verification.
+	filePathCAKubeconfig := `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority: /etc/ca/spoke.crt
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+	if _, err := materializeFromKubeconfig([]byte(filePathCAKubeconfig)); err == nil {
+		t.Fatal("expected file-path certificate-authority to be rejected for connect")
+	}
+}
+
+func TestMaterializeFromKubeconfigPreservesServerName(t *testing.T) {
+	// tls-server-name is a plain string (no file read) and must be carried into
+	// the materialized credential so TLS verification uses the intended name.
+	serverNameKubeconfig := `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority-data: Y2FkYXRh
+    tls-server-name: api.internal.spoke
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+	m, err := materializeFromKubeconfig([]byte(serverNameKubeconfig))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ServerName != "api.internal.spoke" {
+		t.Fatalf("ServerName = %q, want api.internal.spoke", m.ServerName)
+	}
+}

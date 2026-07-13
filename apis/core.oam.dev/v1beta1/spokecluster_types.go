@@ -148,9 +148,9 @@ type SpokeClusterSpec struct {
 	// reconciles against cloud APIs before the cluster is dispatched to (VPC,
 	// IAM, DNS, and cluster creation when mode is provision).
 	//
-	// Phase 2 stub: defined so the schema is forward-compatible, but the Phase 1
-	// controller does not reconcile it and the Phase 1 webhook rejects it in
-	// connect mode.
+	// Phase 2 stub: defined so the schema is forward-compatible. No Phase 1
+	// controller reconciles it, and the admission webhook that will reject it in
+	// connect mode does not exist yet, so today it is accepted and ignored.
 	// +optional
 	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
