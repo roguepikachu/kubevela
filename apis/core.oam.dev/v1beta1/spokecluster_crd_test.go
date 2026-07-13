@@ -172,3 +172,33 @@ func TestSpokeClusterCRD_AuthColumnFromSpec(t *testing.T) {
 	}
 	r.Equal(".spec.credential.type", authPath)
 }
+
+// TestSpokeClusterCRD_Phase2Stubs asserts the forward-compatible Phase 2 fields
+// are present in the schema with their intended shape. No Phase 1 controller
+// reconciles them, but they are published now so the dispatch and rollout work
+// in a later phase does not require a breaking CRD change.
+func TestSpokeClusterCRD_Phase2Stubs(t *testing.T) {
+	r := require.New(t)
+	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
+
+	spec := schema.Properties["spec"]
+	status := schema.Properties["status"]
+
+	// spec.infraProvisioning.blueprintRef is a name/revision BlueprintReference.
+	infra := spec.Properties["infraProvisioning"]
+	infraBlueprint := infra.Properties["blueprintRef"]
+	r.Contains(infraBlueprint.Properties, "name")
+	r.Contains(infraBlueprint.Properties, "revision")
+	r.Equal([]string{"name"}, infraBlueprint.Required)
+
+	// status.dispatchedRevision is the revision the dispatch loop compares against
+	// spec.blueprintRef.revision.
+	r.Contains(status.Properties, "dispatchedRevision")
+	r.Equal("string", status.Properties["dispatchedRevision"].Type)
+
+	// status.health summarizes the blueprint health pulled from the spoke.
+	health := status.Properties["health"]
+	for _, field := range []string{"status", "planesHealthy", "planesTotal", "lastPulledAt"} {
+		r.Contains(health.Properties, field)
+	}
+}

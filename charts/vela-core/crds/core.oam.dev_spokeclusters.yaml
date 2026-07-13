@@ -95,53 +95,20 @@ spec:
               on the hub.
             properties:
               blueprintRef:
-                description: BlueprintRef references the ClusterBlueprint to apply
-                  to the cluster.
+                description: |-
+                  BlueprintRef references the ClusterBlueprint revision to dispatch to the
+                  cluster.
                 properties:
-                  apiVersion:
-                    description: API version of the referent.
-                    type: string
-                  cluster:
-                    type: string
-                  creator:
-                    type: string
-                  fieldPath:
-                    description: |-
-                      If referring to a piece of an object instead of an entire object, this string
-                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                      For example, if the object reference is to a container within a pod, this would take on a value like:
-                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                      the event) or if no container name is specified "spec.containers[2]" (container with
-                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                      referencing a part of an object.
-                    type: string
-                  kind:
-                    description: |-
-                      Kind of the referent.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                    type: string
                   name:
-                    description: |-
-                      Name of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    description: Name of the referenced object.
                     type: string
-                  namespace:
-                    description: |-
-                      Namespace of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                  revision:
+                    description: Revision pins an immutable revision of the referenced
+                      object.
                     type: string
-                  resourceVersion:
-                    description: |-
-                      Specific resourceVersion to which this reference is made, if any.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                    type: string
-                  uid:
-                    description: |-
-                      UID of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                    type: string
+                required:
+                - name
                 type: object
-                x-kubernetes-map-type: atomic
               credential:
                 description: |-
                   Credential is the hub-to-spoke connectivity credential, a discriminated
@@ -281,6 +248,32 @@ spec:
                 - detach
                 - orphan
                 type: string
+              infraProvisioning:
+                description: |-
+                  InfraProvisioning references the shared cloud infrastructure the hub
+                  reconciles against cloud APIs before the cluster is dispatched to (VPC,
+                  IAM, DNS, and cluster creation when mode is provision).
+
+                  Phase 2 stub: defined so the schema is forward-compatible, but the Phase 1
+                  controller does not reconcile it and the Phase 1 webhook rejects it in
+                  connect mode.
+                properties:
+                  blueprintRef:
+                    description: |-
+                      BlueprintRef references the ClusterBlueprint that describes the shared
+                      infrastructure to reconcile on the hub.
+                    properties:
+                      name:
+                        description: Name of the referenced object.
+                        type: string
+                      revision:
+                        description: Revision pins an immutable revision of the referenced
+                          object.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
               mode:
                 default: connect
                 description: Mode is the cluster lifecycle mode.
@@ -306,53 +299,19 @@ spec:
                 type: integer
               rolloutStrategyRef:
                 description: |-
-                  RolloutStrategyRef references the ClusterRolloutStrategy that gates
-                  blueprint changes for the cluster.
+                  RolloutStrategyRef references the ClusterRolloutStrategy that gates when a
+                  new blueprint revision is dispatched to the cluster.
                 properties:
-                  apiVersion:
-                    description: API version of the referent.
-                    type: string
-                  cluster:
-                    type: string
-                  creator:
-                    type: string
-                  fieldPath:
-                    description: |-
-                      If referring to a piece of an object instead of an entire object, this string
-                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                      For example, if the object reference is to a container within a pod, this would take on a value like:
-                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                      the event) or if no container name is specified "spec.containers[2]" (container with
-                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                      referencing a part of an object.
-                    type: string
-                  kind:
-                    description: |-
-                      Kind of the referent.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                    type: string
                   name:
-                    description: |-
-                      Name of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    description: Name of the referenced object.
                     type: string
-                  namespace:
-                    description: |-
-                      Namespace of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
+                  revision:
+                    description: Revision pins an immutable revision of the referenced
+                      object.
                     type: string
-                  resourceVersion:
-                    description: |-
-                      Specific resourceVersion to which this reference is made, if any.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                    type: string
-                  uid:
-                    description: |-
-                      UID of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                    type: string
+                required:
+                - name
                 type: object
-                x-kubernetes-map-type: atomic
             required:
             - credential
             - mode
@@ -457,6 +416,42 @@ spec:
                 - Disconnected
                 - Unknown
                 type: string
+              dispatchedRevision:
+                description: |-
+                  DispatchedRevision is the blueprint revision the hub last dispatched to the
+                  spoke. The dispatch controller advances a spoke when this differs from
+                  spec.blueprintRef.revision.
+
+                  Phase 2 stub: written by the dispatch controller once blueprint dispatch is
+                  built; empty in connect-only Phase 1.
+                type: string
+              health:
+                description: |-
+                  Health is the spoke's blueprint health, pulled from the spoke Cluster on
+                  demand while connected. The spoke never pushes it to the hub.
+
+                  Phase 2 stub: populated once blueprint dispatch and spoke-side health
+                  aggregation exist; nil in connect-only Phase 1.
+                properties:
+                  lastPulledAt:
+                    description: LastPulledAt is when the hub last pulled health from
+                      the spoke.
+                    format: date-time
+                    type: string
+                  planesHealthy:
+                    description: PlanesHealthy is the number of blueprint planes reporting
+                      healthy.
+                    type: integer
+                  planesTotal:
+                    description: PlanesTotal is the total number of blueprint planes
+                      on the spoke.
+                    type: integer
+                  status:
+                    description: |-
+                      Status is the aggregate blueprint health of the spoke (for example Healthy
+                      or Degraded).
+                    type: string
+                type: object
               lastProbeTime:
                 description: LastProbeTime is when the hub last probed the spoke.
                 format: date-time

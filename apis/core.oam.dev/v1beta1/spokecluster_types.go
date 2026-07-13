@@ -18,8 +18,6 @@ package v1beta1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 )
 
 // SpokeClusterMode is the lifecycle mode of a SpokeCluster.
@@ -145,14 +143,54 @@ type SpokeClusterSpec struct {
 	// +kubebuilder:default=detach
 	DeletionPolicy SpokeDeletionPolicy `json:"deletionPolicy,omitempty"`
 
-	// BlueprintRef references the ClusterBlueprint to apply to the cluster.
+	// InfraProvisioning references the shared cloud infrastructure the hub
+	// reconciles against cloud APIs before the cluster is dispatched to (VPC,
+	// IAM, DNS, and cluster creation when mode is provision).
+	//
+	// Phase 2 stub: defined so the schema is forward-compatible, but the Phase 1
+	// controller does not reconcile it and the Phase 1 webhook rejects it in
+	// connect mode.
 	// +optional
-	BlueprintRef *common.ClusterObjectReference `json:"blueprintRef,omitempty"`
+	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
-	// RolloutStrategyRef references the ClusterRolloutStrategy that gates
-	// blueprint changes for the cluster.
+	// BlueprintRef references the ClusterBlueprint revision to dispatch to the
+	// cluster.
 	// +optional
-	RolloutStrategyRef *common.ClusterObjectReference `json:"rolloutStrategyRef,omitempty"`
+	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
+
+	// RolloutStrategyRef references the ClusterRolloutStrategy that gates when a
+	// new blueprint revision is dispatched to the cluster.
+	// +optional
+	RolloutStrategyRef *BlueprintReference `json:"rolloutStrategyRef,omitempty"`
+}
+
+// InfraProvisioning is the hub-reconciled shared cloud infrastructure for a
+// SpokeCluster. It is applied on the hub against cloud APIs before any blueprint
+// is dispatched to the spoke, and shared outputs are consumed by every
+// SpokeCluster that references the same blueprint.
+//
+// Phase 2 stub: only the blueprint reference is modeled; provisioning behaviour
+// and shared-output consumption arrive with the dispatch controller.
+type InfraProvisioning struct {
+	// BlueprintRef references the ClusterBlueprint that describes the shared
+	// infrastructure to reconcile on the hub.
+	// +optional
+	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
+}
+
+// BlueprintReference points at a KubeVela cluster-infrastructure object by name
+// and an optional immutable revision. Blueprints are immutable once published,
+// so revision pins an exact version to dispatch; leaving it empty tracks the
+// object by name. It is the shared reference shape for the Phase 2 dispatch and
+// rollout fields (blueprintRef, rolloutStrategyRef, and the blueprint references
+// on Cluster), so a name-only consumer just omits revision.
+type BlueprintReference struct {
+	// Name of the referenced object.
+	Name string `json:"name"`
+
+	// Revision pins an immutable revision of the referenced object.
+	// +optional
+	Revision string `json:"revision,omitempty"`
 }
 
 // CredentialSpec is a discriminated union of hub-to-spoke credentials keyed by
@@ -298,6 +336,47 @@ type SpokeClusterStatus struct {
 	// LastProbeTime is when the hub last probed the spoke.
 	// +optional
 	LastProbeTime *metav1.Time `json:"lastProbeTime,omitempty"`
+
+	// DispatchedRevision is the blueprint revision the hub last dispatched to the
+	// spoke. The dispatch controller advances a spoke when this differs from
+	// spec.blueprintRef.revision.
+	//
+	// Phase 2 stub: written by the dispatch controller once blueprint dispatch is
+	// built; empty in connect-only Phase 1.
+	// +optional
+	DispatchedRevision string `json:"dispatchedRevision,omitempty"`
+
+	// Health is the spoke's blueprint health, pulled from the spoke Cluster on
+	// demand while connected. The spoke never pushes it to the hub.
+	//
+	// Phase 2 stub: populated once blueprint dispatch and spoke-side health
+	// aggregation exist; nil in connect-only Phase 1.
+	// +optional
+	Health *SpokeClusterHealth `json:"health,omitempty"`
+}
+
+// SpokeClusterHealth is the blueprint health the hub pulls from the spoke
+// Cluster on demand. It summarizes how many of the dispatched blueprint's planes
+// are healthy at the time of the last pull.
+//
+// Phase 2 stub: no controller pulls this in Phase 1.
+type SpokeClusterHealth struct {
+	// Status is the aggregate blueprint health of the spoke (for example Healthy
+	// or Degraded).
+	// +optional
+	Status string `json:"status,omitempty"`
+
+	// PlanesHealthy is the number of blueprint planes reporting healthy.
+	// +optional
+	PlanesHealthy int `json:"planesHealthy,omitempty"`
+
+	// PlanesTotal is the total number of blueprint planes on the spoke.
+	// +optional
+	PlanesTotal int `json:"planesTotal,omitempty"`
+
+	// LastPulledAt is when the hub last pulled health from the spoke.
+	// +optional
+	LastPulledAt *metav1.Time `json:"lastPulledAt,omitempty"`
 }
 
 // SpokeClusterInfo is the discovered inventory of a managed cluster.
