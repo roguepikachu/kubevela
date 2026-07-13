@@ -141,7 +141,13 @@ func (r Registry) For(t v1beta1.CredentialType) (Provider, error) {
 }
 
 // DefaultRegistry returns the built-in provider set and is the single
-// registration point for built-in providers.
+// registration point for built-in providers. Phase 1 wires the two providers
+// with a working Materialize: static kubeconfig and AWS EKS. The azure and gcp
+// arms are accepted by the schema but have no provider yet, so a lookup for them
+// fails cleanly via Registry.For rather than panicking.
 func DefaultRegistry() Registry {
-	return Registry{}
+	return Registry{
+		v1beta1.CredentialTypeKubeconfig: NewKubeconfigProvider(),
+		v1beta1.CredentialTypeAWS:        NewAWSProvider(),
+	}
 }
