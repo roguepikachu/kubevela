@@ -141,13 +141,17 @@ func (r Registry) For(t v1beta1.CredentialType) (Provider, error) {
 }
 
 // DefaultRegistry returns the built-in provider set and is the single
-// registration point for built-in providers. Phase 1 wires the two providers
-// with a working Materialize: static kubeconfig and AWS EKS. The azure and gcp
-// arms are accepted by the schema but have no provider yet, so a lookup for them
-// fails cleanly via Registry.For rather than panicking.
+// registration point for built-in providers. All four credential arms are
+// registered: kubeconfig and AWS EKS have a working Materialize, while azure and
+// gcp are registered stubs whose Materialize returns a not-implemented error.
+// Registering the stubs means a misconfigured azure/gcp SpokeCluster fails with
+// an arm-specific "not implemented yet" message instead of a generic "no
+// provider registered", and finishing them is a single-file change.
 func DefaultRegistry() Registry {
 	return Registry{
 		v1beta1.CredentialTypeKubeconfig: NewKubeconfigProvider(),
 		v1beta1.CredentialTypeAWS:        NewAWSProvider(),
+		v1beta1.CredentialTypeAzure:      NewAzureProvider(),
+		v1beta1.CredentialTypeGCP:        NewGCPProvider(),
 	}
 }
