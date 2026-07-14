@@ -138,6 +138,12 @@ var _ = Describe("Validate", func() {
 				SecretRef: v1beta1.SecretKeyRef{Name: "prod-us-east-1-kubeconfig"},
 			}
 		}, "spec.credential.kubeconfig"),
+		Entry("azure arm set alongside type kubeconfig", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Credential.Azure = &v1beta1.AzureCredential{}
+		}, "spec.credential.azure"),
+		Entry("gcp arm set alongside type aws", validAWSSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Credential.GCP = &v1beta1.GCPCredential{}
+		}, "spec.credential.gcp"),
 		Entry("infraProvisioning set", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{
 				BlueprintRef: &v1beta1.BlueprintReference{Name: "infra-a"},
@@ -153,7 +159,7 @@ var _ = Describe("Validate", func() {
 })
 
 var _ = Describe("Default", func() {
-	It("defaults mode, probe knobs, deletionPolicy, and secretRef.key", func() {
+	It("defaults secretRef.key and leaves schema-defaulted fields to the schema", func() {
 		sc := &v1beta1.SpokeCluster{
 			Spec: v1beta1.SpokeClusterSpec{
 				Credential: v1beta1.CredentialSpec{
@@ -167,11 +173,16 @@ var _ = Describe("Default", func() {
 
 		Default(sc)
 
-		gomega.Expect(sc.Spec.Mode).To(gomega.Equal(v1beta1.SpokeClusterModeConnect))
-		gomega.Expect(sc.Spec.ProbeIntervalSeconds).To(gomega.Equal(int32(30)))
-		gomega.Expect(sc.Spec.ProbeTimeoutSeconds).To(gomega.Equal(int32(10)))
-		gomega.Expect(sc.Spec.DeletionPolicy).To(gomega.Equal(v1beta1.SpokeDeletionPolicyDetach))
+		// secretRef.key is the only default the CRD schema cannot express.
 		gomega.Expect(sc.Spec.Credential.Kubeconfig.SecretRef.Key).To(gomega.Equal("kubeconfig"))
+
+		// mode, probe knobs, and deletionPolicy carry +kubebuilder:default markers,
+		// so the webhook leaves them to the apiserver; setting them here would mask
+		// an explicit invalid zero value.
+		gomega.Expect(sc.Spec.Mode).To(gomega.BeEmpty())
+		gomega.Expect(sc.Spec.ProbeIntervalSeconds).To(gomega.BeZero())
+		gomega.Expect(sc.Spec.ProbeTimeoutSeconds).To(gomega.BeZero())
+		gomega.Expect(sc.Spec.DeletionPolicy).To(gomega.BeEmpty())
 	})
 
 	It("does not touch secretRef.namespace", func() {

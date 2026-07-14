@@ -19,17 +19,15 @@ limitations under the License.
 package spokecluster
 
 import (
+	"fmt"
+
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 )
 
-const (
-	defaultProbeIntervalSeconds = 30
-	defaultProbeTimeoutSeconds  = 10
-	defaultSecretKey            = "kubeconfig"
-)
+const defaultSecretKey = "kubeconfig"
 
 // Validate checks a SpokeCluster against the Phase 1 policy rules that the
 // structural schema cannot express: connect-only mode, the reserved cluster
@@ -69,17 +67,33 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	return errs
 }
 
-// validateCredential enforces the discriminated union's exactly-one-arm rule
-// and the per-provider required fields.
+// validateCredential enforces the discriminated union: exactly the arm named
+// by type is set (every other arm is forbidden), plus the per-provider required
+// fields.
 func validateCredential(cred v1beta1.CredentialSpec) field.ErrorList {
 	credPath := field.NewPath("spec", "credential")
 	var errs field.ErrorList
 
+	// Forbid every arm that does not match the selected type, so a stored spec
+	// never carries a stray arm (for example an azure arm under type kubeconfig).
+	arms := []struct {
+		name string
+		set  bool
+	}{
+		{"kubeconfig", cred.Kubeconfig != nil},
+		{"aws", cred.AWS != nil},
+		{"azure", cred.Azure != nil},
+		{"gcp", cred.GCP != nil},
+	}
+	for _, arm := range arms {
+		if arm.set && arm.name != string(cred.Type) {
+			errs = append(errs, field.Forbidden(credPath.Child(arm.name),
+				fmt.Sprintf("%s must not be set when type is '%s'", arm.name, cred.Type)))
+		}
+	}
+
 	switch cred.Type {
 	case v1beta1.CredentialTypeKubeconfig:
-		if cred.AWS != nil {
-			errs = append(errs, field.Forbidden(credPath.Child("aws"), "aws must not be set when type is 'kubeconfig'"))
-		}
 		if cred.Kubeconfig == nil {
 			errs = append(errs, field.Required(credPath.Child("kubeconfig"), "kubeconfig is required when type is 'kubeconfig'"))
 		} else if cred.Kubeconfig.SecretRef.Name == "" {
@@ -87,9 +101,6 @@ func validateCredential(cred v1beta1.CredentialSpec) field.ErrorList {
 		}
 
 	case v1beta1.CredentialTypeAWS:
-		if cred.Kubeconfig != nil {
-			errs = append(errs, field.Forbidden(credPath.Child("kubeconfig"), "kubeconfig must not be set when type is 'aws'"))
-		}
 		if cred.AWS == nil {
 			errs = append(errs, field.Required(credPath.Child("aws"), "aws is required when type is 'aws'"))
 		} else {
@@ -126,24 +137,13 @@ func validateAWSCredential(awsPath *field.Path, aws *v1beta1.AWSCredential) fiel
 	return errs
 }
 
-// Default applies the same defaults the CRD's schema markers apply (mode,
-// probe knobs, deletionPolicy), plus the one default the schema cannot
-// express (kubeconfig.secretRef.key), so behaviour is identical whether or
-// not the mutating webhook runs.
+// Default applies the one default the CRD schema cannot express:
+// kubeconfig.secretRef.key. mode, the probe intervals, and deletionPolicy all
+// carry +kubebuilder:default markers, so the apiserver already fills them when
+// they are absent. Re-setting them here would only diverge from schema-only
+// admission by overwriting an explicit (invalid) zero value and masking it, so
+// they are deliberately left to the schema.
 func Default(sc *v1beta1.SpokeCluster) {
-	if sc.Spec.Mode == "" {
-		sc.Spec.Mode = v1beta1.SpokeClusterModeConnect
-	}
-	if sc.Spec.ProbeIntervalSeconds == 0 {
-		sc.Spec.ProbeIntervalSeconds = defaultProbeIntervalSeconds
-	}
-	if sc.Spec.ProbeTimeoutSeconds == 0 {
-		sc.Spec.ProbeTimeoutSeconds = defaultProbeTimeoutSeconds
-	}
-	if sc.Spec.DeletionPolicy == "" {
-		sc.Spec.DeletionPolicy = v1beta1.SpokeDeletionPolicyDetach
-	}
-
 	// secretRef.namespace is intentionally left untouched: the fallback to the
 	// SpokeCluster's own namespace happens at credential resolve time, not here.
 	if sc.Spec.Credential.Type == v1beta1.CredentialTypeKubeconfig && sc.Spec.Credential.Kubeconfig != nil {

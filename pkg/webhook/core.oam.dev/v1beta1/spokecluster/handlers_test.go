@@ -101,26 +101,23 @@ var _ = Describe("ValidatingHandler", func() {
 })
 
 var _ = Describe("MutatingHandler", func() {
-	It("applies defaults and returns them as JSON patches", func() {
+	It("defaults secretRef.key and returns it as a JSON patch", func() {
 		handler := &MutatingHandler{Decoder: decoder}
 
 		sc := validKubeconfigSpoke()
-		sc.Spec.Mode = ""
-		sc.Spec.ProbeIntervalSeconds = 0
-		sc.Spec.ProbeTimeoutSeconds = 0
-		sc.Spec.DeletionPolicy = ""
 		sc.Spec.Credential.Kubeconfig.SecretRef.Key = ""
 
 		req := newSpokeClusterRequest(sc, admissionv1.Create)
 		resp := handler.Handle(context.Background(), req)
 
 		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
-		gomega.Expect(resp.Patches).NotTo(gomega.BeEmpty(), "expected defaulting to produce at least one JSON patch")
-
-		gomega.Expect(patchValue(resp.Patches, "/spec/mode")).To(gomega.Equal(string(v1beta1.SpokeClusterModeConnect)))
-		gomega.Expect(patchValue(resp.Patches, "/spec/probeIntervalSeconds")).To(gomega.BeEquivalentTo(30))
-		gomega.Expect(patchValue(resp.Patches, "/spec/probeTimeoutSeconds")).To(gomega.BeEquivalentTo(10))
-		gomega.Expect(patchValue(resp.Patches, "/spec/deletionPolicy")).To(gomega.Equal(string(v1beta1.SpokeDeletionPolicyDetach)))
 		gomega.Expect(patchValue(resp.Patches, "/spec/credential/kubeconfig/secretRef/key")).To(gomega.Equal(defaultSecretKey))
+
+		// mode, probe knobs, and deletionPolicy are left to the CRD schema
+		// defaults, so the mutating webhook must not patch them.
+		for _, p := range resp.Patches {
+			gomega.Expect(p.Path).NotTo(gomega.BeElementOf(
+				"/spec/mode", "/spec/probeIntervalSeconds", "/spec/probeTimeoutSeconds", "/spec/deletionPolicy"))
+		}
 	})
 })
