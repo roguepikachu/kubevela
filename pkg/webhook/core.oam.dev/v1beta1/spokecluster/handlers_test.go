@@ -120,4 +120,35 @@ var _ = Describe("MutatingHandler", func() {
 				"/spec/mode", "/spec/probeIntervalSeconds", "/spec/probeTimeoutSeconds", "/spec/deletionPolicy"))
 		}
 	})
+
+	It("preserves an explicitly set zero-value field instead of stripping it", func() {
+		handler := &MutatingHandler{Decoder: decoder}
+
+		// probeIntervalSeconds: 0 is explicitly set in the raw request. It is
+		// invalid (schema minimum is 10) and must reach schema validation intact,
+		// not be silently stripped by the mutating webhook (which would let schema
+		// defaulting mask it). Built as raw JSON because the struct's omitempty tag
+		// drops the zero before it could reach the handler.
+		raw := []byte(`{"apiVersion":"core.oam.dev/v1beta1","kind":"SpokeCluster",` +
+			`"metadata":{"name":"sc","namespace":"default"},` +
+			`"spec":{"probeIntervalSeconds":0,"credential":{"type":"kubeconfig",` +
+			`"kubeconfig":{"secretRef":{"name":"n"}}}}}`)
+		req := admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+			Resource:  spokeClusterGVR,
+			Operation: admissionv1.Create,
+			Object:    runtime.RawExtension{Raw: raw},
+		}}
+
+		resp := handler.Handle(context.Background(), req)
+
+		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
+		// The key is still defaulted...
+		gomega.Expect(patchValue(resp.Patches, "/spec/credential/kubeconfig/secretRef/key")).To(gomega.Equal(defaultSecretKey))
+		// ...but probeIntervalSeconds is never touched, so the explicit 0 survives
+		// for the apiserver's schema minimum to reject.
+		for _, p := range resp.Patches {
+			gomega.Expect(p.Path).NotTo(gomega.Equal("/spec/probeIntervalSeconds"),
+				"mutating webhook must not strip an explicitly set probeIntervalSeconds")
+		}
+	})
 })

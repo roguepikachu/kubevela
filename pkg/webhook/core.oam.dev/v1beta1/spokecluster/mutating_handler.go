@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"gomodules.xyz/jsonpatch/v2"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -43,14 +44,30 @@ func (h *MutatingHandler) Handle(_ context.Context, req admission.Request) admis
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
-	Default(sc)
-
-	marshalled, err := json.Marshal(sc)
+	// Patch only what Default changes. Diffing a full re-marshal of the object
+	// against the raw request would strip explicit omitempty zero values (for
+	// example an explicitly set probeIntervalSeconds: 0) and emit spurious
+	// "remove" patches, which would let schema defaulting mask an invalid value
+	// the schema minimum should reject. Diffing the marshalled object before and
+	// after Default keeps only the fields Default actually touches.
+	before, err := json.Marshal(sc)
 	if err != nil {
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	return admission.PatchResponseFromRaw(req.AdmissionRequest.Object.Raw, marshalled)
+	Default(sc)
+
+	after, err := json.Marshal(sc)
+	if err != nil {
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	patches, err := jsonpatch.CreatePatch(before, after)
+	if err != nil {
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	return admission.Patched("", patches...)
 }
 
 // RegisterMutatingHandler registers the SpokeCluster mutating webhook on the
