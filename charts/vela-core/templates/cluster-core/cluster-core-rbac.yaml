@@ -1,0 +1,116 @@
+{{- if .Values.featureGates.enableSpokeClusterCRD }}
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kubevela.fullname" . }}-cluster-core
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevela.labels" . | nindent 4 }}
+  {{- with .Values.clusterCore }}
+  {{- with .aws }}
+  {{- with .serviceAccountRoleArn }}
+  annotations:
+    eks.amazonaws.com/role-arn: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+{{- if .Values.rbac.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kubevela.fullname" . }}:cluster-core
+  labels:
+    {{- include "kubevela.labels" . | nindent 4 }}
+rules:
+  # SpokeCluster reconcile: get plus informer list/watch, update for finalizer add/remove.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["spokeclusters"]
+    verbs: ["get", "list", "watch", "update"]
+  # Status is written through Status().Update with conflict retry (never patched).
+  - apiGroups: ["core.oam.dev"]
+    resources: ["spokeclusters/status"]
+    verbs: ["update"]
+  # OwnerReferencesPermissionEnforcement checks the controller ownerRef (blockOwnerDeletion)
+  # on the gateway Secret against this subresource.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["spokeclusters/finalizers"]
+    verbs: ["update"]
+  # Cluster-scoped Secret reads: the source kubeconfig Secret can live in any namespace,
+  # and the manager's informer cache needs list/watch to start. Writes are namespace-scoped
+  # (see the Role below).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # multicluster.Initialize reads the cluster-gateway APIService by name to discover the
+  # gateway service and Secret namespace.
+  - apiGroups: ["apiregistration.k8s.io"]
+    resources: ["apiservices"]
+    resourceNames: ["v1alpha1.cluster.core.oam.dev"]
+    verbs: ["get"]
+  # Spoke probe (/healthz) and discovery (/version, node info) are GETs routed through the
+  # cluster-gateway proxy subresource.
+  - apiGroups: ["cluster.core.oam.dev"]
+    resources: ["clustergateways/proxy"]
+    verbs: ["get"]
+  # DetachCluster lists all ResourceTrackers and updates those referencing the detached cluster.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["resourcetrackers"]
+    verbs: ["list", "update"]
+  # Event recorder wired in SetupWithManager; SpokeCluster events land in any namespace.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kubevela.fullname" . }}:cluster-core-rolebinding
+  labels:
+    {{- include "kubevela.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kubevela.fullname" . }}:cluster-core
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubevela.fullname" . }}-cluster-core
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kubevela.fullname" . }}:cluster-core
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevela.labels" . | nindent 4 }}
+rules:
+  # Gateway Secret upsert/delete on register/detach, and the optional legacy-secret upgrade
+  # pass. Confined to the release namespace, which is the resolved gateway Secret namespace.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update", "patch", "delete"]
+  # Leader election: LeaderElectionID vela-cluster-core, default lease lock, pod namespace.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kubevela.fullname" . }}:cluster-core-rolebinding
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevela.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kubevela.fullname" . }}:cluster-core
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kubevela.fullname" . }}-cluster-core
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}
