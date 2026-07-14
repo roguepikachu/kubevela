@@ -19,29 +19,18 @@ package spokecluster
 import (
 	"context"
 	"encoding/json"
-	"testing"
+	"fmt"
 
-	"github.com/stretchr/testify/require"
+	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/gomega"
 	"gomodules.xyz/jsonpatch/v2"
 	admissionv1 "k8s.io/api/admission/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
-
-// newTestDecoder builds an admission.Decoder against a scheme with both the
-// core k8s types and the vela v1beta1 types registered, so it can decode
-// SpokeCluster admission requests exactly as the manager's decoder would.
-func newTestDecoder(t *testing.T) admission.Decoder {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	require.NoError(t, k8sscheme.AddToScheme(scheme))
-	require.NoError(t, v1beta1.AddToScheme(scheme))
-	return admission.NewDecoder(scheme)
-}
 
 // spokeClusterGVR mirrors v1beta1.SpokeClusterGVR as the metav1 type used on
 // admission.Request.Resource.
@@ -53,10 +42,9 @@ var spokeClusterGVR = metav1.GroupVersionResource{
 
 // newSpokeClusterRequest marshals sc into an admission.Request with the given
 // operation and the spokeclusters GVR, as the apiserver would send it.
-func newSpokeClusterRequest(t *testing.T, sc *v1beta1.SpokeCluster, op admissionv1.Operation) admission.Request {
-	t.Helper()
+func newSpokeClusterRequest(sc *v1beta1.SpokeCluster, op admissionv1.Operation) admission.Request {
 	raw, err := json.Marshal(sc)
-	require.NoError(t, err)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
 		Resource:  spokeClusterGVR,
 		Operation: op,
@@ -64,70 +52,75 @@ func newSpokeClusterRequest(t *testing.T, sc *v1beta1.SpokeCluster, op admission
 	}}
 }
 
-func TestValidatingHandler_Handle(t *testing.T) {
-	handler := &ValidatingHandler{Decoder: newTestDecoder(t)}
-
-	t.Run("valid kubeconfig spoke on create is allowed", func(t *testing.T) {
-		req := newSpokeClusterRequest(t, validKubeconfigSpoke(), admissionv1.Create)
-		resp := handler.Handle(context.Background(), req)
-		require.True(t, resp.Allowed, "response: %+v", resp.Result)
-	})
-
-	t.Run("provision mode on create is denied", func(t *testing.T) {
-		sc := validKubeconfigSpoke()
-		sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
-		req := newSpokeClusterRequest(t, sc, admissionv1.Create)
-		resp := handler.Handle(context.Background(), req)
-		require.False(t, resp.Allowed)
-	})
-
-	t.Run("wrong resource GVR is a bad request", func(t *testing.T) {
-		req := newSpokeClusterRequest(t, validKubeconfigSpoke(), admissionv1.Create)
-		req.Resource = metav1.GroupVersionResource{Group: "core.oam.dev", Version: "v1beta1", Resource: "applications"}
-		resp := handler.Handle(context.Background(), req)
-		require.False(t, resp.Allowed)
-	})
-
-	t.Run("delete is admitted without decoding", func(t *testing.T) {
-		req := newSpokeClusterRequest(t, validKubeconfigSpoke(), admissionv1.Delete)
-		resp := handler.Handle(context.Background(), req)
-		require.True(t, resp.Allowed, "response: %+v", resp.Result)
-	})
-}
-
 // patchValue looks up a jsonpatch operation by path (add or replace, either
 // is a valid outcome depending on whether the field was present in the raw
 // request) and returns its value.
-func patchValue(t *testing.T, patches []jsonpatch.Operation, path string) interface{} {
-	t.Helper()
+func patchValue(patches []jsonpatch.Operation, path string) interface{} {
 	for _, p := range patches {
 		if p.Path == path {
 			return p.Value
 		}
 	}
-	t.Fatalf("no patch found for path %s (patches: %+v)", path, patches)
+	Fail(fmt.Sprintf("no patch found for path %s (patches: %+v)", path, patches))
 	return nil
 }
 
-func TestMutatingHandler_Handle(t *testing.T) {
-	handler := &MutatingHandler{Decoder: newTestDecoder(t)}
+var _ = Describe("ValidatingHandler", func() {
+	var handler *ValidatingHandler
 
-	sc := validKubeconfigSpoke()
-	sc.Spec.Mode = ""
-	sc.Spec.ProbeIntervalSeconds = 0
-	sc.Spec.ProbeTimeoutSeconds = 0
-	sc.Spec.DeletionPolicy = ""
-	sc.Spec.Credential.Kubeconfig.SecretRef.Key = ""
+	BeforeEach(func() {
+		handler = &ValidatingHandler{Decoder: decoder}
+	})
 
-	req := newSpokeClusterRequest(t, sc, admissionv1.Create)
-	resp := handler.Handle(context.Background(), req)
+	It("allows a valid kubeconfig spoke on create", func() {
+		req := newSpokeClusterRequest(validKubeconfigSpoke(), admissionv1.Create)
+		resp := handler.Handle(context.Background(), req)
+		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
+	})
 
-	require.True(t, resp.Allowed, "response: %+v", resp.Result)
-	require.NotEmpty(t, resp.Patches, "expected defaulting to produce at least one JSON patch")
+	It("denies provision mode on create", func() {
+		sc := validKubeconfigSpoke()
+		sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
+		req := newSpokeClusterRequest(sc, admissionv1.Create)
+		resp := handler.Handle(context.Background(), req)
+		gomega.Expect(resp.Allowed).To(gomega.BeFalse())
+	})
 
-	require.Equal(t, string(v1beta1.SpokeClusterModeConnect), patchValue(t, resp.Patches, "/spec/mode"))
-	require.EqualValues(t, 30, patchValue(t, resp.Patches, "/spec/probeIntervalSeconds"))
-	require.EqualValues(t, 10, patchValue(t, resp.Patches, "/spec/probeTimeoutSeconds"))
-	require.Equal(t, string(v1beta1.SpokeDeletionPolicyDetach), patchValue(t, resp.Patches, "/spec/deletionPolicy"))
-	require.Equal(t, defaultSecretKey, patchValue(t, resp.Patches, "/spec/credential/kubeconfig/secretRef/key"))
-}
+	It("bad-requests a mismatched resource GVR", func() {
+		req := newSpokeClusterRequest(validKubeconfigSpoke(), admissionv1.Create)
+		req.Resource = metav1.GroupVersionResource{Group: "core.oam.dev", Version: "v1beta1", Resource: "applications"}
+		resp := handler.Handle(context.Background(), req)
+		gomega.Expect(resp.Allowed).To(gomega.BeFalse())
+	})
+
+	It("admits delete without decoding", func() {
+		req := newSpokeClusterRequest(validKubeconfigSpoke(), admissionv1.Delete)
+		resp := handler.Handle(context.Background(), req)
+		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
+	})
+})
+
+var _ = Describe("MutatingHandler", func() {
+	It("applies defaults and returns them as JSON patches", func() {
+		handler := &MutatingHandler{Decoder: decoder}
+
+		sc := validKubeconfigSpoke()
+		sc.Spec.Mode = ""
+		sc.Spec.ProbeIntervalSeconds = 0
+		sc.Spec.ProbeTimeoutSeconds = 0
+		sc.Spec.DeletionPolicy = ""
+		sc.Spec.Credential.Kubeconfig.SecretRef.Key = ""
+
+		req := newSpokeClusterRequest(sc, admissionv1.Create)
+		resp := handler.Handle(context.Background(), req)
+
+		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
+		gomega.Expect(resp.Patches).NotTo(gomega.BeEmpty(), "expected defaulting to produce at least one JSON patch")
+
+		gomega.Expect(patchValue(resp.Patches, "/spec/mode")).To(gomega.Equal(string(v1beta1.SpokeClusterModeConnect)))
+		gomega.Expect(patchValue(resp.Patches, "/spec/probeIntervalSeconds")).To(gomega.BeEquivalentTo(30))
+		gomega.Expect(patchValue(resp.Patches, "/spec/probeTimeoutSeconds")).To(gomega.BeEquivalentTo(10))
+		gomega.Expect(patchValue(resp.Patches, "/spec/deletionPolicy")).To(gomega.Equal(string(v1beta1.SpokeDeletionPolicyDetach)))
+		gomega.Expect(patchValue(resp.Patches, "/spec/credential/kubeconfig/secretRef/key")).To(gomega.Equal(defaultSecretKey))
+	})
+})
