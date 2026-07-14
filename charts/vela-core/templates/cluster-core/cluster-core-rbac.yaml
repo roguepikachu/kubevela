@@ -1,4 +1,5 @@
 {{- if .Values.featureGates.enableSpokeClusterCRD }}
+{{- if .Values.serviceAccount.create }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -14,6 +15,8 @@ metadata:
   {{- end }}
   {{- end }}
   {{- end }}
+{{- end }}
+{{- if .Values.rbac.create }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -109,4 +112,5 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "kubevela.fullname" . }}-cluster-core
     namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end }}
