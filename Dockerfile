@@ -17,6 +17,7 @@ RUN go mod download
 
 # Copy the go source for building core
 COPY cmd/core/ cmd/core/
+COPY cmd/cluster-core/ cmd/cluster-core/
 COPY apis/ apis/
 COPY pkg/ pkg/
 COPY version/ version/
@@ -29,6 +30,9 @@ ARG GITVERSION
 RUN GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -a -ldflags "-s -w -X github.com/oam-dev/kubevela/version.VelaVersion=${VERSION:-undefined} -X github.com/oam-dev/kubevela/version.GitRevision=${GITVERSION:-undefined}" \
     -o manager-${TARGETARCH} cmd/core/main.go
+RUN GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -a -ldflags "-s -w -X github.com/oam-dev/kubevela/version.VelaVersion=${VERSION:-undefined} -X github.com/oam-dev/kubevela/version.GitRevision=${GITVERSION:-undefined}" \
+    -o cluster-manager-${TARGETARCH} cmd/cluster-core/main.go
 
 # Use alpine as base image due to the discussion in issue #1448
 # You can replace distroless as minimal base image to package the manager binary
@@ -42,6 +46,7 @@ WORKDIR /
 
 ARG TARGETARCH
 COPY --from=builder /workspace/manager-${TARGETARCH} /usr/local/bin/manager
+COPY --from=builder /workspace/cluster-manager-${TARGETARCH} /usr/local/bin/cluster-manager
 
 COPY entrypoint.sh /usr/local/bin/
 

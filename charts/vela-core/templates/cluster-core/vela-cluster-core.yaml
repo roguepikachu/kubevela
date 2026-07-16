@@ -1,0 +1,102 @@
+{{- if .Values.featureGates.enableSpokeClusterCRD }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubevela.fullname" . }}-cluster-core
+  namespace: {{ .Release.Namespace }}
+  labels:
+    controller.oam.dev/name: vela-cluster-core
+    {{- include "kubevela.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.clusterCore.replicaCount }}
+  selector:
+    matchLabels:
+      controller.oam.dev/name: vela-cluster-core
+      {{- include "kubevela.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        controller.oam.dev/name: vela-cluster-core
+        {{- include "kubevela.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/path: /metrics
+        prometheus.io/port: "{{ .Values.clusterCore.metricsPort }}"
+        prometheus.io/scrape: "true"
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.clusterCore.aws.serviceAccountRoleArn }}
+      serviceAccountName: {{ include "kubevela.fullname" . }}-cluster-core
+      {{- else }}
+      serviceAccountName: {{ include "kubevela.serviceAccountName" . }}
+      {{- end }}
+      securityContext:
+      {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: cluster-core
+          securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ .Values.imageRegistry }}{{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ quote .Values.image.pullPolicy }}
+          command: ["cluster-manager"]
+          args:
+            - "--metrics-bind-address=:{{ .Values.clusterCore.metricsPort }}"
+            - "--health-probe-bind-address=:{{ .Values.clusterCore.healthCheck.port }}"
+            - "--enable-leader-election"
+            - "--concurrent-reconciles={{ .Values.clusterCore.concurrentReconciles }}"
+            - "--feature-gates=EnableSpokeClusterCRD=true"
+            {{- if .Values.clusterCore.webhook.enabled }}
+            - "--use-webhook=true"
+            - "--webhook-port={{ .Values.clusterCore.webhook.port }}"
+            - "--webhook-cert-dir={{ .Values.admissionWebhooks.certificate.mountPath }}"
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.clusterCore.healthCheck.port }}
+              name: healthz
+              protocol: TCP
+            - containerPort: {{ .Values.clusterCore.metricsPort }}
+              name: metrics
+              protocol: TCP
+            {{- if .Values.clusterCore.webhook.enabled }}
+            - containerPort: {{ .Values.clusterCore.webhook.port }}
+              name: webhook-server
+              protocol: TCP
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: healthz
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 90
+            periodSeconds: 5
+          resources:
+          {{- toYaml .Values.clusterCore.resources | nindent 12 }}
+          {{- if .Values.clusterCore.webhook.enabled }}
+          volumeMounts:
+            - mountPath: {{ .Values.admissionWebhooks.certificate.mountPath }}
+              name: tls-cert-vol
+              readOnly: true
+          {{- end }}
+      {{- if .Values.clusterCore.webhook.enabled }}
+      volumes:
+        - name: tls-cert-vol
+          secret:
+            defaultMode: 420
+            secretName: {{ template "kubevela.fullname" . }}-cluster-core-admission
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
