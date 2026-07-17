@@ -102,6 +102,10 @@ core-test:
 manager:
 	$(GOBUILD_ENV) go build -o bin/manager -a -ldflags $(LDFLAGS) ./cmd/core/main.go
 
+## cluster-manager: Build vela-cluster-core manager binary (cluster-infrastructure controllers)
+cluster-manager:
+	$(GOBUILD_ENV) go build -o bin/cluster-manager -a -ldflags $(LDFLAGS) ./cmd/cluster-core/main.go
+
 ## manifests: Generate manifests e.g. CRD, RBAC etc.
 manifests: tidy installcue kustomize sync-crds
 	go generate $(foreach t,pkg apis,./$(t)/...)
