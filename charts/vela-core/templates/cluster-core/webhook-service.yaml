@@ -1,0 +1,18 @@
+{{- if and .Values.featureGates.enableSpokeClusterCRD .Values.clusterCore.webhook.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kubevela.fullname" . }}-cluster-core-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kubevela.labels" . | nindent 4 }}
+spec:
+  ports:
+    - port: 443
+      targetPort: webhook-server
+      protocol: TCP
+      name: https
+  selector:
+    controller.oam.dev/name: vela-cluster-core
+    {{- include "kubevela.selectorLabels" . | nindent 4 }}
+{{- end -}}
