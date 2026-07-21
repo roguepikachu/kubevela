@@ -105,6 +105,26 @@ func NewClusterCoreCommand() *cobra.Command {
 	return cmd
 }
 
+func configureSpokeClusterWebhooks(o *options, waitForCert func() error, registerValidating, registerMutating func()) error {
+	if !o.useWebhook {
+		return nil
+	}
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
+		klog.InfoS("Skipping SpokeCluster admission webhooks because EnableSpokeClusterCRD is off")
+		return nil
+	}
+
+	klog.InfoS("Waiting for SpokeCluster webhook certificate", "certDir", o.certDir)
+	if err := waitForCert(); err != nil {
+		klog.ErrorS(err, "Unable to start SpokeCluster admission webhooks")
+		return err
+	}
+	registerValidating()
+	registerMutating()
+	klog.InfoS("Registered SpokeCluster admission webhooks")
+	return nil
+}
+
 // run is the whole vela-cluster-core lifecycle: build the manager, detect
 // cluster-gateway (non-fatal), register health checks, and block on Start.
 //
@@ -144,17 +164,19 @@ func run(o *options) error {
 		klog.InfoS("EnableSpokeClusterCRD is off; nothing to reconcile")
 	}
 
-	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) && o.useWebhook {
-		klog.InfoS("Waiting for SpokeCluster webhook certificate", "certDir", o.certDir)
-		if err := waitForWebhookCert(o.certDir, webhookCertWaitTimeout, webhookCertPollInterval); err != nil {
-			klog.ErrorS(err, "Unable to start SpokeCluster admission webhooks")
-			return err
-		}
-		webhookspokecluster.RegisterValidatingHandler(mgr)
-		webhookspokecluster.RegisterMutatingHandler(mgr)
-		klog.InfoS("Registered SpokeCluster admission webhooks")
-	} else if o.useWebhook {
-		klog.InfoS("Skipping SpokeCluster admission webhooks because EnableSpokeClusterCRD is off")
+	if err := configureSpokeClusterWebhooks(
+		o,
+		func() error {
+			return waitForWebhookCert(o.certDir, webhookCertWaitTimeout, webhookCertPollInterval)
+		},
+		func() {
+			webhookspokecluster.RegisterValidatingHandler(mgr)
+		},
+		func() {
+			webhookspokecluster.RegisterMutatingHandler(mgr)
+		},
+	); err != nil {
+		return err
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
