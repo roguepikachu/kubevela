@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/pflag"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
+	"k8s.io/klog/v2/klogr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -31,6 +32,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	common "github.com/oam-dev/kubevela/pkg/utils/common"
+	webhookspokecluster "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/spokecluster"
 )
 
 // options holds the flags for the vela-cluster-core manager.
@@ -104,13 +106,35 @@ func NewClusterCoreCommand() *cobra.Command {
 	return cmd
 }
 
+func configureSpokeClusterWebhooks(o *options, waitForCert func() error, registerValidating, registerMutating func()) error {
+	if !o.useWebhook {
+		return nil
+	}
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
+		klog.InfoS("Skipping SpokeCluster admission webhooks because EnableSpokeClusterCRD is off")
+		return nil
+	}
+
+	klog.InfoS("Waiting for SpokeCluster webhook certificate", "certDir", o.certDir)
+	if err := waitForCert(); err != nil {
+		klog.ErrorS(err, "Unable to start SpokeCluster admission webhooks")
+		return err
+	}
+	registerValidating()
+	registerMutating()
+	klog.InfoS("Registered SpokeCluster admission webhooks")
+	return nil
+}
+
 // run is the whole vela-cluster-core lifecycle: build the manager, detect
 // cluster-gateway (non-fatal), register health checks, and block on Start.
 //
-// Controller and webhook registration are intentionally not wired here yet:
+// Controller registration is intentionally not wired here yet:
 // pkg/controller/core.oam.dev/v1beta1/spokecluster (GWCP-102132) does not
-// exist on this branch. See the TODOs below.
+// exist on this branch. See the TODO below.
 func run(o *options) error {
+	ctrl.SetLogger(klogr.New())
+
 	restConfig := ctrl.GetConfigOrDie()
 
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
@@ -143,10 +167,19 @@ func run(o *options) error {
 		klog.InfoS("EnableSpokeClusterCRD is off; nothing to reconcile")
 	}
 
-	if o.useWebhook {
-		klog.InfoS("--use-webhook is set but SpokeCluster webhook registration is pending GWCP-102132 wiring")
-		// TODO(GWCP-102132): wait for the webhook cert volume, then register
-		// webhookspokecluster.RegisterValidatingHandler(mgr) / RegisterMutatingHandler(mgr).
+	if err := configureSpokeClusterWebhooks(
+		o,
+		func() error {
+			return waitForWebhookCert(o.certDir, webhookCertWaitTimeout, webhookCertPollInterval)
+		},
+		func() {
+			webhookspokecluster.RegisterValidatingHandler(mgr)
+		},
+		func() {
+			webhookspokecluster.RegisterMutatingHandler(mgr)
+		},
+	); err != nil {
+		return err
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {

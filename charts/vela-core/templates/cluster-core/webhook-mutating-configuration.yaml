@@ -1,0 +1,48 @@
+{{- if and .Values.featureGates.enableSpokeClusterCRD .Values.clusterCore.webhook.enabled -}}
+{{- $name := printf "%s-cluster-core-admission" (include "kubevela.fullname" .) -}}
+{{- $existing := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $name -}}
+{{- $caBundle := "" -}}
+{{- if $existing -}}
+{{- range $existing.webhooks -}}
+{{- if eq .name "mutating.core.oam.dev.v1beta1.spokeclusters" -}}
+{{- $caBundle = .clientConfig.caBundle -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ include "kubevela.fullname" . }}-cluster-core-admission
+  {{- if .Values.admissionWebhooks.certManager.enabled }}
+  annotations:
+    cert-manager.io/inject-ca-from: {{ printf "%s/%s-root-cert" .Release.Namespace (include "kubevela.fullname" .) | quote }}
+  {{- end }}
+webhooks:
+  - clientConfig:
+      caBundle: {{ default "Cg==" $caBundle }}
+      service:
+        name: {{ include "kubevela.fullname" . }}-cluster-core-webhook
+        namespace: {{ .Release.Namespace }}
+        path: /mutating-core-oam-dev-v1beta1-spokeclusters
+    {{- if and .Values.admissionWebhooks.patch.enabled (not .Values.admissionWebhooks.certManager.enabled) }}
+    failurePolicy: Ignore
+    {{- else }}
+    failurePolicy: {{ .Values.admissionWebhooks.failurePolicy }}
+    {{- end }}
+    name: mutating.core.oam.dev.v1beta1.spokeclusters
+    sideEffects: None
+    admissionReviewVersions:
+      - v1beta1
+      - v1
+    rules:
+      - apiGroups:
+          - core.oam.dev
+        apiVersions:
+          - v1beta1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - spokeclusters
+    timeoutSeconds: {{ .Values.admissionWebhookTimeout }}
+{{- end -}}

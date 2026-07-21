@@ -25,7 +25,7 @@ webhooks:
         name: {{ template "kubevela.name" . }}-webhook
         namespace: {{ .Release.Namespace }}
         path: /mutating-core-oam-dev-v1beta1-applications
-    {{- if .Values.admissionWebhooks.patch.enabled }}
+    {{- if and .Values.admissionWebhooks.patch.enabled (not .Values.admissionWebhooks.certManager.enabled) }}
     failurePolicy: Ignore
     {{- else }}
     failurePolicy: Fail
@@ -52,7 +52,7 @@ webhooks:
         name: {{ template "kubevela.name" . }}-webhook
         namespace: {{ .Release.Namespace }}
         path: /mutating-core-oam-dev-v1beta1-componentdefinitions
-    {{- if .Values.admissionWebhooks.patch.enabled  }}
+    {{- if and .Values.admissionWebhooks.patch.enabled (not .Values.admissionWebhooks.certManager.enabled) }}
     failurePolicy: Ignore
     {{- else }}
     failurePolicy: Fail

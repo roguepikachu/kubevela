@@ -52,4 +52,23 @@ spec:
     - {{ template "kubevela.name" . }}-webhook.{{ .Release.Namespace }}.svc
     - {{ template "kubevela.name" . }}-webhook.{{ .Release.Namespace }}.svc.cluster.local
 
+{{- if and .Values.featureGates.enableSpokeClusterCRD .Values.clusterCore.webhook.enabled }}
+---
+# generate a serving certificate for the vela-cluster-core SpokeCluster webhook
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "kubevela.fullname" . }}-cluster-core-admission
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ include "kubevela.fullname" . }}-cluster-core-admission
+  duration: 8760h # 1y
+  revisionHistoryLimit: {{ .Values.admissionWebhooks.certManager.revisionHistoryLimit }}
+  issuerRef:
+    name: {{ template "kubevela.fullname" . }}-root-issuer
+  dnsNames:
+    - {{ include "kubevela.fullname" . }}-cluster-core-webhook.{{ .Release.Namespace }}.svc
+    - {{ include "kubevela.fullname" . }}-cluster-core-webhook.{{ .Release.Namespace }}.svc.cluster.local
+{{- end }}
+
 {{- end }}

@@ -164,7 +164,7 @@ clusterCore:
   replicaCount: 1
   ## @param clusterCore.concurrentReconciles Concurrent reconciles for cluster-infrastructure controllers
   concurrentReconciles: 5
-  ## @param clusterCore.webhook.enabled Serve the SpokeCluster admission webhooks from vela-cluster-core (requires cert-manager). When false, CRD-level validation is the admission backstop.
+  ## @param clusterCore.webhook.enabled Serve the SpokeCluster admission webhooks from vela-cluster-core. Certs are provisioned the same way as the main admission webhook: the admissionWebhooks job-patch Jobs by default, or cert-manager when admissionWebhooks.certManager.enabled is true. When false, CRD-level validation is the admission backstop.
   webhook:
     enabled: false
     port: 9445

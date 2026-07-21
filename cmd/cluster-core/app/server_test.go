@@ -17,11 +17,16 @@ limitations under the License.
 package app
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
+	featuregatetesting "k8s.io/component-base/featuregate/testing"
+
+	"github.com/oam-dev/kubevela/pkg/features"
 )
 
 func TestDefaultOptions(t *testing.T) {
@@ -58,4 +63,91 @@ func TestAddFlags(t *testing.T) {
 		f := fs.Lookup(name)
 		require.NotNilf(t, f, "expected flag %q to be registered", name)
 	}
+}
+
+func TestConfigureSpokeClusterWebhooksRequiresBothGates(t *testing.T) {
+	tests := []struct {
+		name               string
+		featureGateEnabled bool
+		useWebhook         bool
+		expectedCalls      []string
+	}{
+		{
+			name:               "feature gate off",
+			featureGateEnabled: false,
+			useWebhook:         true,
+		},
+		{
+			name:               "use-webhook off",
+			featureGateEnabled: true,
+			useWebhook:         false,
+		},
+		{
+			name:               "both gates on",
+			featureGateEnabled: true,
+			useWebhook:         true,
+			expectedCalls:      []string{"wait", "validating", "mutating"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			featuregatetesting.SetFeatureGateDuringTest(
+				t,
+				utilfeature.DefaultFeatureGate,
+				features.EnableSpokeClusterCRD,
+				tt.featureGateEnabled,
+			)
+			o := defaultOptions()
+			o.useWebhook = tt.useWebhook
+
+			var calls []string
+			err := configureSpokeClusterWebhooks(
+				o,
+				func() error {
+					calls = append(calls, "wait")
+					return nil
+				},
+				func() {
+					calls = append(calls, "validating")
+				},
+				func() {
+					calls = append(calls, "mutating")
+				},
+			)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedCalls, calls)
+		})
+	}
+}
+
+func TestConfigureSpokeClusterWebhooksStopsWhenCertWaitFails(t *testing.T) {
+	featuregatetesting.SetFeatureGateDuringTest(
+		t,
+		utilfeature.DefaultFeatureGate,
+		features.EnableSpokeClusterCRD,
+		true,
+	)
+	o := defaultOptions()
+	o.useWebhook = true
+	waitErr := errors.New("certificate unavailable")
+
+	var calls []string
+	err := configureSpokeClusterWebhooks(
+		o,
+		func() error {
+			calls = append(calls, "wait")
+			return waitErr
+		},
+		func() {
+			calls = append(calls, "validating")
+		},
+		func() {
+			calls = append(calls, "mutating")
+		},
+	)
+
+	assert.ErrorIs(t, err, waitErr)
+	assert.Equal(t, []string{"wait"}, calls)
 }

@@ -217,6 +217,7 @@ spec:
   template:
     metadata:
       labels:
+        controller.oam.dev/name: vela-core
     {{- include "kubevela.selectorLabels" . | nindent 8 }}
         {{ if .Values.sharding.enabled }}
         controller.core.oam.dev/shard-id: master
@@ -337,11 +338,12 @@ spec:
           imagePullPolicy: {{ quote .Values.image.pullPolicy }}
           resources:
           {{- toYaml .Values.resources | nindent 12 }}
-          {{ if .Values.admissionWebhooks.enabled }}
           ports:
+          {{ if .Values.admissionWebhooks.enabled }}
             - containerPort: {{ .Values.webhookService.port }}
               name: webhook-server
               protocol: TCP
+          {{ end }}
             - containerPort: {{ .Values.healthCheck.port }}
               name: healthz
               protocol: TCP
@@ -363,22 +365,27 @@ spec:
             timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
             failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
             successThreshold: {{ .Values.livenessProbe.successThreshold }}
+          {{ if or .Values.admissionWebhooks.enabled (and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.direct) }}
           volumeMounts:
+          {{ if .Values.admissionWebhooks.enabled }}
             - mountPath: {{ .Values.admissionWebhooks.certificate.mountPath }}
               name: tls-cert-vol
               readOnly: true
+          {{ end }}
           {{ if and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.direct }}
             - mountPath: /cluster-gateway-tls-cert
               name: tls-cert-vol-cg
               readOnly: true
           {{ end }}
           {{ end }}
-      {{ if .Values.admissionWebhooks.enabled }}
+      {{ if or .Values.admissionWebhooks.enabled (and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.direct) }}
       volumes:
+      {{ if .Values.admissionWebhooks.enabled }}
         - name: tls-cert-vol
           secret:
             defaultMode: 420
             secretName: {{ template "kubevela.fullname" . }}-admission
+      {{ end }}
       {{ if and .Values.multicluster.enabled .Values.multicluster.clusterGateway.secureTLS.enabled .Values.multicluster.clusterGateway.direct }}
         - name: tls-cert-vol-cg
           secret:
