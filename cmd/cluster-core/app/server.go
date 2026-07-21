@@ -31,6 +31,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	common "github.com/oam-dev/kubevela/pkg/utils/common"
+	webhookspokecluster "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/spokecluster"
 )
 
 // options holds the flags for the vela-cluster-core manager.
@@ -107,9 +108,9 @@ func NewClusterCoreCommand() *cobra.Command {
 // run is the whole vela-cluster-core lifecycle: build the manager, detect
 // cluster-gateway (non-fatal), register health checks, and block on Start.
 //
-// Controller and webhook registration are intentionally not wired here yet:
+// Controller registration is intentionally not wired here yet:
 // pkg/controller/core.oam.dev/v1beta1/spokecluster (GWCP-102132) does not
-// exist on this branch. See the TODOs below.
+// exist on this branch. See the TODO below.
 func run(o *options) error {
 	restConfig := ctrl.GetConfigOrDie()
 
@@ -143,10 +144,17 @@ func run(o *options) error {
 		klog.InfoS("EnableSpokeClusterCRD is off; nothing to reconcile")
 	}
 
-	if o.useWebhook {
-		klog.InfoS("--use-webhook is set but SpokeCluster webhook registration is pending GWCP-102132 wiring")
-		// TODO(GWCP-102132): wait for the webhook cert volume, then register
-		// webhookspokecluster.RegisterValidatingHandler(mgr) / RegisterMutatingHandler(mgr).
+	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) && o.useWebhook {
+		klog.InfoS("Waiting for SpokeCluster webhook certificate", "certDir", o.certDir)
+		if err := waitForWebhookCert(o.certDir, webhookCertWaitTimeout, webhookCertPollInterval); err != nil {
+			klog.ErrorS(err, "Unable to start SpokeCluster admission webhooks")
+			return err
+		}
+		webhookspokecluster.RegisterValidatingHandler(mgr)
+		webhookspokecluster.RegisterMutatingHandler(mgr)
+		klog.InfoS("Registered SpokeCluster admission webhooks")
+	} else if o.useWebhook {
+		klog.InfoS("Skipping SpokeCluster admission webhooks because EnableSpokeClusterCRD is off")
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
