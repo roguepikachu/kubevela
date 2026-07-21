@@ -2,7 +2,7 @@
 {{- $name := printf "%s-cluster-core-admission" (include "kubevela.fullname" .) -}}
 {{- $existing := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $name -}}
 {{- $caBundle := "" -}}
-{{- if $existing -}}
+{{- if and $existing (not .Values.admissionWebhooks.certManager.enabled) -}}
 {{- range $existing.webhooks -}}
 {{- if eq .name "validating.core.oam.dev.v1beta1.spokeclusters" -}}
 {{- $caBundle = .clientConfig.caBundle -}}

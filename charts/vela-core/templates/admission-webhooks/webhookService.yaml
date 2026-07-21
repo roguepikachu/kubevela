@@ -14,6 +14,7 @@ spec:
       protocol: TCP
       name: https
   selector:
-    {{ include "kubevela.selectorLabels" . | nindent 6 }}
+    controller.oam.dev/name: vela-core
+    {{- include "kubevela.selectorLabels" . | nindent 4 }}
 
 {{- end -}}
