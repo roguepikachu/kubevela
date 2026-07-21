@@ -23,22 +23,19 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func writeCertFiles(t *testing.T, dir string) {
-	t.Helper()
-	require := func(err error) {
-		if err != nil {
-			t.Fatalf("failed to write cert fixture: %v", err)
-		}
+func writeCertFiles(dir string) error {
+	if err := os.WriteFile(filepath.Join(dir, "tls.crt"), []byte("cert"), 0o600); err != nil {
+		return err
 	}
-	require(os.WriteFile(filepath.Join(dir, "tls.crt"), []byte("cert"), 0o600))
-	require(os.WriteFile(filepath.Join(dir, "tls.key"), []byte("key"), 0o600))
+	return os.WriteFile(filepath.Join(dir, "tls.key"), []byte("key"), 0o600)
 }
 
 func TestWaitForWebhookCert_AlreadyPresent(t *testing.T) {
 	dir := t.TempDir()
-	writeCertFiles(t, dir)
+	require.NoError(t, writeCertFiles(dir))
 
 	err := waitForWebhookCert(dir, 2*time.Second, 10*time.Millisecond)
 	assert.NoError(t, err)
@@ -53,12 +50,14 @@ func TestWaitForWebhookCert_TimesOut(t *testing.T) {
 
 func TestWaitForWebhookCert_AppearsLater(t *testing.T) {
 	dir := t.TempDir()
+	writeErr := make(chan error, 1)
 
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		writeCertFiles(t, dir)
+		writeErr <- writeCertFiles(dir)
 	}()
 
 	err := waitForWebhookCert(dir, 2*time.Second, 10*time.Millisecond)
 	assert.NoError(t, err)
+	require.NoError(t, <-writeErr)
 }

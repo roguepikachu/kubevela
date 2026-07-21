@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/pflag"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/textlogger"
+	"k8s.io/klog/v2/klogr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -133,7 +133,7 @@ func configureSpokeClusterWebhooks(o *options, waitForCert func() error, registe
 // pkg/controller/core.oam.dev/v1beta1/spokecluster (GWCP-102132) does not
 // exist on this branch. See the TODO below.
 func run(o *options) error {
-	ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig()))
+	ctrl.SetLogger(klogr.New())
 
 	restConfig := ctrl.GetConfigOrDie()
 
