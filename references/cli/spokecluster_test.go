@@ -21,12 +21,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"strings"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
-	"github.com/stretchr/testify/assert"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -41,10 +40,9 @@ import (
 )
 
 // spokeClusterScheme returns a scheme with the SpokeCluster types registered.
-func spokeClusterScheme(t *testing.T) *runtime.Scheme {
-	t.Helper()
+func spokeClusterScheme() *runtime.Scheme {
 	s := runtime.NewScheme()
-	assert.NoError(t, v1beta1.AddToScheme(s))
+	Expect(v1beta1.AddToScheme(s)).To(Succeed())
 	return s
 }
 
@@ -59,9 +57,24 @@ func newSpokeCluster(name, namespace string, mode v1beta1.SpokeClusterMode, auth
 	}
 }
 
-func fakeClientWith(t *testing.T, objs ...client.Object) client.Client {
-	t.Helper()
-	return fake.NewClientBuilder().WithScheme(spokeClusterScheme(t)).WithObjects(objs...).Build()
+// fakeClientWith builds a fake client seeded with the given SpokeCluster objects.
+func fakeClientWith(objs ...client.Object) client.Client {
+	return fake.NewClientBuilder().WithScheme(spokeClusterScheme()).WithObjects(objs...).Build()
+}
+
+// noMatchClient returns a fake client whose list/get report the SpokeCluster kind as
+// not installed, simulating the feature gate being off.
+func noMatchClient() client.Client {
+	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "core.oam.dev", Kind: "SpokeCluster"}}
+	return fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
+				return noMatch
+			},
+			Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+				return noMatch
+			},
+		}).Build()
 }
 
 // subCommand returns the direct subcommand of cmd with the given Use name, or nil.
@@ -74,354 +87,331 @@ func subCommand(cmd *cobra.Command, use string) *cobra.Command {
 	return nil
 }
 
-func TestNewSpokeClusterCommandGroup(t *testing.T) {
-	cmd := NewSpokeClusterCommandGroup(&common.Args{})
+var _ = Describe("vela cluster spokes command wiring", func() {
+	It("registers the spokes group with aliases and both subcommands", func() {
+		cmd := NewSpokeClusterCommandGroup(&common.Args{})
+		Expect(cmd.Name()).To(Equal("spokes"))
+		Expect(cmd.Aliases).To(ConsistOf("spoke", "spokecluster", "spokeclusters"))
+		list := subCommand(cmd, "list")
+		Expect(list).ToNot(BeNil(), "expected a list subcommand")
+		Expect(subCommand(cmd, "show")).ToNot(BeNil(), "expected a show subcommand")
+		Expect(list.Aliases).To(ContainElement("ls"), "list must accept the ls alias")
+	})
 
-	assert.Equal(t, "spokes", cmd.Name())
-	assert.ElementsMatch(t, []string{"spoke", "spokecluster", "spokeclusters"}, cmd.Aliases)
+	It("hooks into vela cluster and leaves the legacy list command in place", func() {
+		ioStreams := util.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr}
+		clusterCmd := ClusterCommandGroup(nil, "", common.Args{}, ioStreams)
+		Expect(subCommand(clusterCmd, "spokes")).ToNot(BeNil(), "expected spokes group under vela cluster")
+		Expect(subCommand(clusterCmd, "list")).ToNot(BeNil(), "expected legacy list command to remain")
+	})
 
-	list := subCommand(cmd, "list")
-	assert.NotNil(t, list, "expected a list subcommand")
-	assert.NotNil(t, subCommand(cmd, "show"), "expected a show subcommand")
-	assert.Contains(t, list.Aliases, "ls", "list must accept the ls alias")
-}
+	It("gives the spokes group a gateway-independent pre-run that subcommands inherit", func() {
+		cmd := NewSpokeClusterCommandGroup(&common.Args{})
+		Expect(cmd.PersistentPreRunE).ToNot(BeNil(), "spokes group must set its own PersistentPreRunE")
+		Expect(cmd.PersistentPreRunE(cmd, nil)).To(Succeed())
+		for _, sub := range cmd.Commands() {
+			Expect(sub.PersistentPreRunE).To(BeNil(), "subcommand %q should inherit the group pre-run", sub.Name())
+		}
+	})
 
-func TestRunSpokeClusterList(t *testing.T) {
+	It("defaults the show namespace to vela-system", func() {
+		flag := newSpokeClusterShowCommand(&common.Args{}).Flags().Lookup("namespace")
+		Expect(flag).ToNot(BeNil())
+		Expect(flag.DefValue).To(Equal("vela-system"))
+	})
+
+	It("defaults the timeout flag to 30s on both commands", func() {
+		for _, cmd := range []*cobra.Command{
+			newSpokeClusterListCommand(&common.Args{}),
+			newSpokeClusterShowCommand(&common.Args{}),
+		} {
+			flag := cmd.Flags().Lookup("timeout")
+			Expect(flag).ToNot(BeNil(), "%s must have a --timeout flag", cmd.Name())
+			Expect(flag.DefValue).To(Equal("30s"))
+		}
+	})
+})
+
+var _ = Describe("vela cluster spokes list", func() {
 	ctx := context.Background()
 
-	populated := newSpokeCluster("beta", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
-	populated.Status = v1beta1.SpokeClusterStatus{
-		Connection: v1beta1.ConnectionStateConnected,
-		ClusterInfo: &v1beta1.SpokeClusterInfo{
-			KubernetesVersion: "v1.29.0",
-			Platform:          "eks",
-			NodeCount:         3,
-		},
+	newPopulated := func() *v1beta1.SpokeCluster {
+		sc := newSpokeCluster("beta", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
+		sc.Status = v1beta1.SpokeClusterStatus{
+			Connection:  v1beta1.ConnectionStateConnected,
+			ClusterInfo: &v1beta1.SpokeClusterInfo{KubernetesVersion: "v1.29.0", Platform: "eks", NodeCount: 3},
+		}
+		return sc
 	}
-	// "alpha" sorts before "beta" but is declared second, exercising the sort.
-	unpopulated := newSpokeCluster("alpha", "default", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
 
-	t.Run("renders columns, sorts by name, fills placeholders", func(t *testing.T) {
-		cli := fakeClientWith(t, populated, unpopulated)
+	It("renders the columns, sorts by name, and fills placeholders", func() {
+		// "alpha" is declared second but must sort first.
+		unpopulated := newSpokeCluster("alpha", "default", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
 		var buf bytes.Buffer
-		err := runSpokeClusterList(ctx, cli, "", &buf, "table")
-		assert.NoError(t, err)
+		Expect(runSpokeClusterList(ctx, fakeClientWith(newPopulated(), unpopulated), "", &buf, "table")).To(Succeed())
 		out := buf.String()
 
 		for _, header := range []string{"NAME", "NAMESPACE", "MODE", "AUTH", "VERSION", "NODES", "PLATFORM", "STATUS"} {
-			assert.Contains(t, out, header)
+			Expect(out).To(ContainSubstring(header))
 		}
-		// Populated cluster shows discovered inventory.
-		assert.Contains(t, out, "v1.29.0")
-		assert.Contains(t, out, "eks")
-		assert.Contains(t, out, "Connected")
-		// Unpopulated cluster: missing clusterInfo renders "-", empty connection renders Unknown.
-		assert.Contains(t, out, "Unknown")
-		assert.Contains(t, out, "-")
-		// Sort by name: alpha appears before beta.
-		assert.Less(t, bytes.Index(buf.Bytes(), []byte("alpha")), bytes.Index(buf.Bytes(), []byte("beta")))
+		Expect(out).To(ContainSubstring("v1.29.0"))
+		Expect(out).To(ContainSubstring("eks"))
+		Expect(out).To(ContainSubstring("Connected"))
+		// Unpopulated: missing clusterInfo renders "-", empty connection renders Unknown.
+		Expect(out).To(ContainSubstring("Unknown"))
+		Expect(out).To(ContainSubstring("-"))
+		Expect(bytes.Index(buf.Bytes(), []byte("alpha"))).To(BeNumerically("<", bytes.Index(buf.Bytes(), []byte("beta"))))
 	})
 
-	t.Run("node count zero renders dash not 0", func(t *testing.T) {
+	It("renders a zero node count as dash, not 0", func() {
 		zeroNodes := newSpokeCluster("zero", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
 		zeroNodes.Status = v1beta1.SpokeClusterStatus{
 			ClusterInfo: &v1beta1.SpokeClusterInfo{KubernetesVersion: "v1.30.0", NodeCount: 0},
 		}
 		var buf bytes.Buffer
-		err := runSpokeClusterList(ctx, fakeClientWith(t, zeroNodes), "", &buf, "table")
-		assert.NoError(t, err)
-		// The NODES cell for a zero count must not read "0".
-		assert.NotContains(t, buf.String(), " 0 ")
+		Expect(runSpokeClusterList(ctx, fakeClientWith(zeroNodes), "", &buf, "table")).To(Succeed())
+		Expect(buf.String()).ToNot(ContainSubstring(" 0 "))
 	})
 
-	t.Run("namespace filter restricts results", func(t *testing.T) {
+	It("restricts results when a namespace is given", func() {
+		unpopulated := newSpokeCluster("alpha", "default", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
 		var buf bytes.Buffer
-		err := runSpokeClusterList(ctx, fakeClientWith(t, populated, unpopulated), "default", &buf, "table")
-		assert.NoError(t, err)
-		assert.Contains(t, buf.String(), "alpha")
-		assert.NotContains(t, buf.String(), "beta")
+		Expect(runSpokeClusterList(ctx, fakeClientWith(newPopulated(), unpopulated), "default", &buf, "table")).To(Succeed())
+		Expect(buf.String()).To(ContainSubstring("alpha"))
+		Expect(buf.String()).ToNot(ContainSubstring("beta"))
 	})
 
-	t.Run("empty prints No SpokeCluster found", func(t *testing.T) {
+	It("prints No SpokeCluster found when empty", func() {
 		var buf bytes.Buffer
-		err := runSpokeClusterList(ctx, fakeClientWith(t), "", &buf, "table")
-		assert.NoError(t, err)
-		assert.Contains(t, buf.String(), "No SpokeCluster found.")
+		Expect(runSpokeClusterList(ctx, fakeClientWith(), "", &buf, "table")).To(Succeed())
+		Expect(buf.String()).To(ContainSubstring("No SpokeCluster found."))
 	})
-}
+})
 
-func TestRunSpokeClusterShow(t *testing.T) {
+var _ = Describe("vela cluster spokes show", func() {
 	ctx := context.Background()
 
-	t.Run("prints spec summary", func(t *testing.T) {
+	It("prints the spec summary", func() {
 		sc := newSpokeCluster("prod", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
 		sc.Status.Connection = v1beta1.ConnectionStateConnected
 		var buf bytes.Buffer
-		err := runSpokeClusterShow(ctx, fakeClientWith(t, sc), "vela-system", "prod", &buf, "table")
-		assert.NoError(t, err)
+		Expect(runSpokeClusterShow(ctx, fakeClientWith(sc), "vela-system", "prod", &buf, "table")).To(Succeed())
 		out := buf.String()
-		assert.Contains(t, out, "prod")
-		assert.Contains(t, out, "vela-system")
-		assert.Contains(t, out, "connect")
-		assert.Contains(t, out, "aws")
-		assert.Contains(t, out, "Connected")
+		Expect(out).To(ContainSubstring("prod"))
+		Expect(out).To(ContainSubstring("vela-system"))
+		Expect(out).To(ContainSubstring("connect"))
+		Expect(out).To(ContainSubstring("aws"))
+		Expect(out).To(ContainSubstring("Connected"))
 	})
 
-	t.Run("connection defaults to Unknown when unset", func(t *testing.T) {
+	It("defaults the connection to Unknown when unset", func() {
 		sc := newSpokeCluster("prod", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
 		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, fakeClientWith(t, sc), "vela-system", "prod", &buf, "table"))
-		assert.Contains(t, buf.String(), "Unknown")
+		Expect(runSpokeClusterShow(ctx, fakeClientWith(sc), "vela-system", "prod", &buf, "table")).To(Succeed())
+		Expect(buf.String()).To(ContainSubstring("Unknown"))
 	})
 
-	t.Run("cluster info block only when populated", func(t *testing.T) {
+	It("prints the Cluster Info block only when clusterInfo is populated", func() {
 		withInfo := newSpokeCluster("withinfo", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
 		withInfo.Status.ClusterInfo = &v1beta1.SpokeClusterInfo{
 			KubernetesVersion: "v1.29.0", Platform: "eks", Region: "us-west-2",
 			NodeCount: 5, TotalCPU: "16", TotalMemory: "64Gi", APIServerEndpoint: "https://api.example",
 		}
 		var withBuf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, fakeClientWith(t, withInfo), "vela-system", "withinfo", &withBuf, "table"))
+		Expect(runSpokeClusterShow(ctx, fakeClientWith(withInfo), "vela-system", "withinfo", &withBuf, "table")).To(Succeed())
 		out := withBuf.String()
-		assert.Contains(t, out, "Cluster Info")
-		assert.Contains(t, out, "v1.29.0")
-		assert.Contains(t, out, "us-west-2")
-		assert.Contains(t, out, "64Gi")
-		assert.Contains(t, out, "https://api.example")
+		Expect(out).To(ContainSubstring("Cluster Info"))
+		Expect(out).To(ContainSubstring("v1.29.0"))
+		Expect(out).To(ContainSubstring("us-west-2"))
+		Expect(out).To(ContainSubstring("64Gi"))
+		Expect(out).To(ContainSubstring("https://api.example"))
 
 		noInfo := newSpokeCluster("noinfo", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
 		var noBuf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, fakeClientWith(t, noInfo), "vela-system", "noinfo", &noBuf, "table"))
-		assert.NotContains(t, noBuf.String(), "Cluster Info")
+		Expect(runSpokeClusterShow(ctx, fakeClientWith(noInfo), "vela-system", "noinfo", &noBuf, "table")).To(Succeed())
+		Expect(noBuf.String()).ToNot(ContainSubstring("Cluster Info"))
 	})
 
-	t.Run("conditions table only when conditions exist", func(t *testing.T) {
+	It("prints the Conditions table only when conditions exist", func() {
 		withCond := newSpokeCluster("withcond", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
 		withCond.Status.Conditions = []metav1.Condition{{
 			Type: "Connected", Status: metav1.ConditionTrue, Reason: "ProbeOK", Message: "reachable",
 		}}
 		var withBuf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, fakeClientWith(t, withCond), "vela-system", "withcond", &withBuf, "table"))
+		Expect(runSpokeClusterShow(ctx, fakeClientWith(withCond), "vela-system", "withcond", &withBuf, "table")).To(Succeed())
 		out := withBuf.String()
-		assert.Contains(t, out, "Conditions")
-		assert.Contains(t, out, "TYPE")
-		assert.Contains(t, out, "ProbeOK")
-		assert.Contains(t, out, "reachable")
+		Expect(out).To(ContainSubstring("Conditions"))
+		Expect(out).To(ContainSubstring("TYPE"))
+		Expect(out).To(ContainSubstring("ProbeOK"))
+		Expect(out).To(ContainSubstring("reachable"))
 
 		noCond := newSpokeCluster("nocond", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
 		var noBuf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, fakeClientWith(t, noCond), "vela-system", "nocond", &noBuf, "table"))
-		assert.NotContains(t, noBuf.String(), "Conditions")
+		Expect(runSpokeClusterShow(ctx, fakeClientWith(noCond), "vela-system", "nocond", &noBuf, "table")).To(Succeed())
+		Expect(noBuf.String()).ToNot(ContainSubstring("Conditions"))
 	})
 
-	t.Run("not found returns namespaced message", func(t *testing.T) {
+	It("returns a namespaced message when the SpokeCluster is not found", func() {
 		var buf bytes.Buffer
-		err := runSpokeClusterShow(ctx, fakeClientWith(t), "vela-system", "ghost", &buf, "table")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "SpokeCluster vela-system/ghost not found")
+		err := runSpokeClusterShow(ctx, fakeClientWith(), "vela-system", "ghost", &buf, "table")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("SpokeCluster vela-system/ghost not found"))
 	})
-}
+})
 
-func TestSpokeClusterShowNamespaceDefault(t *testing.T) {
-	cmd := newSpokeClusterShowCommand(&common.Args{})
-	flag := cmd.Flags().Lookup("namespace")
-	assert.NotNil(t, flag)
-	assert.Equal(t, "vela-system", flag.DefValue)
-}
-
-func TestSpokeClusterListOutputFormats(t *testing.T) {
+var _ = Describe("vela cluster spokes output formats", func() {
 	ctx := context.Background()
-	a := newSpokeCluster("alpha", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
-	a.Status.ClusterInfo = &v1beta1.SpokeClusterInfo{Region: "us-west-2", APIServerEndpoint: "https://a", TotalCPU: "8", TotalMemory: "32Gi", LatencyMillis: 12}
-	b := newSpokeCluster("beta", "default", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
-	cli := fakeClientWith(t, a, b)
 
-	t.Run("json round-trips to the list", func(t *testing.T) {
-		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterList(ctx, cli, "", &buf, "json"))
-		var got v1beta1.SpokeClusterList
-		assert.NoError(t, json.Unmarshal(buf.Bytes(), &got))
-		assert.Len(t, got.Items, 2)
+	Context("list", func() {
+		var cli client.Client
+		BeforeEach(func() {
+			a := newSpokeCluster("alpha", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
+			a.Status.ClusterInfo = &v1beta1.SpokeClusterInfo{Region: "us-west-2", APIServerEndpoint: "https://a", TotalCPU: "8", TotalMemory: "32Gi", LatencyMillis: 12}
+			b := newSpokeCluster("beta", "default", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
+			cli = fakeClientWith(a, b)
+		})
+
+		It("json round-trips to the list", func() {
+			var buf bytes.Buffer
+			Expect(runSpokeClusterList(ctx, cli, "", &buf, "json")).To(Succeed())
+			var got v1beta1.SpokeClusterList
+			Expect(json.Unmarshal(buf.Bytes(), &got)).To(Succeed())
+			Expect(got.Items).To(HaveLen(2))
+		})
+
+		It("yaml emits the resources", func() {
+			var buf bytes.Buffer
+			Expect(runSpokeClusterList(ctx, cli, "", &buf, "yaml")).To(Succeed())
+			Expect(buf.String()).To(ContainSubstring("alpha"))
+			Expect(buf.String()).To(ContainSubstring("beta"))
+		})
+
+		It("wide appends the discovered columns", func() {
+			var buf bytes.Buffer
+			Expect(runSpokeClusterList(ctx, cli, "", &buf, "wide")).To(Succeed())
+			for _, header := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "LAST PROBE"} {
+				Expect(buf.String()).To(ContainSubstring(header))
+			}
+			Expect(buf.String()).To(ContainSubstring("us-west-2"))
+		})
+
+		It("name prints spokecluster/<name> per row without a header", func() {
+			var buf bytes.Buffer
+			Expect(runSpokeClusterList(ctx, cli, "", &buf, "name")).To(Succeed())
+			Expect(buf.String()).To(ContainSubstring("spokecluster/alpha"))
+			Expect(buf.String()).To(ContainSubstring("spokecluster/beta"))
+			Expect(buf.String()).ToNot(ContainSubstring("NAME"))
+		})
+
+		It("errors on an unknown format, listing the supported ones", func() {
+			var buf bytes.Buffer
+			err := runSpokeClusterList(ctx, cli, "", &buf, "toml")
+			Expect(err).To(HaveOccurred())
+			for _, f := range []string{"table", "wide", "json", "yaml", "name"} {
+				Expect(err.Error()).To(ContainSubstring(f))
+			}
+		})
 	})
 
-	t.Run("yaml emits the resources", func(t *testing.T) {
-		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterList(ctx, cli, "", &buf, "yaml"))
-		assert.Contains(t, buf.String(), "alpha")
-		assert.Contains(t, buf.String(), "beta")
-	})
+	Context("show", func() {
+		var cli client.Client
+		BeforeEach(func() {
+			cli = fakeClientWith(newSpokeCluster("prod", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS))
+		})
 
-	t.Run("wide appends discovered columns", func(t *testing.T) {
-		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterList(ctx, cli, "", &buf, "wide"))
-		for _, header := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "LAST PROBE"} {
-			assert.Contains(t, buf.String(), header)
-		}
-		assert.Contains(t, buf.String(), "us-west-2")
-	})
+		It("json round-trips to the resource", func() {
+			var buf bytes.Buffer
+			Expect(runSpokeClusterShow(ctx, cli, "vela-system", "prod", &buf, "json")).To(Succeed())
+			var got v1beta1.SpokeCluster
+			Expect(json.Unmarshal(buf.Bytes(), &got)).To(Succeed())
+			Expect(got.Name).To(Equal("prod"))
+		})
 
-	t.Run("name prints spokecluster/<name> per row", func(t *testing.T) {
-		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterList(ctx, cli, "", &buf, "name"))
-		assert.Contains(t, buf.String(), "spokecluster/alpha")
-		assert.Contains(t, buf.String(), "spokecluster/beta")
-		assert.NotContains(t, buf.String(), "NAME") // no table header
-	})
+		It("yaml emits the resource", func() {
+			var buf bytes.Buffer
+			Expect(runSpokeClusterShow(ctx, cli, "vela-system", "prod", &buf, "yaml")).To(Succeed())
+			Expect(buf.String()).To(ContainSubstring("prod"))
+		})
 
-	t.Run("unknown format errors with supported list", func(t *testing.T) {
-		var buf bytes.Buffer
-		err := runSpokeClusterList(ctx, cli, "", &buf, "toml")
-		assert.Error(t, err)
-		for _, f := range []string{"table", "wide", "json", "yaml", "name"} {
-			assert.Contains(t, err.Error(), f)
-		}
+		It("rejects the name format", func() {
+			var buf bytes.Buffer
+			err := runSpokeClusterShow(ctx, cli, "vela-system", "prod", &buf, "name")
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("table"))
+			Expect(err.Error()).To(ContainSubstring("json"))
+		})
 	})
-}
+})
 
-func TestSpokeClusterShowOutputFormats(t *testing.T) {
+var _ = Describe("vela cluster spokes CRD-absent handling", func() {
 	ctx := context.Background()
-	sc := newSpokeCluster("prod", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
-	cli := fakeClientWith(t, sc)
 
-	t.Run("json round-trips to the resource", func(t *testing.T) {
+	It("returns an actionable message for list", func() {
 		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, cli, "vela-system", "prod", &buf, "json"))
-		var got v1beta1.SpokeCluster
-		assert.NoError(t, json.Unmarshal(buf.Bytes(), &got))
-		assert.Equal(t, "prod", got.Name)
+		err := runSpokeClusterList(ctx, noMatchClient(), "", &buf, "table")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("EnableSpokeClusterCRD"))
+		Expect(err.Error()).To(ContainSubstring("SpokeCluster CRD"))
 	})
 
-	t.Run("yaml emits the resource", func(t *testing.T) {
+	It("returns an actionable message for show", func() {
 		var buf bytes.Buffer
-		assert.NoError(t, runSpokeClusterShow(ctx, cli, "vela-system", "prod", &buf, "yaml"))
-		assert.Contains(t, buf.String(), "prod")
+		err := runSpokeClusterShow(ctx, noMatchClient(), "vela-system", "x", &buf, "table")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("EnableSpokeClusterCRD"))
+		Expect(err.Error()).To(ContainSubstring("SpokeCluster CRD"))
 	})
+})
 
-	t.Run("name is not supported for show", func(t *testing.T) {
-		var buf bytes.Buffer
-		err := runSpokeClusterShow(ctx, cli, "vela-system", "prod", &buf, "name")
-		assert.Error(t, err)
-		assert.True(t, strings.Contains(err.Error(), "table") && strings.Contains(err.Error(), "json"))
-	})
-}
+var _ = Describe("vela cluster spokes timeout, latency, and condition age", func() {
+	It("surfaces a deadline error rather than blocking", func() {
+		// A context whose deadline is already in the past.
+		ctx, cancel := context.WithTimeout(context.Background(), -time.Second)
+		defer cancel()
+		cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).Build()
 
-func TestSpokeClusterCRDAbsentMessage(t *testing.T) {
-	ctx := context.Background()
-	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "core.oam.dev", Kind: "SpokeCluster"}}
-	cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme(t)).
-		WithInterceptorFuncs(interceptor.Funcs{
-			List: func(_ context.Context, _ client.WithWatch, _ client.ObjectList, _ ...client.ListOption) error {
-				return noMatch
-			},
-			Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
-				return noMatch
-			},
-		}).Build()
-
-	t.Run("list", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := runSpokeClusterList(ctx, cli, "", &buf, "table")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "EnableSpokeClusterCRD")
-		assert.Contains(t, err.Error(), "SpokeCluster CRD")
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("deadline exceeded"))
 	})
 
-	t.Run("show", func(t *testing.T) {
+	It("renders zero latency as dash in show and wide list", func() {
+		zero := newSpokeCluster("z", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
+		zero.Status.ClusterInfo = &v1beta1.SpokeClusterInfo{KubernetesVersion: "v1.30", LatencyMillis: 0}
+
+		var showBuf bytes.Buffer
+		Expect(runSpokeClusterShow(context.Background(), fakeClientWith(zero), "vela-system", "z", &showBuf, "table")).To(Succeed())
+		Expect(showBuf.String()).ToNot(ContainSubstring("0ms"))
+
+		var listBuf bytes.Buffer
+		Expect(runSpokeClusterList(context.Background(), fakeClientWith(zero), "", &listBuf, "wide")).To(Succeed())
+		Expect(listBuf.String()).ToNot(ContainSubstring("0ms"))
+	})
+
+	It("renders condition age, dash when the transition time is unset", func() {
+		Expect(conditionAge(metav1.Condition{})).To(Equal("-"))
+		recent := metav1.Condition{LastTransitionTime: metav1.NewTime(time.Now().Add(-5 * time.Minute))}
+		Expect(conditionAge(recent)).ToNot(Equal("-"))
+	})
+
+	It("includes an AGE column in the show conditions table", func() {
+		sc := newSpokeCluster("c", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
+		sc.Status.Conditions = []metav1.Condition{{
+			Type: "Connected", Status: metav1.ConditionTrue, Reason: "OK", Message: "up",
+			LastTransitionTime: metav1.NewTime(time.Now().Add(-5 * time.Minute)),
+		}}
 		var buf bytes.Buffer
-		err := runSpokeClusterShow(ctx, cli, "vela-system", "x", &buf, "table")
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "EnableSpokeClusterCRD")
-		assert.Contains(t, err.Error(), "SpokeCluster CRD")
+		Expect(runSpokeClusterShow(context.Background(), fakeClientWith(sc), "vela-system", "c", &buf, "table")).To(Succeed())
+		Expect(buf.String()).To(ContainSubstring("AGE"))
+		Expect(buf.String()).To(ContainSubstring("5m"))
 	})
-}
-
-func TestSpokeClusterTimeoutFlagDefault(t *testing.T) {
-	for _, cmd := range []*cobra.Command{
-		newSpokeClusterListCommand(&common.Args{}),
-		newSpokeClusterShowCommand(&common.Args{}),
-	} {
-		flag := cmd.Flags().Lookup("timeout")
-		assert.NotNil(t, flag, "%s must have a --timeout flag", cmd.Name())
-		assert.Equal(t, "30s", flag.DefValue)
-	}
-}
-
-func TestSpokeClusterListRespectsContextDeadline(t *testing.T) {
-	// A context whose deadline is already in the past; the list must not block and must
-	// surface the deadline error rather than succeeding.
-	ctx, cancel := context.WithTimeout(context.Background(), -time.Second)
-	defer cancel()
-
-	cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme(t)).
-		WithInterceptorFuncs(interceptor.Funcs{
-			List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				return c.List(ctx, list, opts...)
-			},
-		}).Build()
-
-	var buf bytes.Buffer
-	err := runSpokeClusterList(ctx, cli, "", &buf, "table")
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "deadline exceeded")
-}
-
-func TestLatencyZeroRendersDash(t *testing.T) {
-	zero := newSpokeCluster("z", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
-	zero.Status.ClusterInfo = &v1beta1.SpokeClusterInfo{KubernetesVersion: "v1.30", LatencyMillis: 0}
-
-	// show Cluster Info block: latency zero must not read "0ms".
-	var showBuf bytes.Buffer
-	assert.NoError(t, runSpokeClusterShow(context.Background(), fakeClientWith(t, zero), "vela-system", "z", &showBuf, "table"))
-	assert.NotContains(t, showBuf.String(), "0ms")
-
-	// wide list: latency zero must not read "0ms".
-	var listBuf bytes.Buffer
-	assert.NoError(t, runSpokeClusterList(context.Background(), fakeClientWith(t, zero), "", &listBuf, "wide"))
-	assert.NotContains(t, listBuf.String(), "0ms")
-}
-
-func TestConditionAge(t *testing.T) {
-	assert.Equal(t, "-", conditionAge(metav1.Condition{}), "unset lastTransitionTime renders -")
-	recent := metav1.Condition{LastTransitionTime: metav1.NewTime(time.Now().Add(-5 * time.Minute))}
-	assert.NotEqual(t, "-", conditionAge(recent))
-}
-
-func TestShowConditionsHasAgeColumn(t *testing.T) {
-	sc := newSpokeCluster("c", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeAWS)
-	sc.Status.Conditions = []metav1.Condition{{
-		Type: "Connected", Status: metav1.ConditionTrue, Reason: "OK", Message: "up",
-		LastTransitionTime: metav1.NewTime(time.Now().Add(-5 * time.Minute)),
-	}}
-	var buf bytes.Buffer
-	assert.NoError(t, runSpokeClusterShow(context.Background(), fakeClientWith(t, sc), "vela-system", "c", &buf, "table"))
-	out := buf.String()
-	assert.Contains(t, out, "AGE")
-	assert.Contains(t, out, "5m")
-}
-
-func TestSpokesGroupHasGatewayIndependentPreRun(t *testing.T) {
-	cmd := NewSpokeClusterCommandGroup(&common.Args{})
-
-	// The group defines its own pre-run so the parent `vela cluster` cluster-gateway
-	// resolution does not gate read-only inspection (Requirement 8).
-	assert.NotNil(t, cmd.PersistentPreRunE, "spokes group must set its own PersistentPreRunE")
-	// It must not require cluster-gateway: invoking it succeeds with no gateway present.
-	assert.NoError(t, cmd.PersistentPreRunE(cmd, nil))
-	// Subcommands must not define their own pre-run, so the group's applies to them
-	// (cobra runs only the nearest PersistentPreRunE).
-	for _, sub := range cmd.Commands() {
-		assert.Nil(t, sub.PersistentPreRunE, "subcommand %q should inherit the group pre-run", sub.Name())
-	}
-}
-
-func TestSpokesHookedIntoClusterCommandGroup(t *testing.T) {
-	ioStreams := util.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr}
-	clusterCmd := ClusterCommandGroup(nil, "", common.Args{}, ioStreams)
-
-	assert.NotNil(t, subCommand(clusterCmd, "spokes"), "expected spokes group registered under vela cluster")
-	// The additive hook must leave the legacy list command in place.
-	assert.NotNil(t, subCommand(clusterCmd, "list"), "expected legacy list command to remain")
-}
+})
