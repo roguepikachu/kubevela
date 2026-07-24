@@ -18,6 +18,7 @@ package credential
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -60,6 +61,118 @@ users:
   user:
     client-certificate-data: Y2VydA==
     client-key-data: a2V5
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+
+const execKubeconfig = `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+users:
+- name: spoke
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: aws
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+
+const filePathCAKubeconfig = `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority: /etc/ca/spoke.crt
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+
+const invalidYAMLKubeconfig = `not: valid: yaml: [structure`
+
+const noCurrentContextKubeconfig = `apiVersion: v1
+kind: Config
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+
+const danglingContextKubeconfig = `apiVersion: v1
+kind: Config
+current-context: ghost
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+
+const unknownClusterKubeconfig = `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: other
+  cluster:
+    server: https://other.example.com:6443
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+
+const unknownUserKubeconfig = `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+users:
+- name: other
+  user:
+    token: tok
 contexts:
 - name: spoke
   context:
@@ -138,81 +251,115 @@ func TestKubeconfigProviderClientCert(t *testing.T) {
 	if m.Token != "" {
 		t.Fatalf("cert kubeconfig should not carry a token, got %q", m.Token)
 	}
+	if !m.NextRefresh.IsZero() {
+		t.Fatal("static kubeconfig should not schedule a refresh")
+	}
 }
 
-func TestKubeconfigProviderErrors(t *testing.T) {
-	sc := &v1beta1.SpokeCluster{
-		ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "vela-system"},
-		Spec: v1beta1.SpokeClusterSpec{
-			Credential: v1beta1.CredentialSpec{
-				Type:       v1beta1.CredentialTypeKubeconfig,
-				Kubeconfig: &v1beta1.KubeconfigCredential{SecretRef: v1beta1.SecretKeyRef{Name: "missing"}},
+func TestKubeconfigProviderResolutionErrors(t *testing.T) {
+	baseSC := func() *v1beta1.SpokeCluster {
+		return &v1beta1.SpokeCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "vela-system"},
+			Spec: v1beta1.SpokeClusterSpec{
+				Credential: v1beta1.CredentialSpec{
+					Type:       v1beta1.CredentialTypeKubeconfig,
+					Kubeconfig: &v1beta1.KubeconfigCredential{SecretRef: v1beta1.SecretKeyRef{Name: "spoke-kc"}},
+				},
 			},
-		},
+		}
 	}
-	cli := newFakeClient(t).Build()
-	if _, err := NewKubeconfigProvider().Materialize(context.Background(), cli, sc); err == nil {
-		t.Fatal("expected error when secret is missing")
-	}
-
-	// Missing kubeconfig arm.
-	scNoArm := &v1beta1.SpokeCluster{
+	nilArmSC := &v1beta1.SpokeCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "vela-system"},
 		Spec:       v1beta1.SpokeClusterSpec{Credential: v1beta1.CredentialSpec{Type: v1beta1.CredentialTypeKubeconfig}},
 	}
-	if _, err := NewKubeconfigProvider().Materialize(context.Background(), cli, scNoArm); err == nil {
-		t.Fatal("expected error when kubeconfig arm is nil")
+
+	cases := map[string]struct {
+		sc          *v1beta1.SpokeCluster
+		secret      *corev1.Secret
+		wantErrText string
+	}{
+		"nil kubeconfig arm": {
+			sc:          nilArmSC,
+			wantErrText: "credential.kubeconfig is required when type is kubeconfig",
+		},
+		"secret missing": {
+			sc:          baseSC(),
+			wantErrText: "failed to read kubeconfig secret vela-system/spoke-kc",
+		},
+		"key missing": {
+			sc:          baseSC(),
+			secret:      kubeconfigSecret("vela-system", "spoke-kc", "other-key", tokenKubeconfig),
+			wantErrText: `kubeconfig secret vela-system/spoke-kc has no data at key "kubeconfig"`,
+		},
+		"key value empty": {
+			sc:          baseSC(),
+			secret:      kubeconfigSecret("vela-system", "spoke-kc", DefaultKubeconfigSecretKey, ""),
+			wantErrText: `kubeconfig secret vela-system/spoke-kc has no data at key "kubeconfig"`,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			builder := newFakeClient(t)
+			if tc.secret != nil {
+				builder = builder.WithObjects(tc.secret)
+			}
+			cli := builder.Build()
+			_, err := NewKubeconfigProvider().Materialize(context.Background(), cli, tc.sc)
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErrText) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantErrText)
+			}
+		})
 	}
 }
 
-func TestMaterializeFromKubeconfigExecUnsupported(t *testing.T) {
-	execKubeconfig := `apiVersion: v1
-kind: Config
-current-context: spoke
-clusters:
-- name: spoke
-  cluster:
-    server: https://spoke.example.com:6443
-users:
-- name: spoke
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1beta1
-      command: aws
-contexts:
-- name: spoke
-  context:
-    cluster: spoke
-    user: spoke
-`
-	if _, err := materializeFromKubeconfig([]byte(execKubeconfig)); err == nil {
-		t.Fatal("expected exec credentials to be rejected for connect")
+func TestMaterializeFromKubeconfigParseErrors(t *testing.T) {
+	cases := map[string]struct {
+		kubeconfig  string
+		wantErrText string
+	}{
+		"invalid yaml": {
+			kubeconfig:  invalidYAMLKubeconfig,
+			wantErrText: "failed to parse kubeconfig",
+		},
+		"current-context unset": {
+			kubeconfig:  noCurrentContextKubeconfig,
+			wantErrText: `kubeconfig has no current-context ""`,
+		},
+		"current-context dangling": {
+			kubeconfig:  danglingContextKubeconfig,
+			wantErrText: `kubeconfig has no current-context "ghost"`,
+		},
+		"unknown cluster": {
+			kubeconfig:  unknownClusterKubeconfig,
+			wantErrText: `kubeconfig references unknown cluster "spoke"`,
+		},
+		"unknown user": {
+			kubeconfig:  unknownUserKubeconfig,
+			wantErrText: `kubeconfig references unknown user "spoke"`,
+		},
+		"exec credentials unsupported": {
+			kubeconfig:  execKubeconfig,
+			wantErrText: "exec and file-path credentials are not supported",
+		},
+		"file-path certificate-authority rejected": {
+			kubeconfig:  filePathCAKubeconfig,
+			wantErrText: "only inline certificate-authority-data is supported",
+		},
 	}
-}
-
-func TestMaterializeFromKubeconfigFilePathCARejected(t *testing.T) {
-	// A file-path certificate-authority must be rejected, not silently dropped:
-	// dropping it would leave CAData empty and skip TLS verification.
-	filePathCAKubeconfig := `apiVersion: v1
-kind: Config
-current-context: spoke
-clusters:
-- name: spoke
-  cluster:
-    server: https://spoke.example.com:6443
-    certificate-authority: /etc/ca/spoke.crt
-users:
-- name: spoke
-  user:
-    token: tok
-contexts:
-- name: spoke
-  context:
-    cluster: spoke
-    user: spoke
-`
-	if _, err := materializeFromKubeconfig([]byte(filePathCAKubeconfig)); err == nil {
-		t.Fatal("expected file-path certificate-authority to be rejected for connect")
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := materializeFromKubeconfig([]byte(tc.kubeconfig))
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErrText) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.wantErrText)
+			}
+		})
 	}
 }
 
@@ -244,5 +391,64 @@ contexts:
 	}
 	if m.ServerName != "api.internal.spoke" {
 		t.Fatalf("ServerName = %q, want api.internal.spoke", m.ServerName)
+	}
+}
+
+func TestMaterializeFromKubeconfigInsecureSkipTLSVerify(t *testing.T) {
+	// insecure-skip-tls-verify must leave CAData empty even when the kubeconfig
+	// also carries certificate-authority-data: verification is skipped entirely,
+	// so there is no CA bundle to carry forward.
+	insecureSkipTLSKubeconfig := `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority-data: Y2FkYXRh
+    insecure-skip-tls-verify: true
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+	m, err := materializeFromKubeconfig([]byte(insecureSkipTLSKubeconfig))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(m.CAData) != 0 {
+		t.Fatalf("CAData = %q, want empty when insecure-skip-tls-verify is set", string(m.CAData))
+	}
+}
+
+func TestKubeconfigProviderExplicitNamespace(t *testing.T) {
+	// secretRef.namespace, when set explicitly, is read as given even though it
+	// differs from the SpokeCluster's own namespace. This complements the
+	// existing empty-namespace tests, which only exercise the same-namespace
+	// fallback because the Secret happens to sit in "vela-system" either way.
+	secret := kubeconfigSecret("other-ns", "spoke-kc", DefaultKubeconfigSecretKey, tokenKubeconfig)
+	cli := newFakeClient(t).WithObjects(secret).Build()
+	sc := &v1beta1.SpokeCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "vela-system"},
+		Spec: v1beta1.SpokeClusterSpec{
+			Credential: v1beta1.CredentialSpec{
+				Type: v1beta1.CredentialTypeKubeconfig,
+				Kubeconfig: &v1beta1.KubeconfigCredential{
+					SecretRef: v1beta1.SecretKeyRef{Name: "spoke-kc", Namespace: "other-ns"},
+				},
+			},
+		},
+	}
+	m, err := NewKubeconfigProvider().Materialize(context.Background(), cli, sc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Endpoint != "https://spoke.example.com:6443" {
+		t.Fatalf("endpoint = %q", m.Endpoint)
 	}
 }
