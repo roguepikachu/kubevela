@@ -25,7 +25,10 @@ package spokecluster
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/url"
 
 	"github.com/kubevela/pkg/util/k8s"
 	clusterv1alpha1 "github.com/oam-dev/cluster-gateway/pkg/apis/cluster/v1alpha1"
@@ -96,6 +99,65 @@ func markOwner(sc *v1beta1.SpokeCluster, secret *corev1.Secret) {
 	secret.Annotations[secretOwnerAnnotation] = sc.Namespace + "/" + sc.Name
 }
 
+// ownsGatewaySecret reports whether the gateway Secret at sc's name, if any, is one this
+// SpokeCluster registered itself (see verifyAdoptable). A missing Secret is not owned and
+// not an error: there is nothing to clean up either way. This is the same check register
+// uses before writing, reused here so deletion can never reach a Secret this SpokeCluster
+// was refused permission to adopt in the first place.
+func (r *Reconciler) ownsGatewaySecret(ctx context.Context, sc *v1beta1.SpokeCluster) (bool, error) {
+	secret := &corev1.Secret{}
+	key := gatewaySecretKey(sc)
+	err := r.Get(ctx, key, secret)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to read gateway secret %s: %w", key, err)
+	}
+	return verifyAdoptable(sc, secret) == nil, nil
+}
+
+// verifyServerNameCompatible refuses a credential whose TLS server name override
+// cluster-gateway has no way to honor. The gateway Secret carries no server-name key:
+// cluster-gateway always derives the TLS ServerName it verifies against from the
+// endpoint's own host (see cluster-gateway's transport.go). A kubeconfig `tls-server-name`
+// that differs from the endpoint host would register successfully today and then fail TLS
+// verification on every connection attempt, with nothing to surface the problem until
+// GWCP-102132's probe exists. Refusing here surfaces it immediately instead of leaving a
+// silently unreachable spoke. When the override already matches the endpoint host, nothing
+// is lost by discarding it, so registration proceeds.
+func verifyServerNameCompatible(m *credential.Materialized) error {
+	if m.ServerName == "" {
+		return nil
+	}
+	host, err := endpointHost(m.Endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to parse endpoint %q: %w", m.Endpoint, err)
+	}
+	if m.ServerName != host {
+		return fmt.Errorf("credential requires TLS server name %q, but cluster-gateway always verifies against the endpoint host %q for this substrate; there is no way to honor a differing server name", m.ServerName, host)
+	}
+	return nil
+}
+
+// endpointHost extracts the bare host cluster-gateway's transport derives its TLS
+// ServerName from: the endpoint URL's host with any port stripped.
+func endpointHost(endpoint string) (string, error) {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", err
+	}
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		var addrErr *net.AddrError
+		if errors.As(err, &addrErr) && addrErr.Err == "missing port in address" {
+			return u.Host, nil
+		}
+		return "", err
+	}
+	return host, nil
+}
+
 // Reconciler reconciles a SpokeCluster object.
 //
 // The struct is intentionally minimal here. GWCP-102132 extends it with the manager
@@ -127,12 +189,13 @@ func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 // error; that returns for controller-runtime backoff and the next pass converges, which is
 // the same posture as the join path.
 //
-// Two properties of the gateway Secret shape discard information a provider resolved, and
-// are worth knowing at the call site:
+// Two properties of the gateway Secret shape are worth knowing at the call site:
 //
-//   - Materialized.ServerName has nowhere to go. The Secret carries no server-name key,
-//     and cluster-gateway derives the TLS ServerName from the endpoint host itself, so a
-//     kubeconfig tls-server-name cannot survive onto this substrate.
+//   - Materialized.ServerName has nowhere to go: the Secret carries no server-name key, and
+//     cluster-gateway always derives the TLS ServerName from the endpoint host itself. A
+//     kubeconfig tls-server-name that actually differs from the endpoint host is refused
+//     (see verifyServerNameCompatible) rather than silently registered and left to fail TLS
+//     verification on every connection.
 //   - An absent ca.crt means an insecure endpoint to cluster-gateway, not "verify against
 //     the system roots". That matches the Materialized contract for an empty CAData.
 //
@@ -159,6 +222,9 @@ func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 		if err := verifyAdoptable(sc, secret); err != nil {
 			return err
 		}
+	}
+	if err := verifyServerNameCompatible(m); err != nil {
+		return err
 	}
 
 	secret.Name = key.Name
@@ -252,12 +318,19 @@ func isControllerRefFor(ref metav1.OwnerReference, sc *v1beta1.SpokeCluster) boo
 	return ref.Kind == v1beta1.SpokeClusterKind && ref.Name == sc.Name
 }
 
-// deleteGatewaySecret removes the materialized gateway Secret if present. Not-found is
-// success on both the read and the delete, so every deletion path is idempotent.
+// deleteGatewaySecret removes the gateway Secret if this SpokeCluster owns it. Not-found is
+// success on both the read and the delete, so every deletion path is idempotent. A Secret
+// this SpokeCluster does not own (never registered, or refused earlier by the adopt guard
+// in register/verifyAdoptable) is left alone: deletion must never reach a manually joined
+// cluster's Secret, or a different SpokeCluster's, just because a same-named SpokeCluster
+// is being cleaned up.
 func (r *Reconciler) deleteGatewaySecret(ctx context.Context, sc *v1beta1.SpokeCluster) error {
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, gatewaySecretKey(sc), secret); err != nil {
 		return client.IgnoreNotFound(err)
+	}
+	if verifyAdoptable(sc, secret) != nil {
+		return nil
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, secret))
 }

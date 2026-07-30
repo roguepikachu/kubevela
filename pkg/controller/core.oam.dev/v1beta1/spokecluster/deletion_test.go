@@ -18,28 +18,48 @@ package spokecluster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 )
 
-// gatewaySecret builds a gateway Secret for a spoke. The credential-type label is
-// load-bearing: DetachCluster reads the Secret through getMutableClusterSecret, which
-// refuses to touch an unlabelled Secret.
+// gatewaySecret builds a gateway Secret standing in for one this spoke registered itself:
+// the credential-type label is load-bearing (DetachCluster reads it through
+// getMutableClusterSecret, which refuses to touch an unlabelled Secret), and the owner
+// annotation is what reconcileDelete's ownership gate requires before it will touch the
+// Secret at all.
 func gatewaySecret(name string) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   multicluster.ClusterGatewaySecretNamespace,
+			Labels:      map[string]string{credentialTypeLabel: "ServiceAccountToken"},
+			Annotations: map[string]string{secretOwnerAnnotation: multicluster.ClusterGatewaySecretNamespace + "/" + name},
+		},
+		Data: map[string][]byte{"endpoint": []byte("https://spoke.example.com"), "token": []byte("tok")},
+	}
+}
+
+// foreignGatewaySecret builds a gateway Secret this SpokeCluster never registered: no
+// owner annotation, standing in for a manually joined cluster or another SpokeCluster's
+// registration that merely shares a name.
+func foreignGatewaySecret(name string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: multicluster.ClusterGatewaySecretNamespace,
 			Labels:    map[string]string{credentialTypeLabel: "ServiceAccountToken"},
 		},
-		Data: map[string][]byte{"endpoint": []byte("https://spoke.example.com"), "token": []byte("tok")},
+		Data: map[string][]byte{"endpoint": []byte("https://other-cluster.example.com"), "token": []byte("original-tok")},
 	}
 }
 
@@ -145,6 +165,62 @@ func TestReconcileDeleteWithoutFinalizerIsNoOp(t *testing.T) {
 
 	if !secretExists(t, r.Client, sc.Name) {
 		t.Error("gateway secret was removed without the finalizer present, want no cleanup at all")
+	}
+}
+
+// A SpokeCluster whose name collides with something it never registered (a manually
+// joined cluster, or another SpokeCluster across namespaces) must release its own
+// finalizer without touching that foreign Secret at all when it is deleted.
+func TestReconcileDeleteSkipsCleanupForUnownedSecret(t *testing.T) {
+	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	foreign := foreignGatewaySecret(sc.Name)
+	r := newTestReconciler(t, sc, foreign)
+
+	if _, err := r.reconcileDelete(context.Background(), sc); err != nil {
+		t.Fatalf("reconcileDelete returned an unexpected error: %v", err)
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if got := string(secret.Data["token"]); got != "original-tok" {
+		t.Errorf("data[token] = %q, the foreign secret was touched despite not being owned", got)
+	}
+	if containsFinalizer(sc) {
+		t.Error("finalizer was not released for the deleting SpokeCluster")
+	}
+}
+
+func TestIsExpectedDetachFailure(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want bool
+	}{
+		"never registered": {
+			err:  apierrors.NewNotFound(schema.GroupResource{Group: "cluster.core.oam.dev", Resource: "virtualclusters"}, "spoke"),
+			want: true,
+		},
+		"cluster not exists sentinel": {
+			err:  multicluster.ErrClusterNotExists,
+			want: true,
+		},
+		"reserved local name": {
+			err:  multicluster.ErrReservedLocalClusterName,
+			want: true,
+		},
+		"resourcetracker scrub failure must retry": {
+			err:  fmt.Errorf("error in removing cluster references from resourcetrackers: %w", errors.New("etcdserver: request timed out")),
+			want: false,
+		},
+		"arbitrary API failure must retry": {
+			err:  errors.New("connection refused"),
+			want: false,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := isExpectedDetachFailure(tc.err); got != tc.want {
+				t.Errorf("isExpectedDetachFailure(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

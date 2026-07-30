@@ -18,6 +18,8 @@ package spokecluster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,19 +36,38 @@ import (
 //
 // Adding the finalizer on the create path belongs to the reconcile loop (GWCP-102132); a
 // SpokeCluster that never carried it has nothing to clean up.
+//
+// Cleanup only ever touches a gateway Secret this SpokeCluster owns (see ownsGatewaySecret).
+// A SpokeCluster whose name collided with a manually joined cluster, or with a different
+// SpokeCluster across namespaces, was refused registration by the adopt guard in the first
+// place and so never wrote anything of its own; deleting it must not reach for someone
+// else's Secret just because the names match.
 func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(sc, FinalizerName) {
 		return ctrl.Result{}, nil
 	}
 
-	if sc.Spec.DeletionPolicy != v1beta1.SpokeDeletionPolicyOrphan {
+	owned, err := r.ownsGatewaySecret(ctx, sc)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if owned && sc.Spec.DeletionPolicy != v1beta1.SpokeDeletionPolicyOrphan {
 		if err := multicluster.DetachCluster(ctx, r.Client, sc.Name); err != nil {
-			// DetachCluster errors for a spoke that never finished registering (no gateway
-			// Secret, so GetVirtualCluster reports not found) and for the reserved `local`
-			// name. Falling back to a direct delete keeps deletion from wedging on a
-			// half-registered spoke. The detach error itself is only logged; operator-facing
-			// visibility beyond this line is GWCP-102127 (events and metrics).
-			klog.InfoS("DetachCluster returned an error during SpokeCluster deletion, attempting direct secret cleanup",
+			if !isExpectedDetachFailure(err) {
+				// A ResourceTracker scrub failure, or any other unexpected error, must be
+				// retried rather than treated as done: falling back to a direct secret
+				// delete here would release the finalizer while stale ResourceTracker
+				// references to this cluster are left behind.
+				return ctrl.Result{}, fmt.Errorf("failed to detach spoke cluster %s: %w", sc.Name, err)
+			}
+			// The spoke never finished registering (no gateway Secret, so GetVirtualCluster
+			// reports not found) or hit the reserved `local` name (structurally impossible
+			// for a SpokeCluster given admission validation, checked defensively). Falling
+			// back to a direct delete keeps deletion from wedging on a half-registered
+			// spoke. Operator-facing visibility beyond this log line is GWCP-102127
+			// (events and metrics).
+			klog.InfoS("DetachCluster returned an expected error during SpokeCluster deletion, attempting direct secret cleanup",
 				"spokecluster", klog.KObj(sc), "err", err)
 			if delErr := r.deleteGatewaySecret(ctx, sc); delErr != nil {
 				return ctrl.Result{}, delErr
@@ -62,4 +83,13 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
+}
+
+// isExpectedDetachFailure reports whether err from DetachCluster is one of the two benign
+// cases worth swallowing and falling back to a direct secret delete: the spoke never
+// finished registering, or the reserved `local` cluster name. Any other failure, notably a
+// ResourceTracker scrub error (DetachCluster runs that scrub before it ever looks at
+// whether the spoke is registered), must be retried instead of silently treated as done.
+func isExpectedDetachFailure(err error) bool {
+	return multicluster.IsNotFoundOrClusterNotExists(err) || errors.Is(err, multicluster.ErrReservedLocalClusterName)
 }

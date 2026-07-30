@@ -409,6 +409,44 @@ func TestRegisterOwnAnnotationAllowsReRegister(t *testing.T) {
 	}
 }
 
+// TestRegisterRejectsIncompatibleServerName covers the case cluster-gateway has no
+// representation for: a kubeconfig tls-server-name that actually differs from the
+// endpoint's own host. Registering it anyway would silently produce a Secret that fails
+// TLS verification on every connection.
+func TestRegisterRejectsIncompatibleServerName(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+
+	m := &credential.Materialized{
+		Endpoint:   "https://10.0.0.5:6443",
+		Token:      "tok",
+		ServerName: "api.internal.example.com",
+	}
+	err := r.register(context.Background(), sc, m)
+	if err == nil {
+		t.Fatal("register accepted a ServerName that differs from the endpoint host, want a refusal")
+	}
+	if getErr := r.Get(context.Background(), gatewayKey(sc.Name), &corev1.Secret{}); !apierrors.IsNotFound(getErr) {
+		t.Errorf("gateway secret was written despite the refusal: %v", getErr)
+	}
+}
+
+// A ServerName that already matches the endpoint host loses nothing by being discarded,
+// so registration must proceed normally.
+func TestRegisterAllowsServerNameMatchingEndpointHost(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+
+	m := &credential.Materialized{
+		Endpoint:   "https://api.internal.example.com:6443",
+		Token:      "tok",
+		ServerName: "api.internal.example.com",
+	}
+	if err := r.register(context.Background(), sc, m); err != nil {
+		t.Fatalf("register refused a ServerName matching the endpoint host: %v", err)
+	}
+}
+
 // ownedBySpoke reports whether the secret carries a controller reference naming sc.
 func ownedBySpoke(secret *corev1.Secret, sc *v1beta1.SpokeCluster) bool {
 	for _, ref := range secret.OwnerReferences {
