@@ -213,21 +213,25 @@ func TestRegisterOwnershipPerPolicy(t *testing.T) {
 	}
 }
 
-// A detach SpokeCluster outside the gateway namespace cannot own the gateway Secret:
-// Kubernetes forbids cross-namespace owner references. The failure has to surface from
-// register with no Secret written, rather than leaving an unowned Secret behind.
-func TestRegisterRejectsCrossNamespaceOwnership(t *testing.T) {
+// A detach SpokeCluster outside the gateway namespace cannot own the gateway Secret,
+// because Kubernetes forbids cross-namespace owner references. Registration still has to
+// succeed: the owner reference is only a garbage-collection backstop, and refusing to
+// register would make the default deletion policy work in the gateway namespace alone.
+// The owner annotation is still written, so the finalizer can identify what to clean up.
+func TestRegisterOutsideGatewayNamespaceSkipsOwnerRef(t *testing.T) {
 	sc := spokeIn("spoke", "team-a", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 
-	err := r.register(context.Background(), sc, tokenCredential())
-	if err == nil {
-		t.Fatal("register succeeded, want an owner reference error")
+	if err := r.register(context.Background(), sc, tokenCredential()); err != nil {
+		t.Fatalf("register returned an unexpected error: %v", err)
 	}
 
-	secret := &corev1.Secret{}
-	if getErr := r.Get(context.Background(), gatewayKey(sc.Name), secret); !apierrors.IsNotFound(getErr) {
-		t.Errorf("gateway secret get error = %v, want not-found (no secret should be written)", getErr)
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if ownedBySpoke(secret, sc) {
+		t.Errorf("secret carries a cross-namespace owner reference, want none (refs %+v)", secret.OwnerReferences)
+	}
+	if got, want := secret.Annotations[secretOwnerAnnotation], sc.Namespace+"/"+sc.Name; got != want {
+		t.Errorf("owner annotation = %q, want %q (the finalizer needs it to identify the secret)", got, want)
 	}
 }
 

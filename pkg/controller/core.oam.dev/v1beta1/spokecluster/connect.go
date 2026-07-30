@@ -41,6 +41,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -293,10 +294,25 @@ func (r *Reconciler) reconcileOwnership(sc *v1beta1.SpokeCluster, secret *corev1
 		clearControllerRef(sc, secret)
 		return nil
 	}
-	// SpokeCluster is namespaced and the gateway Secret lives in the gateway namespace.
-	// Kubernetes forbids cross-namespace owner references, so a detach spoke outside that
-	// namespace fails here and no Secret is written. Cleanup for every spoke that does
-	// register still rests on reconcileDelete, which is namespace-independent.
+	// SpokeCluster is namespaced and the gateway Secret always lives in the gateway
+	// namespace, so a spoke declared anywhere else cannot own it: Kubernetes forbids
+	// cross-namespace owner references. Skip the backstop rather than fail registration.
+	// Failing would make the default deletion policy work only for spokes declared in the
+	// gateway namespace, while orphan worked everywhere, which is not a distinction the API
+	// expresses. What is lost is narrow: reconcileDelete still removes the Secret on every
+	// ordinary deletion and is namespace-independent, so only a force-deleted SpokeCluster
+	// (finalizer patched off, or the controller permanently down) leaves the Secret behind.
+	//
+	// The skip is logged at V(4) rather than Info because it is a standing property of where
+	// the spoke is declared, not an event: register runs on every reconcile pass, so an Info
+	// line here would repeat once per probe interval for the lifetime of the spoke.
+	if sc.Namespace != secret.Namespace {
+		klog.V(4).InfoS("Skipping gateway secret owner reference: owner references cannot cross namespaces",
+			"spokecluster", klog.KRef(sc.Namespace, sc.Name),
+			"secret", klog.KRef(secret.Namespace, secret.Name),
+			"consequence", "the finalizer is the only cleanup path for this spoke")
+		return nil
+	}
 	if err := controllerutil.SetControllerReference(sc, secret, r.Scheme); err != nil {
 		return fmt.Errorf("failed to set owner reference on gateway secret: %w", err)
 	}

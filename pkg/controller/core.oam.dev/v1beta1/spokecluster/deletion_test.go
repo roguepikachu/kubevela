@@ -38,12 +38,20 @@ import (
 // annotation is what reconcileDelete's ownership gate requires before it will touch the
 // Secret at all.
 func gatewaySecret(name string) *corev1.Secret {
+	return gatewaySecretOwnedBy(name, multicluster.ClusterGatewaySecretNamespace)
+}
+
+// gatewaySecretOwnedBy builds a gateway Secret stamped for a SpokeCluster in ownerNamespace.
+// The namespace matters because verifyAdoptable matches the annotation against the
+// SpokeCluster's own namespace/name, so a spoke outside the gateway namespace only
+// recognizes a Secret stamped with its own namespace.
+func gatewaySecretOwnedBy(name, ownerNamespace string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        name,
 			Namespace:   multicluster.ClusterGatewaySecretNamespace,
 			Labels:      map[string]string{credentialTypeLabel: "ServiceAccountToken"},
-			Annotations: map[string]string{secretOwnerAnnotation: multicluster.ClusterGatewaySecretNamespace + "/" + name},
+			Annotations: map[string]string{secretOwnerAnnotation: ownerNamespace + "/" + name},
 		},
 		Data: map[string][]byte{"endpoint": []byte("https://spoke.example.com"), "token": []byte("tok")},
 	}
@@ -66,7 +74,11 @@ func foreignGatewaySecret(name string) *corev1.Secret {
 // deletingSpoke builds a SpokeCluster mid-deletion, carrying the finalizer that holds it.
 // A fake client needs the finalizer present for an object with a deletion timestamp.
 func deletingSpoke(name string, policy v1beta1.SpokeDeletionPolicy) *v1beta1.SpokeCluster {
-	sc := spoke(name, policy)
+	return deletingSpokeIn(name, multicluster.ClusterGatewaySecretNamespace, policy)
+}
+
+func deletingSpokeIn(name, namespace string, policy v1beta1.SpokeDeletionPolicy) *v1beta1.SpokeCluster {
+	sc := spokeIn(name, namespace, policy)
 	now := metav1.Now()
 	sc.DeletionTimestamp = &now
 	sc.Finalizers = []string{FinalizerName}
@@ -98,6 +110,27 @@ func TestReconcileDeleteDetachRemovesSecret(t *testing.T) {
 
 	if secretExists(t, r.Client, sc.Name) {
 		t.Error("gateway secret survived a detach deletion, want it removed")
+	}
+	if containsFinalizer(sc) {
+		t.Error("finalizer was not released, the SpokeCluster stays wedged")
+	}
+}
+
+// A detach spoke outside the gateway namespace never gets the owner-reference backstop,
+// because owner references cannot cross namespaces. The finalizer is what actually cleans
+// up, and it is namespace-independent, so deletion must still remove the Secret. This is
+// the compensating mechanism for the skipped reference in
+// TestRegisterOutsideGatewayNamespaceSkipsOwnerRef; without it the skip would leak.
+func TestReconcileDeleteDetachRemovesSecretOutsideGatewayNamespace(t *testing.T) {
+	sc := deletingSpokeIn("spoke", "team-a", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc, gatewaySecretOwnedBy(sc.Name, sc.Namespace))
+
+	if _, err := r.reconcileDelete(context.Background(), sc); err != nil {
+		t.Fatalf("reconcileDelete returned an unexpected error: %v", err)
+	}
+
+	if secretExists(t, r.Client, sc.Name) {
+		t.Error("gateway secret survived deletion of a spoke outside the gateway namespace, want it removed")
 	}
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released, the SpokeCluster stays wedged")
