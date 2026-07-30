@@ -300,7 +300,10 @@ func TestRegisterClearsOwnershipOnPolicyFlipToOrphan(t *testing.T) {
 }
 
 // Clearing ownership must be surgical: a controller reference owned by something else is
-// not this controller's to remove.
+// not this controller's to remove. The fixture carries our own owner annotation, standing
+// in for a secret this SpokeCluster registered previously that some other system has since
+// also attached a controller reference to; without that annotation the adopt guard in
+// verifyAdoptable would refuse to touch it at all (see TestRegisterRefusesToAdoptForeignSecret).
 func TestRegisterKeepsForeignOwnerReference(t *testing.T) {
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyOrphan)
 	foreign := metav1.OwnerReference{
@@ -315,6 +318,7 @@ func TestRegisterKeepsForeignOwnerReference(t *testing.T) {
 			Name:            sc.Name,
 			Namespace:       multicluster.ClusterGatewaySecretNamespace,
 			OwnerReferences: []metav1.OwnerReference{foreign},
+			Annotations:     map[string]string{secretOwnerAnnotation: sc.Namespace + "/" + sc.Name},
 		},
 	}
 	r := newTestReconciler(t, sc, existing)
@@ -326,6 +330,82 @@ func TestRegisterKeepsForeignOwnerReference(t *testing.T) {
 	secret := readGatewaySecret(t, r.Client, sc.Name)
 	if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].Name != foreign.Name {
 		t.Errorf("owner references = %+v, want the foreign reference untouched", secret.OwnerReferences)
+	}
+}
+
+// TestRegisterRefusesToAdoptForeignSecret is the fake-client counterpart to the live
+// hijack finding: a gateway Secret with no owner annotation, standing in for one
+// `vela cluster join` wrote by hand, must never be silently overwritten.
+func TestRegisterRefusesToAdoptForeignSecret(t *testing.T) {
+	sc := spoke("victim", v1beta1.SpokeDeletionPolicyDetach)
+	manuallyJoined := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      sc.Name,
+			Namespace: multicluster.ClusterGatewaySecretNamespace,
+			Labels:    map[string]string{credentialTypeLabel: "X509Certificate"},
+		},
+		Data: map[string][]byte{"endpoint": []byte("https://other-cluster"), "token": []byte("original-tok")},
+	}
+	r := newTestReconciler(t, sc, manuallyJoined)
+
+	err := r.register(context.Background(), sc, tokenCredential())
+	if err == nil {
+		t.Fatal("register adopted a foreign secret, want a refusal")
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if got := string(secret.Data["endpoint"]); got != "https://other-cluster" {
+		t.Errorf("endpoint = %q, the foreign secret was overwritten despite the refusal", got)
+	}
+	if ownedBySpoke(secret, sc) {
+		t.Error("the SpokeCluster took ownership of a foreign secret despite the refusal")
+	}
+}
+
+// TestRegisterRefusesCrossNamespaceNameCollision is the same guard from a different
+// angle: a gateway Secret already owned by a different, still-live SpokeCluster (a
+// same-named SpokeCluster in another namespace, since the Secret's identity is name-only
+// within the fixed gateway namespace) must not be taken over either.
+func TestRegisterRefusesCrossNamespaceNameCollision(t *testing.T) {
+	other := spokeIn("shared-name", "team-a", v1beta1.SpokeDeletionPolicyDetach)
+	mine := spokeIn("shared-name", "team-b", v1beta1.SpokeDeletionPolicyDetach)
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        other.Name,
+			Namespace:   multicluster.ClusterGatewaySecretNamespace,
+			Annotations: map[string]string{secretOwnerAnnotation: other.Namespace + "/" + other.Name},
+		},
+	}
+	r := newTestReconciler(t, mine, existing)
+
+	err := r.register(context.Background(), mine, tokenCredential())
+	if err == nil {
+		t.Fatal("register took over another SpokeCluster's secret, want a refusal")
+	}
+
+	secret := readGatewaySecret(t, r.Client, other.Name)
+	if got := secret.Annotations[secretOwnerAnnotation]; got != other.Namespace+"/"+other.Name {
+		t.Errorf("owner annotation = %q, want the original owner untouched", got)
+	}
+}
+
+// A SpokeCluster's own re-register, after the guard, must still converge: the marker this
+// controller writes on success is what makes the second call recognize the first's work.
+func TestRegisterOwnAnnotationAllowsReRegister(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+	ctx := context.Background()
+
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("first register failed: %v", err)
+	}
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("second register on the same SpokeCluster was refused: %v", err)
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if got := secret.Annotations[secretOwnerAnnotation]; got != sc.Namespace+"/"+sc.Name {
+		t.Errorf("owner annotation = %q, want %q", got, sc.Namespace+"/"+sc.Name)
 	}
 }
 

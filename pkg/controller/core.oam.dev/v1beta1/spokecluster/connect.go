@@ -58,6 +58,44 @@ const (
 	secretKeyTLSKey   = "tls.key"
 )
 
+// secretOwnerAnnotation records which SpokeCluster (namespace/name) last wrote a gateway
+// Secret. It is the only reliable way to tell "a Secret this controller manages" from "a
+// Secret it does not": the gateway Secret's identity is name-only within the fixed gateway
+// namespace, so a SpokeCluster's own namespace plays no part in it, and the owner
+// reference cannot be used for this because orphan deliberately clears it. Without this
+// marker register would silently adopt any pre-existing Secret with a matching name,
+// including one `vela cluster join` wrote by hand, or one written by an entirely different
+// SpokeCluster that happens to share a name across namespaces.
+const secretOwnerAnnotation = "spokecluster.core.oam.dev/owner"
+
+// verifyAdoptable refuses to touch a gateway Secret this SpokeCluster does not already
+// own. A Secret with no owner annotation is foreign, most likely a manually joined
+// cluster; adopting it is GWCP-102136 (Secret migration), not this slice. A Secret owned
+// by a different namespace/name is a genuine collision: two SpokeClusters can share a
+// name across namespaces, since the Secret's identity does not include the SpokeCluster's
+// own namespace, and only one of them may hold it.
+func verifyAdoptable(sc *v1beta1.SpokeCluster, secret *corev1.Secret) error {
+	mine := sc.Namespace + "/" + sc.Name
+	owner, ok := secret.Annotations[secretOwnerAnnotation]
+	switch {
+	case ok && owner == mine:
+		return nil
+	case !ok:
+		return fmt.Errorf("gateway secret %s/%s already exists and is not managed by a SpokeCluster (likely a manually joined cluster); refusing to overwrite it", secret.Namespace, secret.Name)
+	default:
+		return fmt.Errorf("gateway secret %s/%s is owned by a different SpokeCluster (%s); refusing to overwrite it", secret.Namespace, secret.Name, owner)
+	}
+}
+
+// markOwner stamps the gateway Secret with the SpokeCluster that wrote it, so a later
+// register call can tell this Secret apart from one it does not manage.
+func markOwner(sc *v1beta1.SpokeCluster, secret *corev1.Secret) {
+	if secret.Annotations == nil {
+		secret.Annotations = map[string]string{}
+	}
+	secret.Annotations[secretOwnerAnnotation] = sc.Namespace + "/" + sc.Name
+}
+
 // Reconciler reconciles a SpokeCluster object.
 //
 // The struct is intentionally minimal here. GWCP-102132 extends it with the manager
@@ -100,6 +138,15 @@ func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 //
 // A proxied spoke also loses data["proxy-url"], which the join path writes from the
 // kubeconfig, because Materialized carries no proxy. Accepted for Phase 1.
+//
+// register refuses to adopt a pre-existing Secret it does not recognize (see
+// verifyAdoptable): design.md reasoned that the admission webhook (GWCP-102121) already
+// rejects a name collision with an existing gateway Secret, but that webhook is stateless
+// by design and does not read Secrets, so no such check exists. Without this guard a
+// SpokeCluster could silently take over a manually joined cluster's Secret, redirecting
+// its traffic to a different cluster and, under detach, later deleting its credential
+// when the SpokeCluster itself is deleted. Confirmed live against a real `vela cluster
+// join` fixture before this guard existed.
 func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *credential.Materialized) error {
 	secret := &corev1.Secret{}
 	key := gatewaySecretKey(sc)
@@ -107,6 +154,11 @@ func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 	notFound := apierrors.IsNotFound(err)
 	if err != nil && !notFound {
 		return fmt.Errorf("failed to read gateway secret %s: %w", key, err)
+	}
+	if !notFound {
+		if err := verifyAdoptable(sc, secret); err != nil {
+			return err
+		}
 	}
 
 	secret.Name = key.Name
@@ -129,6 +181,7 @@ func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 	}
 	secret.Data = data
 	_ = k8s.AddLabel(secret, clustercommon.LabelKeyClusterCredentialType, string(credType))
+	markOwner(sc, secret)
 
 	if err := r.reconcileOwnership(sc, secret); err != nil {
 		return err
