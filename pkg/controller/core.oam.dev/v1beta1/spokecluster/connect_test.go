@@ -1,0 +1,340 @@
+/*
+Copyright 2026 The KubeVela Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package spokecluster
+
+import (
+	"context"
+	"testing"
+
+	clustercommon "github.com/oam-dev/cluster-gateway/pkg/common"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/multicluster"
+	"github.com/oam-dev/kubevela/pkg/spokecluster/credential"
+)
+
+// credentialTypeLabel is the label cluster-gateway keys on to recognize a Secret as a
+// cluster. It is a var in cluster-gateway, not a const, so it cannot be aliased as one.
+var credentialTypeLabel = clustercommon.LabelKeyClusterCredentialType
+
+// testScheme carries the core types plus the vela API group so SetControllerReference can
+// resolve the SpokeCluster GVK.
+func testScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add corev1 to scheme: %v", err)
+	}
+	if err := v1beta1.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to add v1beta1 to scheme: %v", err)
+	}
+	return scheme
+}
+
+// newTestReconciler builds a Reconciler over a fake client seeded with objs.
+func newTestReconciler(t *testing.T, objs ...client.Object) *Reconciler {
+	t.Helper()
+	scheme := testScheme(t)
+	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	return &Reconciler{Client: cli, Scheme: scheme}
+}
+
+// spoke builds a SpokeCluster in the gateway namespace, where a detach ownerRef on the
+// gateway Secret is legal (owner and dependent must share a namespace).
+func spoke(name string, policy v1beta1.SpokeDeletionPolicy) *v1beta1.SpokeCluster {
+	return spokeIn(name, multicluster.ClusterGatewaySecretNamespace, policy)
+}
+
+func spokeIn(name, namespace string, policy v1beta1.SpokeDeletionPolicy) *v1beta1.SpokeCluster {
+	return &v1beta1.SpokeCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			UID:       apitypes.UID("uid-" + name),
+		},
+		Spec: v1beta1.SpokeClusterSpec{DeletionPolicy: policy},
+	}
+}
+
+func tokenCredential() *credential.Materialized {
+	return &credential.Materialized{
+		Endpoint: "https://spoke.example.com",
+		CAData:   []byte("ca-pem"),
+		Token:    "tok",
+	}
+}
+
+func certCredential() *credential.Materialized {
+	return &credential.Materialized{
+		Endpoint:       "https://spoke.example.com",
+		CAData:         []byte("ca-pem"),
+		ClientCertData: []byte("cert-pem"),
+		ClientKeyData:  []byte("key-pem"),
+	}
+}
+
+// gatewayKey is where a spoke's gateway Secret lives, from a bare cluster name.
+func gatewayKey(name string) apitypes.NamespacedName {
+	return apitypes.NamespacedName{Name: name, Namespace: multicluster.ClusterGatewaySecretNamespace}
+}
+
+// readGatewaySecret fetches the gateway Secret for name, failing the test if absent.
+func readGatewaySecret(t *testing.T, cli client.Client, name string) *corev1.Secret {
+	t.Helper()
+	secret := &corev1.Secret{}
+	key := gatewayKey(name)
+	if err := cli.Get(context.Background(), key, secret); err != nil {
+		t.Fatalf("failed to read gateway secret %s: %v", key, err)
+	}
+	return secret
+}
+
+func TestRegisterSecretShape(t *testing.T) {
+	cases := map[string]struct {
+		materialized *credential.Materialized
+		wantData     map[string]string
+		wantAbsent   []string
+		wantCredType string
+	}{
+		"token credential writes endpoint, ca and token": {
+			materialized: tokenCredential(),
+			wantData: map[string]string{
+				"endpoint": "https://spoke.example.com",
+				"ca.crt":   "ca-pem",
+				"token":    "tok",
+			},
+			wantAbsent:   []string{"tls.crt", "tls.key"},
+			wantCredType: "ServiceAccountToken",
+		},
+		"client cert credential writes the tls pair": {
+			materialized: certCredential(),
+			wantData: map[string]string{
+				"endpoint": "https://spoke.example.com",
+				"ca.crt":   "ca-pem",
+				"tls.crt":  "cert-pem",
+				"tls.key":  "key-pem",
+			},
+			wantAbsent:   []string{"token"},
+			wantCredType: "X509Certificate",
+		},
+		"empty CA omits ca.crt": {
+			materialized: &credential.Materialized{Endpoint: "https://spoke.example.com", Token: "tok"},
+			wantData: map[string]string{
+				"endpoint": "https://spoke.example.com",
+				"token":    "tok",
+			},
+			wantAbsent:   []string{"ca.crt"},
+			wantCredType: "ServiceAccountToken",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+			r := newTestReconciler(t, sc)
+
+			if err := r.register(context.Background(), sc, tc.materialized); err != nil {
+				t.Fatalf("register returned an unexpected error: %v", err)
+			}
+
+			secret := readGatewaySecret(t, r.Client, sc.Name)
+			if secret.Type != corev1.SecretTypeOpaque {
+				t.Errorf("secret type = %q, want %q", secret.Type, corev1.SecretTypeOpaque)
+			}
+			for key, want := range tc.wantData {
+				if got := string(secret.Data[key]); got != want {
+					t.Errorf("data[%q] = %q, want %q", key, got, want)
+				}
+			}
+			for _, key := range tc.wantAbsent {
+				if _, ok := secret.Data[key]; ok {
+					t.Errorf("data[%q] is present, want absent", key)
+				}
+			}
+			if got := secret.Labels[credentialTypeLabel]; got != tc.wantCredType {
+				t.Errorf("label %s = %q, want %q", credentialTypeLabel, got, tc.wantCredType)
+			}
+		})
+	}
+}
+
+func TestRegisterOwnershipPerPolicy(t *testing.T) {
+	cases := map[string]struct {
+		policy      v1beta1.SpokeDeletionPolicy
+		wantOwnedBy bool
+	}{
+		"detach owns the secret":       {policy: v1beta1.SpokeDeletionPolicyDetach, wantOwnedBy: true},
+		"unset policy owns the secret": {policy: "", wantOwnedBy: true},
+		"orphan leaves it unowned":     {policy: v1beta1.SpokeDeletionPolicyOrphan, wantOwnedBy: false},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			sc := spoke("spoke", tc.policy)
+			r := newTestReconciler(t, sc)
+
+			if err := r.register(context.Background(), sc, tokenCredential()); err != nil {
+				t.Fatalf("register returned an unexpected error: %v", err)
+			}
+
+			secret := readGatewaySecret(t, r.Client, sc.Name)
+			if got := ownedBySpoke(secret, sc); got != tc.wantOwnedBy {
+				t.Errorf("secret owned by the spoke = %v, want %v (refs %+v)", got, tc.wantOwnedBy, secret.OwnerReferences)
+			}
+		})
+	}
+}
+
+// A detach SpokeCluster outside the gateway namespace cannot own the gateway Secret:
+// Kubernetes forbids cross-namespace owner references. The failure has to surface from
+// register with no Secret written, rather than leaving an unowned Secret behind.
+func TestRegisterRejectsCrossNamespaceOwnership(t *testing.T) {
+	sc := spokeIn("spoke", "team-a", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+
+	err := r.register(context.Background(), sc, tokenCredential())
+	if err == nil {
+		t.Fatal("register succeeded, want an owner reference error")
+	}
+
+	secret := &corev1.Secret{}
+	if getErr := r.Get(context.Background(), gatewayKey(sc.Name), secret); !apierrors.IsNotFound(getErr) {
+		t.Errorf("gateway secret get error = %v, want not-found (no secret should be written)", getErr)
+	}
+}
+
+func TestRegisterIsIdempotent(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+	ctx := context.Background()
+
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("first register returned an unexpected error: %v", err)
+	}
+
+	reminted := tokenCredential()
+	reminted.Token = "tok-2"
+	if err := r.register(ctx, sc, reminted); err != nil {
+		t.Fatalf("second register returned an unexpected error: %v", err)
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if got := string(secret.Data["token"]); got != "tok-2" {
+		t.Errorf("data[token] = %q, want the reminted %q", got, "tok-2")
+	}
+}
+
+// A credential kind change has to replace the data keys wholesale, so the stale arm does
+// not linger and confuse cluster-gateway, and the credential-type label has to flip.
+func TestRegisterReplacesCredentialKind(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+	ctx := context.Background()
+
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("token register returned an unexpected error: %v", err)
+	}
+	if err := r.register(ctx, sc, certCredential()); err != nil {
+		t.Fatalf("cert register returned an unexpected error: %v", err)
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if _, ok := secret.Data["token"]; ok {
+		t.Error("data[token] survived the switch to a client cert, want it dropped")
+	}
+	if got := string(secret.Data["tls.crt"]); got != "cert-pem" {
+		t.Errorf("data[tls.crt] = %q, want %q", got, "cert-pem")
+	}
+	if got := secret.Labels[credentialTypeLabel]; got != "X509Certificate" {
+		t.Errorf("label %s = %q, want %q", credentialTypeLabel, got, "X509Certificate")
+	}
+}
+
+// Flipping a registered spoke from detach to orphan has to clear the owner reference the
+// earlier detach register set. Leaving it behind means garbage collection still reaps the
+// Secret when the SpokeCluster is deleted, which is exactly what orphan promises not to
+// do. The prototype only ever added references, so this is a deliberate deviation.
+func TestRegisterClearsOwnershipOnPolicyFlipToOrphan(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+	ctx := context.Background()
+
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("detach register returned an unexpected error: %v", err)
+	}
+	if !ownedBySpoke(readGatewaySecret(t, r.Client, sc.Name), sc) {
+		t.Fatal("detach register did not set the owner reference, cannot test the flip")
+	}
+
+	sc.Spec.DeletionPolicy = v1beta1.SpokeDeletionPolicyOrphan
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("orphan register returned an unexpected error: %v", err)
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if ownedBySpoke(secret, sc) {
+		t.Errorf("owner reference survived the flip to orphan, refs %+v", secret.OwnerReferences)
+	}
+}
+
+// Clearing ownership must be surgical: a controller reference owned by something else is
+// not this controller's to remove.
+func TestRegisterKeepsForeignOwnerReference(t *testing.T) {
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyOrphan)
+	foreign := metav1.OwnerReference{
+		APIVersion: "apps/v1",
+		Kind:       "Deployment",
+		Name:       "someone-else",
+		UID:        apitypes.UID("uid-someone-else"),
+		Controller: ptr.To(true),
+	}
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            sc.Name,
+			Namespace:       multicluster.ClusterGatewaySecretNamespace,
+			OwnerReferences: []metav1.OwnerReference{foreign},
+		},
+	}
+	r := newTestReconciler(t, sc, existing)
+
+	if err := r.register(context.Background(), sc, tokenCredential()); err != nil {
+		t.Fatalf("register returned an unexpected error: %v", err)
+	}
+
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].Name != foreign.Name {
+		t.Errorf("owner references = %+v, want the foreign reference untouched", secret.OwnerReferences)
+	}
+}
+
+// ownedBySpoke reports whether the secret carries a controller reference naming sc.
+func ownedBySpoke(secret *corev1.Secret, sc *v1beta1.SpokeCluster) bool {
+	for _, ref := range secret.OwnerReferences {
+		if ref.Controller != nil && *ref.Controller && ref.Kind == v1beta1.SpokeClusterKind && ref.Name == sc.Name {
+			return true
+		}
+	}
+	return false
+}
