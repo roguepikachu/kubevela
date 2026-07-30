@@ -304,9 +304,9 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 // This runs in the separate vela-cluster-core manager (cmd/cluster-core), never in
 // vela-core; see the note on pkg/controller/core.oam.dev/v1beta1.Setup.
 func Setup(mgr ctrl.Manager, args oamctrl.Args) error {
-	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableClusterInfrastructure) {
 		klog.InfoS("SpokeCluster controller disabled because its feature gate is off",
-			"gate", features.EnableSpokeClusterCRD)
+			"gate", features.EnableClusterInfrastructure)
 		return nil
 	}
 	r := &Reconciler{

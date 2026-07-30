@@ -1,4 +1,4 @@
-{{- if .Values.featureGates.enableSpokeClusterCRD }}
+{{- if .Values.featureGates.enableClusterInfrastructure }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,7 +46,7 @@ spec:
             - "--health-probe-bind-address=:{{ .Values.clusterCore.healthCheck.port }}"
             - "--enable-leader-election"
             - "--concurrent-reconciles={{ .Values.clusterCore.concurrentReconciles }}"
-            - "--feature-gates=EnableSpokeClusterCRD=true"
+            - "--feature-gates=EnableClusterInfrastructure=true"
             {{- if .Values.clusterCore.webhook.enabled }}
             - "--use-webhook=true"
             - "--webhook-port={{ .Values.clusterCore.webhook.port }}"

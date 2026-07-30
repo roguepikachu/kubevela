@@ -32,7 +32,7 @@ import (
 //
 // Note: cluster-infrastructure controllers are NOT registered here.
 // They run in the separate vela-cluster-core manager (cmd/cluster-core),
-// gated by the EnableSpokeClusterCRD feature, so vela-core never reconciles them.
+// gated by the EnableClusterInfrastructure feature, so vela-core never reconciles them.
 func Setup(mgr ctrl.Manager, args controller.Args) error {
 	for _, setup := range []func(ctrl.Manager, controller.Args) error{
 		application.Setup, traitdefinition.Setup, componentdefinition.Setup, policydefinition.Setup, workflowstepdefinition.Setup,

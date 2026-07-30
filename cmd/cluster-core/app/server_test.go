@@ -95,7 +95,7 @@ func TestConfigureSpokeClusterWebhooksRequiresBothGates(t *testing.T) {
 			featuregatetesting.SetFeatureGateDuringTest(
 				t,
 				utilfeature.DefaultFeatureGate,
-				features.EnableSpokeClusterCRD,
+				features.EnableClusterInfrastructure,
 				tt.featureGateEnabled,
 			)
 			o := defaultOptions()
@@ -126,7 +126,7 @@ func TestConfigureSpokeClusterWebhooksStopsWhenCertWaitFails(t *testing.T) {
 	featuregatetesting.SetFeatureGateDuringTest(
 		t,
 		utilfeature.DefaultFeatureGate,
-		features.EnableSpokeClusterCRD,
+		features.EnableClusterInfrastructure,
 		true,
 	)
 	o := defaultOptions()

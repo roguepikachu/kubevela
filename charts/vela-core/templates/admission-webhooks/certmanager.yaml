@@ -52,7 +52,7 @@ spec:
     - {{ template "kubevela.name" . }}-webhook.{{ .Release.Namespace }}.svc
     - {{ template "kubevela.name" . }}-webhook.{{ .Release.Namespace }}.svc.cluster.local
 
-{{- if and .Values.featureGates.enableSpokeClusterCRD .Values.clusterCore.webhook.enabled }}
+{{- if and .Values.featureGates.enableClusterInfrastructure .Values.clusterCore.webhook.enabled }}
 ---
 # generate a serving certificate for the vela-cluster-core SpokeCluster webhook
 apiVersion: cert-manager.io/v1

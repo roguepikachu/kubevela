@@ -141,10 +141,15 @@ const (
 
 	// Cluster Infrastructure Features
 
-	// EnableSpokeClusterCRD enables the SpokeCluster CRD reconciliation, webhook, and CLI for
-	// hub-to-spoke cluster connect. When disabled, the SpokeCluster controller and webhook
-	// are not started, so the CRD is inert.
-	EnableSpokeClusterCRD featuregate.Feature = "EnableSpokeClusterCRD"
+	// EnableClusterInfrastructure enables the cluster-infrastructure surface: the SpokeCluster
+	// controller and admission webhook, the vela-cluster-core deployment that hosts them, its
+	// RBAC, and the CLI's spoke subcommands. Later slices (Cluster, ClusterBlueprint) land
+	// behind this same gate, which is why the name is not tied to a single kind.
+	//
+	// The CRDs themselves are deliberately NOT gated: Helm installs everything under the
+	// chart's crds/ directory unconditionally and never templates it. With the gate off the
+	// SpokeCluster CRD is still present, just inert, because nothing reconciles it.
+	EnableClusterInfrastructure featuregate.Feature = "EnableClusterInfrastructure"
 )
 
 var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
@@ -176,7 +181,7 @@ var defaultFeatureGates = map[featuregate.Feature]featuregate.FeatureSpec{
 	EnableGlobalPolicies:                          {Default: false, PreRelease: featuregate.Alpha},
 	EnableApplicationScopedPolicies:               {Default: false, PreRelease: featuregate.Alpha},
 	ValidateUndeclaredParameters:                  {Default: false, PreRelease: featuregate.Alpha},
-	EnableSpokeClusterCRD:                         {Default: false, PreRelease: featuregate.Alpha},
+	EnableClusterInfrastructure:                   {Default: false, PreRelease: featuregate.Alpha},
 }
 
 func init() {

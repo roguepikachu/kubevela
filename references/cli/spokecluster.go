@@ -64,7 +64,7 @@ func NewSpokeClusterCommandGroup(c *common.Args) *cobra.Command {
 		Aliases: []string{"spoke", "spokecluster", "spokeclusters"},
 		Short:   "Inspect SpokeCluster resources (Cluster Connect).",
 		Long: "Inspect SpokeCluster resources reconciled by vela-cluster-core. " +
-			"Requires the EnableSpokeClusterCRD feature gate on vela-cluster-core.",
+			"Requires the EnableClusterInfrastructure feature gate on vela-cluster-core.",
 		// Override the parent `vela cluster` PersistentPreRunE, which resolves the
 		// cluster-gateway service and fails when it is absent. cobra runs only the
 		// nearest PersistentPreRunE, so this scopes the override to the spokes group:
@@ -181,15 +181,20 @@ func renderSpokeClusterTable(list *v1beta1.SpokeClusterList, out io.Writer, wide
 	fmt.Fprintln(out, table.String())
 }
 
-// spokeClusterAPIError maps a list/get error to an actionable message. When the API
-// server reports no matching kind for SpokeCluster (the CRD is not installed, typically
-// because the EnableSpokeClusterCRD feature gate is off), it names the CRD and the gate
-// instead of surfacing the raw "no matches for kind" error. Otherwise it wraps err with
-// wrapMsg. Requirement 4.
+// spokeClusterAPIError maps a list/get error to an actionable message. When the API server
+// reports no matching kind for SpokeCluster, it says how to install the CRD instead of
+// surfacing the raw "no matches for kind" error. Otherwise it wraps err with wrapMsg.
+// Requirement 4.
+//
+// The advice is deliberately about installing the chart, not about the
+// EnableClusterInfrastructure feature gate: Helm applies everything under the chart's crds/
+// directory unconditionally, so the gate never removes the CRD. A no-match error means the
+// chart (or the CRD) was never installed. The gate being off presents differently: the CRD
+// resolves and objects can be created, they just never get a status.
 func spokeClusterAPIError(err error, wrapMsg string) error {
 	if meta.IsNoMatchError(err) {
 		return errors.New("the SpokeCluster CRD is not installed; " +
-			"enable the EnableSpokeClusterCRD feature gate on vela-cluster-core")
+			"install or upgrade the vela-core chart, which ships it under crds/")
 	}
 	return errors.Wrap(err, wrapMsg)
 }

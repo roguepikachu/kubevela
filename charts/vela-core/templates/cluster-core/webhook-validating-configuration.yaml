@@ -1,4 +1,4 @@
-{{- if and .Values.featureGates.enableSpokeClusterCRD .Values.clusterCore.webhook.enabled -}}
+{{- if and .Values.featureGates.enableClusterInfrastructure .Values.clusterCore.webhook.enabled -}}
 {{- $name := printf "%s-cluster-core-admission" (include "kubevela.fullname" .) -}}
 {{- $existing := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $name -}}
 {{- $caBundle := "" -}}

@@ -112,8 +112,8 @@ func configureSpokeClusterWebhooks(o *options, waitForCert func() error, registe
 	if !o.useWebhook {
 		return nil
 	}
-	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
-		klog.InfoS("Skipping SpokeCluster admission webhooks because EnableSpokeClusterCRD is off")
+	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableClusterInfrastructure) {
+		klog.InfoS("Skipping SpokeCluster admission webhooks because EnableClusterInfrastructure is off")
 		return nil
 	}
 

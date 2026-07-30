@@ -169,13 +169,13 @@ featureGates:
   enableApplicationScopedPolicies: false
   enableGlobalPolicies: false
   enableCueExpVariable: true
-  ## @param featureGates.enableSpokeClusterCRD Enable the SpokeCluster CRD, controller, and webhook (Cluster Connect Phase 1). Runs the separate vela-cluster-core pod.
-  enableSpokeClusterCRD: false
+  ## @param featureGates.enableClusterInfrastructure Enable the cluster-infrastructure surface (Cluster Connect Phase 1): the SpokeCluster controller and webhook, their RBAC, and the separate vela-cluster-core pod that hosts them. The CRDs install either way (Helm applies crds/ unconditionally); with this off they are simply inert.
+  enableClusterInfrastructure: false
 
 ## @section vela-cluster-core parameters
 ## vela-cluster-core is a separate controller-manager pod that reconciles cluster-infrastructure
 ## resources (SpokeCluster, and later Cluster/ClusterBlueprint). It only runs when
-## featureGates.enableSpokeClusterCRD is true.
+## featureGates.enableClusterInfrastructure is true.
 clusterCore:
   ## @param clusterCore.replicaCount Replicas for the vela-cluster-core deployment
   replicaCount: 1

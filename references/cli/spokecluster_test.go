@@ -62,8 +62,10 @@ func fakeClientWith(objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(spokeClusterScheme()).WithObjects(objs...).Build()
 }
 
-// noMatchClient returns a fake client whose list/get report the SpokeCluster kind as
-// not installed, simulating the feature gate being off.
+// noMatchClient returns a fake client whose list/get report the SpokeCluster kind as not
+// installed, simulating a cluster where the vela-core chart was never applied. Note this is
+// not what the feature gate being off looks like: the chart installs crds/ unconditionally,
+// so with the gate off the kind still resolves and only the status stays empty.
 func noMatchClient() client.Client {
 	noMatch := &meta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "core.oam.dev", Kind: "SpokeCluster"}}
 	return fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
@@ -350,16 +352,20 @@ var _ = Describe("vela cluster spokes CRD-absent handling", func() {
 		var buf bytes.Buffer
 		err := runSpokeClusterList(ctx, noMatchClient(), "", &buf, "table")
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("EnableSpokeClusterCRD"))
 		Expect(err.Error()).To(ContainSubstring("SpokeCluster CRD"))
+		Expect(err.Error()).To(ContainSubstring("vela-core chart"))
+		// The gate must not be blamed: it never removes the CRD.
+		Expect(err.Error()).NotTo(ContainSubstring("EnableClusterInfrastructure"))
 	})
 
 	It("returns an actionable message for show", func() {
 		var buf bytes.Buffer
 		err := runSpokeClusterShow(ctx, noMatchClient(), "vela-system", "x", &buf, "table")
 		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("EnableSpokeClusterCRD"))
 		Expect(err.Error()).To(ContainSubstring("SpokeCluster CRD"))
+		Expect(err.Error()).To(ContainSubstring("vela-core chart"))
+		// The gate must not be blamed: it never removes the CRD.
+		Expect(err.Error()).NotTo(ContainSubstring("EnableClusterInfrastructure"))
 	})
 })
 
