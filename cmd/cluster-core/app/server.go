@@ -130,7 +130,7 @@ func configureSpokeClusterWebhooks(o *options, waitForCert func() error, registe
 // cluster-gateway (non-fatal), register health checks, and block on Start.
 //
 // Controller registration is intentionally not wired here yet:
-// pkg/controller/core.oam.dev/v1beta1/spokecluster (GWCP-102132) does not
+// pkg/controller/core.oam.dev/v1beta1/spokecluster does not
 // exist on this branch. See the TODO below.
 func run(o *options) error {
 	ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig()))
@@ -160,7 +160,7 @@ func run(o *options) error {
 
 	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
 		klog.InfoS("EnableSpokeClusterCRD is on; controller registration pending GWCP-102132")
-		// TODO(GWCP-102132): register the SpokeCluster controller once
+		// TODO: register the SpokeCluster controller once
 		// pkg/controller/core.oam.dev/v1beta1/spokecluster.Setup exists:
 		// spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles})
 	} else {
