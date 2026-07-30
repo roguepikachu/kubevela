@@ -53,11 +53,17 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-// newTestReconciler builds a Reconciler over a fake client seeded with objs.
+// newTestReconciler builds a Reconciler over a fake client seeded with objs. The status
+// subresource is registered because the reconcile loop writes status through it; without
+// that the fake client would fold status writes into the main object and hide bugs.
 func newTestReconciler(t *testing.T, objs ...client.Object) *Reconciler {
 	t.Helper()
 	scheme := testScheme(t)
-	cli := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+	cli := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		WithStatusSubresource(&v1beta1.SpokeCluster{}).
+		Build()
 	return &Reconciler{Client: cli, Scheme: scheme}
 }
 

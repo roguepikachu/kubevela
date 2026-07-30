@@ -2093,7 +2093,7 @@ replicaCount: 2
 })
 
 // ============================================================================
-// Helmchart Auth -- Secret-referenced authentication tests for.
+// Helmchart Auth -- Secret-referenced authentication tests.
 // All 19 scenarios assume the auth-test registries (deployed in BeforeSuite
 // from test/e2e-test/testdata/auth/manifests/) are running and the test chart
 // has been pushed to each.

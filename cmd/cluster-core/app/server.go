@@ -29,6 +29,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	oamcontroller "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
+	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1/spokecluster"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	common "github.com/oam-dev/kubevela/pkg/utils/common"
@@ -126,12 +128,13 @@ func configureSpokeClusterWebhooks(o *options, waitForCert func() error, registe
 	return nil
 }
 
-// run is the whole vela-cluster-core lifecycle: build the manager, detect
-// cluster-gateway (non-fatal), register health checks, and block on Start.
+// run is the whole vela-cluster-core lifecycle: build the manager, detect cluster-gateway
+// (non-fatal), register the SpokeCluster controller and admission webhooks, register health
+// checks, and block on Start.
 //
-// Controller registration is intentionally not wired here yet:
-// pkg/controller/core.oam.dev/v1beta1/spokecluster does not
-// exist on this branch. See the TODO below.
+// Both the controller and the webhooks are gated on the SpokeCluster feature: with the gate
+// off this binary starts, serves its health endpoints, and reconciles nothing, which is what
+// makes the CRD safe to ship ahead of the feature being switched on.
 func run(o *options) error {
 	ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig()))
 
@@ -158,13 +161,12 @@ func run(o *options) error {
 		klog.ErrorS(err, "Failed to detect cluster-gateway; spoke probes and discovery will fail until it is ready")
 	}
 
-	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
-		klog.InfoS("EnableSpokeClusterCRD is on; controller registration pending GWCP-102132")
-		// TODO: register the SpokeCluster controller once
-		// pkg/controller/core.oam.dev/v1beta1/spokecluster.Setup exists:
-		// spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles})
-	} else {
-		klog.InfoS("EnableSpokeClusterCRD is off; nothing to reconcile")
+	// Setup does its own feature-gate check and registers nothing when the gate is off, but
+	// the error still has to be returned: swallowing it would start a manager that looks
+	// healthy and silently reconciles nothing.
+	if err := spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles}); err != nil {
+		klog.ErrorS(err, "Unable to register the SpokeCluster controller")
+		return err
 	}
 
 	if err := configureSpokeClusterWebhooks(
