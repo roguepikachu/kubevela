@@ -34,7 +34,7 @@ import (
 // scrubs ResourceTracker references to it and deletes the gateway Secret. Under orphan it
 // leaves the registration in place.
 //
-// Adding the finalizer on the create path belongs to the reconcile loop (GWCP-102132); a
+// Adding the finalizer on the create path belongs to the reconcile loop; a
 // SpokeCluster that never carried it has nothing to clean up.
 //
 // Cleanup only ever touches a gateway Secret this SpokeCluster owns (see ownsGatewaySecret).
@@ -65,7 +65,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 			// reports not found) or hit the reserved `local` name (structurally impossible
 			// for a SpokeCluster given admission validation, checked defensively). Falling
 			// back to a direct delete keeps deletion from wedging on a half-registered
-			// spoke. Operator-facing visibility beyond this log line is GWCP-102127
+			// spoke. Operator-facing visibility beyond this log line
 			// (events and metrics).
 			klog.InfoS("DetachCluster returned an expected error during SpokeCluster deletion, attempting direct secret cleanup",
 				"spokecluster", klog.KObj(sc), "err", err)

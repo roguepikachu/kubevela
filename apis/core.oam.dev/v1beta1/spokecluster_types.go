@@ -100,7 +100,6 @@ const (
 )
 
 // SpokeCluster status condition types. Downstream slices (the reconcile loop,
-// GWCP-102132) set these; the constants live here so every consumer shares them.
 const (
 	// SpokeClusterConditionRegistered is true once the hub-side registration exists.
 	SpokeClusterConditionRegistered = "Registered"

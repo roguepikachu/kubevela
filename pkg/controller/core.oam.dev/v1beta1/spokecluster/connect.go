@@ -73,7 +73,7 @@ const secretOwnerAnnotation = "spokecluster.core.oam.dev/owner"
 
 // verifyAdoptable refuses to touch a gateway Secret this SpokeCluster does not already
 // own. A Secret with no owner annotation is foreign, most likely a manually joined
-// cluster; adopting it is GWCP-102136 (Secret migration), not this slice. A Secret owned
+// cluster; adopting it is (Secret migration), not this slice. A Secret owned
 // by a different namespace/name is a genuine collision: two SpokeClusters can share a
 // name across namespaces, since the Secret's identity does not include the SpokeCluster's
 // own namespace, and only one of them may hold it.
@@ -123,7 +123,7 @@ func (r *Reconciler) ownsGatewaySecret(ctx context.Context, sc *v1beta1.SpokeClu
 // endpoint's own host (see cluster-gateway's transport.go). A kubeconfig `tls-server-name`
 // that differs from the endpoint host would register successfully today and then fail TLS
 // verification on every connection attempt, with nothing to surface the problem until
-// GWCP-102132's probe exists. Refusing here surfaces it immediately instead of leaving a
+// Refusing here surfaces it immediately instead of leaving a
 // silently unreachable spoke. When the override already matches the endpoint host, nothing
 // is lost by discarding it, so registration proceeds.
 func verifyServerNameCompatible(m *credential.Materialized) error {
@@ -160,7 +160,7 @@ func endpointHost(endpoint string) (string, error) {
 
 // Reconciler reconciles a SpokeCluster object.
 //
-// The struct is intentionally minimal here. GWCP-102132 extends it with the manager
+// The struct is intentionally minimal here extends it with the manager
 // config, the provider registry, the event recorder, and the probe/discover seams; it
 // must extend this definition rather than redefine it.
 type Reconciler struct {
@@ -203,7 +203,7 @@ func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 // kubeconfig, because Materialized carries no proxy. Accepted for Phase 1.
 //
 // register refuses to adopt a pre-existing Secret it does not recognize (see
-// verifyAdoptable): design.md reasoned that the admission webhook (GWCP-102121) already
+// verifyAdoptable): design.md reasoned that the admission webhook already
 // rejects a name collision with an existing gateway Secret, but that webhook is stateless
 // by design and does not read Secrets, so no such check exists. Without this guard a
 // SpokeCluster could silently take over a manually joined cluster's Secret, redirecting
