@@ -160,7 +160,7 @@ func run(o *options) error {
 
 	if utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableSpokeClusterCRD) {
 		klog.InfoS("EnableSpokeClusterCRD is on; controller registration pending GWCP-102132")
-		// TODO(GWCP-102132): register the SpokeCluster controller once
+		// TODO: register the SpokeCluster controller once
 		// pkg/controller/core.oam.dev/v1beta1/spokecluster.Setup exists:
 		// spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles})
 	} else {
