@@ -29,7 +29,9 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"time"
 
+	recorder "github.com/crossplane/crossplane-runtime/pkg/event"
 	"github.com/kubevela/pkg/util/k8s"
 	clusterv1alpha1 "github.com/oam-dev/cluster-gateway/pkg/apis/cluster/v1alpha1"
 	clustercommon "github.com/oam-dev/cluster-gateway/pkg/common"
@@ -38,6 +40,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	apitypes "k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -73,7 +76,7 @@ const secretOwnerAnnotation = "spokecluster.core.oam.dev/owner"
 
 // verifyAdoptable refuses to touch a gateway Secret this SpokeCluster does not already
 // own. A Secret with no owner annotation is foreign, most likely a manually joined
-// cluster; adopting it is (Secret migration), not this slice. A Secret owned
+// cluster; adopting one is a Secret-migration concern, not this controller's. A Secret owned
 // by a different namespace/name is a genuine collision: two SpokeClusters can share a
 // name across namespaces, since the Secret's identity does not include the SpokeCluster's
 // own namespace, and only one of them may hold it.
@@ -122,10 +125,10 @@ func (r *Reconciler) ownsGatewaySecret(ctx context.Context, sc *v1beta1.SpokeClu
 // cluster-gateway always derives the TLS ServerName it verifies against from the
 // endpoint's own host (see cluster-gateway's transport.go). A kubeconfig `tls-server-name`
 // that differs from the endpoint host would register successfully today and then fail TLS
-// verification on every connection attempt, with nothing to surface the problem until
-// Refusing here surfaces it immediately instead of leaving a
-// silently unreachable spoke. When the override already matches the endpoint host, nothing
-// is lost by discarding it, so registration proceeds.
+// verification on every connection attempt, with nothing to surface the problem until the
+// next probe. Refusing here surfaces it immediately instead of leaving a silently
+// unreachable spoke. When the override already matches the endpoint host, nothing is lost by
+// discarding it, so registration proceeds.
 func verifyServerNameCompatible(m *credential.Materialized) error {
 	if m.ServerName == "" {
 		return nil
@@ -158,14 +161,29 @@ func endpointHost(endpoint string) (string, error) {
 	return host, nil
 }
 
-// Reconciler reconciles a SpokeCluster object.
+// Reconciler reconciles a SpokeCluster object. The reconcile loop itself, along with the
+// conditions, probe, requeue policy and status write, lives in
+// spokecluster_controller.go; this file holds the registration half.
 //
-// The struct is intentionally minimal here extends it with the manager
-// config, the provider registry, the event recorder, and the probe/discover seams; it
-// must extend this definition rather than redefine it.
+// Config is the hub rest.Config the probe and discovery reach spokes through. It is copied
+// per call rather than shared, because RequestRawK8sAPIForCluster mutates the config it is
+// given and then resets the mutated fields to nil rather than to their previous values,
+// which races across concurrent reconciles.
+//
+// probeFn and discoverFn are test seams. Nil means the real method, so no unit test needs a
+// live spoke or a real rest.Config.
 type Reconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	Config    *rest.Config
+	Providers credential.Registry
+
+	record recorder.Recorder
+
+	concurrentReconciles int
+
+	probeFn    func(ctx context.Context, sc *v1beta1.SpokeCluster) (time.Duration, error)
+	discoverFn func(ctx context.Context, sc *v1beta1.SpokeCluster, m *credential.Materialized, latency time.Duration) (*v1beta1.SpokeClusterInfo, error)
 }
 
 // gatewaySecretKey is where the gateway Secret for a spoke lives: named after the

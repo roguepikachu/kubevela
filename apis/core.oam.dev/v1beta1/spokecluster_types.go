@@ -99,7 +99,8 @@ const (
 	SpokeDeletionPolicyOrphan SpokeDeletionPolicy = "orphan"
 )
 
-// SpokeCluster status condition types. Downstream slices (the reconcile loop,
+// SpokeCluster status condition types. The reconcile loop sets all four; the constants live
+// here so every consumer, controller, CLI and test alike, shares one spelling.
 const (
 	// SpokeClusterConditionRegistered is true once the hub-side registration exists.
 	SpokeClusterConditionRegistered = "Registered"
