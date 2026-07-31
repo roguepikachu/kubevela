@@ -1,0 +1,37 @@
+# deletionPolicy: orphan keeps the gateway Secret when the SpokeCluster is deleted.
+#
+# Use when the cluster was registered some other way first, or when you want to hand
+# the registration back to `vela cluster join` semantics on delete.
+#
+# Flipping an already-registered spoke from detach to orphan actively CLEARS the
+# existing owner reference. Without that, garbage collection would still delete the
+# Secret once the SpokeCluster was gone, which is the opposite of what orphan promises.
+# That clearing is a deliberate correction over the upstream prototype, which only ever
+# added references.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: keeper
+  namespace: vela-system
+spec:
+  mode: connect
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig
+  deletionPolicy: orphan
+---
+# Legacy shape: no deletionPolicy at all. Objects created before schema defaulting
+# behave as detach. Worth keeping in a test matrix so the fallback stays covered.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: legacy-unset-policy
+  namespace: vela-system
+spec:
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig

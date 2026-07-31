@@ -1,0 +1,40 @@
+# Phase 2 fields that EXIST in the schema but are inert in this release.
+#
+# They were landed early, deliberately, so the CRD shape does not have to change when
+# Phase 2 arrives. Nothing reads them today.
+#
+# Note infraProvisioning is REJECTED by the webhook in connect mode, because
+# provisioning is what `mode: provision` is for. It is included here only so the
+# rejection case is visible; see 08-invalid-examples.yaml.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: phase2-shape
+  namespace: vela-system
+spec:
+  mode: connect
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig
+  deletionPolicy: detach
+
+  # Accepted by the schema, not acted on yet.
+  blueprintRef:
+    name: baseline-platform
+    revision: v1
+
+  rolloutStrategyRef:
+    name: canary-10pct
+    revision: v2
+---
+# Fields NOT in the schema, listed so nobody wastes time looking for them.
+#
+#   spec.patches[]           deferred until ClusterBlueprint exists
+#   spec.maintenance         deferred until ClusterPlane exists
+#   spec.managementScope     named in the epic, never implemented
+#   status.workerNodes       folded into status.clusterInfo.nodeCount
+#   status.controlPlaneNodes folded into status.clusterInfo.nodeCount
+#   status.podCapacity       not carried
+#   status.connectionStatus  the real field is status.connection

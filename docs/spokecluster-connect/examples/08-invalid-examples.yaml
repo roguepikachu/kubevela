@@ -1,0 +1,147 @@
+# Cases that SHOULD be rejected. Useful as a webhook regression check.
+# Each is annotated with where the rejection comes from and what you should see.
+#
+# Apply with: kubectl apply -f 08-invalid-examples.yaml
+# Expect every one to fail. Any that succeeds is a bug.
+
+---
+# 1. mode: provision is not supported in this release. Rejected by the webhook.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-mode-provision
+  namespace: vela-system
+spec:
+  mode: provision
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig
+
+---
+# 2. Credential arm does not match type. The union is strict: every arm not named by
+#    `type` is forbidden, not merely ignored.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-arm-mismatch
+  namespace: vela-system
+spec:
+  credential:
+    type: kubeconfig
+    aws:
+      authMode: podIdentity
+      clusterName: whatever
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/x
+
+---
+# 3. Both arms present. Same rule, other direction.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-two-arms
+  namespace: vela-system
+spec:
+  credential:
+    type: aws
+    aws:
+      authMode: irsa
+      clusterName: c
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/x
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig
+
+---
+# 4. Missing secretRef.name.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-no-secret-name
+  namespace: vela-system
+spec:
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        key: kubeconfig
+
+---
+# 5. Unknown authMode. Only podIdentity and irsa are accepted.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-authmode
+  namespace: vela-system
+spec:
+  credential:
+    type: aws
+    aws:
+      authMode: accessKey
+      clusterName: c
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/x
+
+---
+# 6. infraProvisioning in connect mode. Provisioning belongs to mode: provision.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-infra-in-connect
+  namespace: vela-system
+spec:
+  mode: connect
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: spoke-kubeconfig
+  infraProvisioning:
+    blueprintRef:
+      name: eks-standard
+
+---
+# 7. Registered stubs. These are ACCEPTED by admission and then fail at
+#    materialization with a clear not-implemented error, rather than being
+#    silently unregistered. The object exists; CredentialValid goes False.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: stub-azure
+  namespace: vela-system
+spec:
+  credential:
+    type: azure
+    azure:
+      authMode: workloadIdentity
+      subscriptionID: 00000000-0000-0000-0000-000000000000
+      resourceGroup: rg-platform
+      clusterName: aks-prod
+
+---
+# 8. Runtime rejections, not admission ones. These pass the webhook and fail during
+#    registration, which is the point: they are properties of the credential, not the spec.
+#
+#    a. kubeconfig with a file-path certificate-authority
+#         -> "uses a file-path certificate-authority; only inline
+#            certificate-authority-data is supported for connect"
+#
+#    b. kubeconfig whose tls-server-name differs from the endpoint host
+#         -> "credential requires TLS server name X, but cluster-gateway always
+#            verifies against the endpoint host Y"
+#
+#    c. kubeconfig with an exec plugin (aws eks get-token, gke-gcloud-auth-plugin)
+#         -> "has no embedded token or client cert/key; exec and file-path
+#            credentials are not supported for connect"
+#
+#    d. a SpokeCluster whose name collides with a gateway Secret written by
+#       `vela cluster join` (no owner annotation)
+#         -> "already exists and is not managed by a SpokeCluster (likely a
+#            manually joined cluster); refusing to overwrite it"
+#
+#    e. two SpokeClusters with the same name in different namespaces
+#         -> the second gets "is owned by a different SpokeCluster (ns/name);
+#            refusing to overwrite it"

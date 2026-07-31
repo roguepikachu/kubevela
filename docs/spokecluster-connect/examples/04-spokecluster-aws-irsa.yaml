@@ -1,0 +1,32 @@
+# Same as the Pod Identity example, IRSA variant.
+#
+# The two authMode values differ only in how the ambient base identity reaches the
+# hub pod. Provider logic is identical: the default AWS credential chain resolves
+# either one. Choose based on what the hub cluster has wired.
+#
+# For IRSA the hub service account carries an eks.amazonaws.com/role-arn annotation,
+# set via clusterCore.aws.serviceAccountRoleArn in the chart.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: prod-west-irsa
+  namespace: vela-system
+  labels:
+    provider: aws
+    region: us-east-1
+spec:
+  mode: connect
+  credential:
+    type: aws
+    aws:
+      authMode: irsa
+      clusterName: prod-west
+      region: us-east-1
+      roleArn: arn:aws:iam::111122223333:role/oam-sc-prod-west-scoped
+      # externalId is optional but recommended. Omit only if the scoped role's
+      # trust policy does not require it.
+      externalId: us-east-1/111122223333/hub-cluster/vela-system/vela-core-cluster-core
+  # Shorter interval than the 14-minute token deadline is fine; the requeue takes
+  # whichever comes first, so the token is reminted before it expires either way.
+  probeIntervalSeconds: 60
+  deletionPolicy: detach
