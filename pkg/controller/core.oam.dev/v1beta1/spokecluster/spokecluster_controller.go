@@ -18,9 +18,11 @@ package spokecluster
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	recorder "github.com/crossplane/crossplane-runtime/pkg/event"
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -309,8 +311,14 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args) error {
 			"gate", features.EnableClusterInfrastructure)
 		return nil
 	}
+	// Uncached and multicluster-aware, for the reason spelled out on Reconciler.SpokeReader.
+	spokeReader, err := pkgmulticluster.NewDefaultClient(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		return fmt.Errorf("unable to build the multicluster client for spoke discovery: %w", err)
+	}
 	r := &Reconciler{
 		Client:               mgr.GetClient(),
+		SpokeReader:          spokeReader,
 		Scheme:               mgr.GetScheme(),
 		Config:               mgr.GetConfig(),
 		Providers:            credential.DefaultRegistry(),

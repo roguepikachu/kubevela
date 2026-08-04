@@ -179,6 +179,13 @@ type Reconciler struct {
 	Config    *rest.Config
 	Providers credential.Registry
 
+	// SpokeReader reads objects on the spoke rather than the hub. Its transport turns a
+	// cluster-name context into a cluster-gateway request, which the embedded Client
+	// cannot do: that one is the manager's cache-backed client, so it answers the same
+	// List from the hub's own informers and silently reports the hub's inventory as the
+	// spoke's. Discovery must therefore go through this client, never through Client.
+	SpokeReader client.Client
+
 	record recorder.Recorder
 
 	concurrentReconciles int

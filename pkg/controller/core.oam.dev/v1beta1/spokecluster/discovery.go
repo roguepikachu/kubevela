@@ -28,7 +28,13 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/spokecluster/credential"
+	"github.com/oam-dev/kubevela/pkg/utils"
 )
+
+// regionUnknown is what status.clusterInfo.region carries when neither the credential nor
+// any node names a region. Local distributions such as k3d and kind have no region at all,
+// and an explicit N/A distinguishes "asked, there is none" from a field nobody populated.
+const regionUnknown = "N/A"
 
 // These package variables keep the gateway reads replaceable in unit tests. Production
 // uses the multicluster implementations by default.
@@ -60,16 +66,21 @@ func (r *Reconciler) discover(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 	}
 	info.KubernetesVersion = version.GitVersion
 
-	clusterInfo, err := getClusterInfo(ctx, r.Client, sc.Name)
+	// SpokeReader, not Client: see the field comment. Reading through the hub's cached
+	// client returns the hub's own nodes under a spoke's name.
+	clusterInfo, err := getClusterInfo(ctx, r.SpokeReader, sc.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read the inventory of spoke %q: %w", sc.Name, err)
 	}
 	info.NodeCount = clusterInfo.WorkerNumber + clusterInfo.MasterNumber
 	info.TotalCPU = clusterInfo.CPUCapacity.String()
-	info.TotalMemory = clusterInfo.MemoryCapacity.String()
+	info.TotalMemory = utils.HumanizeMemory(clusterInfo.MemoryCapacity)
 	info.Platform = inferPlatform(clusterInfo.Nodes)
 	if info.Region == "" {
 		info.Region = inferRegion(clusterInfo.Nodes)
+	}
+	if info.Region == "" {
+		info.Region = regionUnknown
 	}
 
 	return info, nil

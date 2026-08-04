@@ -187,8 +187,11 @@ func TestDiscoverBuildsClusterInfo(t *testing.T) {
 		return types.ClusterVersion{GitVersion: "v1.31.5+k3s1"}, nil
 	}
 	getClusterInfo = func(_ context.Context, cli client.Client, clusterName string) (*multicluster.ClusterInfo, error) {
-		if cli != r.Client {
-			t.Error("cluster helper did not receive the reconciler client")
+		if cli != r.SpokeReader {
+			t.Error("cluster helper did not receive the multicluster spoke reader")
+		}
+		if cli == r.Client {
+			t.Error("cluster helper received the hub's cached client, which reports hub inventory as the spoke's")
 		}
 		if clusterName != sc.Name {
 			t.Errorf("inventory cluster name = %q, want %q", clusterName, sc.Name)
@@ -319,6 +322,58 @@ func TestDiscoverPropagatesHelperErrorsWithoutPartialInfo(t *testing.T) {
 			}
 			if inventoryCalled != tt.wantInventoryCall {
 				t.Errorf("cluster helper called = %t, want %t", inventoryCalled, tt.wantInventoryCall)
+			}
+		})
+	}
+}
+
+// TestDiscoverReportsUnknownRegion covers the local-cluster case: k3d and kind nodes carry
+// no topology label and their credentials name no region, so the field reports N/A rather
+// than staying empty.
+func TestDiscoverReportsUnknownRegion(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes *corev1.NodeList
+	}{
+		{name: "no nodes at all", nodes: nil},
+		{name: "nodes without a region label", nodes: nodeList(
+			corev1.Node{ObjectMeta: objectMeta("k3d-spoke-server-0", map[string]string{
+				corev1.LabelInstanceTypeStable: "k3s",
+			})},
+		)},
+		{name: "node region label present but empty", nodes: nodeList(
+			corev1.Node{ObjectMeta: objectMeta("worker-0", map[string]string{
+				corev1.LabelTopologyRegion: "",
+			})},
+		)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newTestReconciler(t)
+			r.Config = &rest.Config{}
+			sc := spoke("spoke-no-region", v1beta1.SpokeDeletionPolicyDetach)
+
+			originalVersionFn := getVersionInfoFromCluster
+			originalClusterFn := getClusterInfo
+			t.Cleanup(func() {
+				getVersionInfoFromCluster = originalVersionFn
+				getClusterInfo = originalClusterFn
+			})
+
+			getVersionInfoFromCluster = func(context.Context, string, *rest.Config) (types.ClusterVersion, error) {
+				return types.ClusterVersion{GitVersion: "v1.31.5+k3s1"}, nil
+			}
+			getClusterInfo = func(context.Context, client.Client, string) (*multicluster.ClusterInfo, error) {
+				return &multicluster.ClusterInfo{Nodes: tt.nodes}, nil
+			}
+
+			got, err := r.discover(context.Background(), sc, &credential.Materialized{}, time.Millisecond)
+			if err != nil {
+				t.Fatalf("discover returned an unexpected error: %v", err)
+			}
+			if got.Region != regionUnknown {
+				t.Errorf("discover region = %q, want %q", got.Region, regionUnknown)
 			}
 		})
 	}
