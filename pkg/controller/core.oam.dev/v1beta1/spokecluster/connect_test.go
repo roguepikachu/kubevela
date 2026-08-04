@@ -64,7 +64,11 @@ func newTestReconciler(t *testing.T, objs ...client.Object) *Reconciler {
 		WithObjects(objs...).
 		WithStatusSubresource(&v1beta1.SpokeCluster{}).
 		Build()
-	return &Reconciler{Client: cli, Scheme: scheme}
+	// Deliberately a second, distinct client. Spoke reads must go through SpokeReader, so
+	// any code that reaches for the hub client instead fails identity checks rather than
+	// quietly passing because both names point at the same object.
+	spokeReader := fake.NewClientBuilder().WithScheme(scheme).Build()
+	return &Reconciler{Client: cli, SpokeReader: spokeReader, Scheme: scheme}
 }
 
 // spoke builds a SpokeCluster in the gateway namespace, where a detach ownerRef on the

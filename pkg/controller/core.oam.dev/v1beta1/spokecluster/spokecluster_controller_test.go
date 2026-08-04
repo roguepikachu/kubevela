@@ -19,6 +19,8 @@ package spokecluster
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,6 +167,10 @@ func TestReconcileConnectedKubeconfig(t *testing.T) {
 	if latest.Status.ClusterInfo == nil {
 		t.Fatal("status.clusterInfo was not populated")
 	}
+	if latest.Status.ClusterInfo.LastSyncedTime == nil {
+		t.Error("clusterInfo.lastSyncedTime must be stamped on a successful discovery; " +
+			"without it nothing records how old the inventory is")
+	}
 	if latest.Status.ClusterInfo.KubernetesVersion != "v1.31.5+k3s1" {
 		t.Errorf("clusterInfo.kubernetesVersion = %q, want %q", latest.Status.ClusterInfo.KubernetesVersion, "v1.31.5+k3s1")
 	}
@@ -218,6 +224,83 @@ func TestReconcileProbeFailureMarksDisconnected(t *testing.T) {
 	}
 	if meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionInfoSynced) != nil {
 		t.Error("discovery must not run after a failed probe")
+	}
+}
+
+// TestLastSyncedTimeFreezesWhileInventoryIsStale is the staleness contract. InfoSynced stays
+// True across a disconnect (discovery is skipped, not failed) and its lastTransitionTime does
+// not move either, so lastSyncedTime is the only thing that can tell an operator the reported
+// inventory is old. It must therefore stop advancing the moment discovery stops succeeding.
+func TestLastSyncedTimeFreezesWhileInventoryIsStale(t *testing.T) {
+	tests := map[string]func(r *Reconciler){
+		"probe fails so discovery is skipped": func(r *Reconciler) {
+			r.probeFn = func(context.Context, *v1beta1.SpokeCluster) (time.Duration, error) {
+				return 0, errors.New("dial tcp: connection refused")
+			}
+		},
+		"probe succeeds but discovery fails": func(r *Reconciler) {
+			r.discoverFn = func(context.Context, *v1beta1.SpokeCluster, *credential.Materialized, time.Duration) (*v1beta1.SpokeClusterInfo, error) {
+				return nil, errors.New("nodes is forbidden")
+			}
+		},
+	}
+
+	for name, breakIt := range tests {
+		t.Run(name, func(t *testing.T) {
+			sc := connectableSpoke("spoke-staleness")
+			r := connectedReconciler(t, sc)
+
+			if _, err := reconcileOnce(t, r, sc); err != nil {
+				t.Fatalf("first Reconcile returned an unexpected error: %v", err)
+			}
+			afterSuccess := readSpoke(t, r, sc)
+			if afterSuccess.Status.ClusterInfo == nil || afterSuccess.Status.ClusterInfo.LastSyncedTime == nil {
+				t.Fatal("first pass did not stamp clusterInfo.lastSyncedTime")
+			}
+			stamped := *afterSuccess.Status.ClusterInfo.LastSyncedTime
+
+			breakIt(r)
+			if _, err := reconcileOnce(t, r, sc); err != nil {
+				t.Fatalf("second Reconcile returned an unexpected error: %v", err)
+			}
+
+			latest := readSpoke(t, r, sc)
+			if latest.Status.ClusterInfo == nil {
+				t.Fatal("clusterInfo must be retained, not blanked, when discovery does not succeed")
+			}
+			if latest.Status.ClusterInfo.LastSyncedTime == nil {
+				t.Fatal("clusterInfo.lastSyncedTime must be retained alongside the stale inventory")
+			}
+			if !latest.Status.ClusterInfo.LastSyncedTime.Equal(&stamped) {
+				t.Errorf("lastSyncedTime advanced to %v from %v; it must only move on a successful discovery",
+					latest.Status.ClusterInfo.LastSyncedTime, stamped)
+			}
+		})
+	}
+}
+
+// TestProbeFailureMessageNamesTheEndpoint pins the operator-facing half of the fix: the
+// condition must point at the spoke, not at the hub's own gateway proxy URL.
+func TestProbeFailureMessageNamesTheEndpoint(t *testing.T) {
+	sc := connectableSpoke("spoke-message")
+	r := connectedReconciler(t, sc)
+	r.probeFn = func(context.Context, *v1beta1.SpokeCluster) (time.Duration, error) {
+		return 0, fmt.Errorf(`Get "https://10.43.0.1:443/apis/cluster.core.oam.dev/v1alpha1/clustergateways/spoke-message/proxy/healthz": %w`,
+			context.DeadlineExceeded)
+	}
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("Reconcile returned an unexpected error: %v", err)
+	}
+
+	latest := readSpoke(t, r, sc)
+	cond := meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionConnected)
+	if cond == nil {
+		t.Fatal("Connected condition missing")
+	}
+	// tokenCredential drives the materialized endpoint the reconciler reports.
+	if !strings.Contains(cond.Message, "https://spoke.example.com") {
+		t.Errorf("Connected message = %q, want it to name the spoke endpoint", cond.Message)
 	}
 }
 

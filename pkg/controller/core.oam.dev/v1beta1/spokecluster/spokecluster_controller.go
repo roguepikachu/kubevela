@@ -18,9 +18,11 @@ package spokecluster
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	recorder "github.com/crossplane/crossplane-runtime/pkg/event"
+	pkgmulticluster "github.com/kubevela/pkg/multicluster"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -142,8 +144,14 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 	probedAt := metav1.Now()
 	status.LastProbeTime = &probedAt
 	if probeErr != nil {
-		setCondition(status, v1beta1.SpokeClusterConditionConnected, metav1.ConditionFalse, reasonProbeFailed, probeErr.Error())
+		// The raw error names the hub's own cluster-gateway proxy URL, never the spoke, so
+		// reporting it verbatim sends operators to the wrong address. describeProbeFailure
+		// puts the unreachable endpoint and the timeout that applied into the message.
+		setCondition(status, v1beta1.SpokeClusterConditionConnected, metav1.ConditionFalse, reasonProbeFailed,
+			describeProbeFailure(sc, materialized.Endpoint, probeErr))
 		status.Connection = v1beta1.ConnectionStateDisconnected
+		klog.InfoS("Spoke probe failed", "spokecluster", klog.KObj(sc), "endpoint", materialized.Endpoint,
+			"timeout", probeTimeout(sc), "err", probeErr)
 		// Deliberately no error: an unreachable spoke is state to report, not a controller
 		// fault to back off on. The plain probe interval also skips the refresh cap, so a
 		// disconnected spoke with an expiring credential can idle up to one interval past
@@ -163,6 +171,11 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 		// list is still connected, so this never fails the pass.
 		setCondition(status, v1beta1.SpokeClusterConditionInfoSynced, metav1.ConditionFalse, reasonDiscoveryFailed, discoverErr.Error())
 	} else {
+		// Stamped only here, on success. A skipped pass (probe failed) or a failed discovery
+		// leaves the previous value in place, so the gap between this and now is exactly how
+		// stale the reported inventory is.
+		syncedAt := metav1.Now()
+		info.LastSyncedTime = &syncedAt
 		setCondition(status, v1beta1.SpokeClusterConditionInfoSynced, metav1.ConditionTrue, reasonDiscoveryOK,
 			"cluster inventory refreshed")
 		status.ClusterInfo = info
@@ -309,8 +322,14 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args) error {
 			"gate", features.EnableClusterInfrastructure)
 		return nil
 	}
+	// Uncached and multicluster-aware, for the reason spelled out on Reconciler.SpokeReader.
+	spokeReader, err := pkgmulticluster.NewDefaultClient(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		return fmt.Errorf("unable to build the multicluster client for spoke discovery: %w", err)
+	}
 	r := &Reconciler{
 		Client:               mgr.GetClient(),
+		SpokeReader:          spokeReader,
 		Scheme:               mgr.GetScheme(),
 		Config:               mgr.GetConfig(),
 		Providers:            credential.DefaultRegistry(),
