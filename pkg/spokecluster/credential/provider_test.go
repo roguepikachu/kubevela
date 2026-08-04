@@ -18,8 +18,8 @@ package credential
 
 import (
 	"context"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/require"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -38,7 +38,8 @@ func (f fakeProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1
 	return &Materialized{}, nil
 }
 
-func TestHasClientCert(t *testing.T) {
+var _ = It("HasClientCert", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		m    Materialized
 		want bool
@@ -49,23 +50,24 @@ func TestHasClientCert(t *testing.T) {
 		"full pair":        {m: Materialized{ClientCertData: []byte("cert"), ClientKeyData: []byte("key")}, want: true},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			require.Equal(t, tc.want, tc.m.HasClientCert())
 		})
 	}
-}
+})
 
-func TestRegistryFor(t *testing.T) {
+var _ = It("RegistryFor", func() {
+	t := GinkgoT()
 	provider := fakeProvider{credType: v1beta1.CredentialTypeKubeconfig}
 	reg := Registry{v1beta1.CredentialTypeKubeconfig: provider}
 
-	t.Run("registered type returns its provider", func(t *testing.T) {
+	By("registered type returns its provider", func() {
 		got, err := reg.For(v1beta1.CredentialTypeKubeconfig)
 		require.NoError(t, err)
 		require.Equal(t, v1beta1.CredentialTypeKubeconfig, got.Type())
 	})
 
-	t.Run("unregistered type returns a descriptive error and does not panic", func(t *testing.T) {
+	By("unregistered type returns a descriptive error and does not panic", func() {
 		require.NotPanics(t, func() {
 			got, err := reg.For(v1beta1.CredentialType("unknown"))
 			require.Nil(t, got)
@@ -73,16 +75,18 @@ func TestRegistryFor(t *testing.T) {
 			require.Contains(t, err.Error(), "unknown")
 		})
 	})
-}
+})
 
-func TestDefaultRegistryKeyedByType(t *testing.T) {
+var _ = It("DefaultRegistryKeyedByType", func() {
+	t := GinkgoT()
 	// Every entry must be keyed by its own Type().
 	for key, provider := range DefaultRegistry() {
 		require.Equal(t, key, provider.Type(), "provider registered under key %q reports Type() %q", key, provider.Type())
 	}
-}
+})
 
-func TestDefaultRegistryHasAllArms(t *testing.T) {
+var _ = It("DefaultRegistryHasAllArms", func() {
+	t := GinkgoT()
 	// All four credential arms are registered so lookups never fall through to a
 	// generic "no provider" error.
 	reg := DefaultRegistry()
@@ -95,9 +99,10 @@ func TestDefaultRegistryHasAllArms(t *testing.T) {
 		_, err := reg.For(ct)
 		require.NoError(t, err, "credential type %q should be registered", ct)
 	}
-}
+})
 
-func TestStubProvidersNotImplemented(t *testing.T) {
+var _ = It("StubProvidersNotImplemented", func() {
+	t := GinkgoT()
 	// The azure and gcp arms are registered stubs: they materialize to an
 	// arm-specific not-implemented error, not a partial result. When they are
 	// implemented, these assertions flip and signal the tests to update.
@@ -106,11 +111,11 @@ func TestStubProvidersNotImplemented(t *testing.T) {
 		"azure": NewAzureProvider(),
 		"gcp":   NewGCPProvider(),
 	} {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			m, err := p.Materialize(context.Background(), nil, sc)
 			require.Nil(t, m)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "not implemented")
 		})
 	}
-}
+})

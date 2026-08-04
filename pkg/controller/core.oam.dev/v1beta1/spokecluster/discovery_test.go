@@ -20,9 +20,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -36,7 +36,8 @@ import (
 	"github.com/oam-dev/kubevela/pkg/spokecluster/credential"
 )
 
-func TestInferPlatform(t *testing.T) {
+var _ = It("InferPlatform", func() {
+	t := GinkgoT()
 	tests := []struct {
 		name  string
 		nodes *corev1.NodeList
@@ -112,15 +113,16 @@ func TestInferPlatform(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			if got := inferPlatform(tt.nodes); got != tt.want {
 				t.Errorf("inferPlatform() = %q, want %q", got, tt.want)
 			}
 		})
 	}
-}
+})
 
-func TestInferRegion(t *testing.T) {
+var _ = It("InferRegion", func() {
+	t := GinkgoT()
 	tests := []struct {
 		name  string
 		nodes *corev1.NodeList
@@ -144,15 +146,16 @@ func TestInferRegion(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			if got := inferRegion(tt.nodes); got != tt.want {
 				t.Errorf("inferRegion() = %q, want %q", got, tt.want)
 			}
 		})
 	}
-}
+})
 
-func TestDiscoverBuildsClusterInfo(t *testing.T) {
+var _ = It("DiscoverBuildsClusterInfo", func() {
+	t := GinkgoT()
 	r := newTestReconciler(t)
 	r.Config = &rest.Config{
 		Host: "https://hub.example.com",
@@ -228,9 +231,10 @@ func TestDiscoverBuildsClusterInfo(t *testing.T) {
 	if got := r.Config.GroupVersion; got == nil || got.Group != "original.group" || got.Version != "v1" {
 		t.Errorf("shared rest.Config GroupVersion was mutated: %+v", got)
 	}
-}
+})
 
-func TestDiscoverFallsBackToNodeRegion(t *testing.T) {
+var _ = It("DiscoverFallsBackToNodeRegion", func() {
+	t := GinkgoT()
 	r := newTestReconciler(t)
 	r.Config = &rest.Config{}
 	sc := spoke("spoke-region", v1beta1.SpokeDeletionPolicyDetach)
@@ -258,9 +262,10 @@ func TestDiscoverFallsBackToNodeRegion(t *testing.T) {
 	if got.Region != "ap-southeast-2" {
 		t.Errorf("discover region = %q, want node-label fallback %q", got.Region, "ap-southeast-2")
 	}
-}
+})
 
-func TestDiscoverPropagatesHelperErrorsWithoutPartialInfo(t *testing.T) {
+var _ = It("DiscoverPropagatesHelperErrorsWithoutPartialInfo", func() {
+	t := GinkgoT()
 	versionErr := errors.New("version endpoint unavailable")
 	inventoryErr := errors.New("nodes is forbidden")
 
@@ -286,7 +291,7 @@ func TestDiscoverPropagatesHelperErrorsWithoutPartialInfo(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			r := newTestReconciler(t)
 			r.Config = &rest.Config{}
 			sc := spoke("spoke-error", v1beta1.SpokeDeletionPolicyDetach)
@@ -325,12 +330,13 @@ func TestDiscoverPropagatesHelperErrorsWithoutPartialInfo(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // TestDiscoverReportsUnknownRegion covers the local-cluster case: k3d and kind nodes carry
 // no topology label and their credentials name no region, so the field reports N/A rather
 // than staying empty.
-func TestDiscoverReportsUnknownRegion(t *testing.T) {
+var _ = It("DiscoverReportsUnknownRegion", func() {
+	t := GinkgoT()
 	tests := []struct {
 		name  string
 		nodes *corev1.NodeList
@@ -349,7 +355,7 @@ func TestDiscoverReportsUnknownRegion(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			r := newTestReconciler(t)
 			r.Config = &rest.Config{}
 			sc := spoke("spoke-no-region", v1beta1.SpokeDeletionPolicyDetach)
@@ -377,7 +383,7 @@ func TestDiscoverReportsUnknownRegion(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 func nodeList(nodes ...corev1.Node) *corev1.NodeList {
 	return &corev1.NodeList{Items: nodes}

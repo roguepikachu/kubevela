@@ -18,8 +18,8 @@ package app
 
 import (
 	"errors"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,8 @@ import (
 	"github.com/oam-dev/kubevela/pkg/features"
 )
 
-func TestDefaultOptions(t *testing.T) {
+var _ = It("DefaultOptions", func() {
+	t := GinkgoT()
 	o := defaultOptions()
 
 	assert.Equal(t, ":8080", o.metricsAddr)
@@ -41,9 +42,10 @@ func TestDefaultOptions(t *testing.T) {
 	assert.Equal(t, "/k8s-webhook-server/serving-certs", o.certDir)
 	assert.Equal(t, 5, o.concurrentReconciles)
 	assert.False(t, o.autoUpgradeSecret)
-}
+})
 
-func TestAddFlags(t *testing.T) {
+var _ = It("AddFlags", func() {
+	t := GinkgoT()
 	o := defaultOptions()
 	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
 	addFlags(fs, o)
@@ -63,9 +65,10 @@ func TestAddFlags(t *testing.T) {
 		f := fs.Lookup(name)
 		require.NotNilf(t, f, "expected flag %q to be registered", name)
 	}
-}
+})
 
-func TestConfigureSpokeClusterWebhooksRequiresBothGates(t *testing.T) {
+var _ = It("ConfigureSpokeClusterWebhooksRequiresBothGates", func() {
+	t := GinkgoT()
 	tests := []struct {
 		name               string
 		featureGateEnabled bool
@@ -91,7 +94,7 @@ func TestConfigureSpokeClusterWebhooksRequiresBothGates(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			featuregatetesting.SetFeatureGateDuringTest(
 				t,
 				utilfeature.DefaultFeatureGate,
@@ -120,9 +123,10 @@ func TestConfigureSpokeClusterWebhooksRequiresBothGates(t *testing.T) {
 			assert.Equal(t, tt.expectedCalls, calls)
 		})
 	}
-}
+})
 
-func TestConfigureSpokeClusterWebhooksStopsWhenCertWaitFails(t *testing.T) {
+var _ = It("ConfigureSpokeClusterWebhooksStopsWhenCertWaitFails", func() {
+	t := GinkgoT()
 	featuregatetesting.SetFeatureGateDuringTest(
 		t,
 		utilfeature.DefaultFeatureGate,
@@ -150,4 +154,4 @@ func TestConfigureSpokeClusterWebhooksStopsWhenCertWaitFails(t *testing.T) {
 
 	assert.ErrorIs(t, err, waitErr)
 	assert.Equal(t, []string{"wait"}, calls)
-}
+})

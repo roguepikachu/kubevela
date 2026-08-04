@@ -21,9 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -82,7 +82,7 @@ func connectableSpoke(name string) *v1beta1.SpokeCluster {
 
 // connectedReconciler wires a spoke that materializes, registers, probes and discovers
 // cleanly. The probe and discovery seams keep the test off any live spoke or rest.Config.
-func connectedReconciler(t *testing.T, sc *v1beta1.SpokeCluster) *Reconciler {
+func connectedReconciler(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *Reconciler {
 	t.Helper()
 	r := newTestReconciler(t, sc)
 	r.Providers = kubeconfigRegistry(tokenCredential(), nil)
@@ -98,14 +98,14 @@ func connectedReconciler(t *testing.T, sc *v1beta1.SpokeCluster) *Reconciler {
 	return r
 }
 
-func reconcileOnce(t *testing.T, r *Reconciler, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
+func reconcileOnce(t GinkgoTInterface, r *Reconciler, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
 	t.Helper()
 	return r.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(sc)})
 }
 
 // readSpoke re-fetches a SpokeCluster so assertions see what was persisted, not the
 // in-memory copy the loop mutated.
-func readSpoke(t *testing.T, r *Reconciler, sc *v1beta1.SpokeCluster) *v1beta1.SpokeCluster {
+func readSpoke(t GinkgoTInterface, r *Reconciler, sc *v1beta1.SpokeCluster) *v1beta1.SpokeCluster {
 	t.Helper()
 	latest := &v1beta1.SpokeCluster{}
 	if err := r.Get(context.Background(), client.ObjectKeyFromObject(sc), latest); err != nil {
@@ -116,7 +116,7 @@ func readSpoke(t *testing.T, r *Reconciler, sc *v1beta1.SpokeCluster) *v1beta1.S
 
 // wantCondition asserts a condition's status and reason together, since a correct status
 // with a drifted reason still breaks the operator-facing contract.
-func wantCondition(t *testing.T, sc *v1beta1.SpokeCluster, condType string, status metav1.ConditionStatus, reason string) {
+func wantCondition(t GinkgoTInterface, sc *v1beta1.SpokeCluster, condType string, status metav1.ConditionStatus, reason string) {
 	t.Helper()
 	cond := meta.FindStatusCondition(sc.Status.Conditions, condType)
 	if cond == nil {
@@ -133,7 +133,8 @@ func wantCondition(t *testing.T, sc *v1beta1.SpokeCluster, condType string, stat
 // TestReconcileConnectedKubeconfig covers the happy path end to end: the first pass adds
 // the finalizer before any external work and still completes the connect sequence in the
 // same pass, and the object ends Connected with all four conditions true.
-func TestReconcileConnectedKubeconfig(t *testing.T) {
+var _ = It("ReconcileConnectedKubeconfig", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-happy")
 	r := connectedReconciler(t, sc)
 
@@ -191,12 +192,13 @@ func TestReconcileConnectedKubeconfig(t *testing.T) {
 	}
 	latest = readSpoke(t, r, sc)
 	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
-}
+})
 
 // TestReconcileProbeFailureMarksDisconnected is the reason the condition set is split the
 // way it is: an unreachable spoke must be distinguishable from a broken credential, and it
 // must not be treated as a controller fault.
-func TestReconcileProbeFailureMarksDisconnected(t *testing.T) {
+var _ = It("ReconcileProbeFailureMarksDisconnected", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-unreachable")
 	r := connectedReconciler(t, sc)
 	r.probeFn = func(_ context.Context, _ *v1beta1.SpokeCluster) (time.Duration, error) {
@@ -225,13 +227,14 @@ func TestReconcileProbeFailureMarksDisconnected(t *testing.T) {
 	if meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionInfoSynced) != nil {
 		t.Error("discovery must not run after a failed probe")
 	}
-}
+})
 
 // TestLastSyncedTimeFreezesWhileInventoryIsStale is the staleness contract. InfoSynced stays
 // True across a disconnect (discovery is skipped, not failed) and its lastTransitionTime does
 // not move either, so lastSyncedTime is the only thing that can tell an operator the reported
 // inventory is old. It must therefore stop advancing the moment discovery stops succeeding.
-func TestLastSyncedTimeFreezesWhileInventoryIsStale(t *testing.T) {
+var _ = It("LastSyncedTimeFreezesWhileInventoryIsStale", func() {
+	t := GinkgoT()
 	tests := map[string]func(r *Reconciler){
 		"probe fails so discovery is skipped": func(r *Reconciler) {
 			r.probeFn = func(context.Context, *v1beta1.SpokeCluster) (time.Duration, error) {
@@ -246,7 +249,7 @@ func TestLastSyncedTimeFreezesWhileInventoryIsStale(t *testing.T) {
 	}
 
 	for name, breakIt := range tests {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := connectableSpoke("spoke-staleness")
 			r := connectedReconciler(t, sc)
 
@@ -277,11 +280,12 @@ func TestLastSyncedTimeFreezesWhileInventoryIsStale(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // TestProbeFailureMessageNamesTheEndpoint pins the operator-facing half of the fix: the
 // condition must point at the spoke, not at the hub's own gateway proxy URL.
-func TestProbeFailureMessageNamesTheEndpoint(t *testing.T) {
+var _ = It("ProbeFailureMessageNamesTheEndpoint", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-message")
 	r := connectedReconciler(t, sc)
 	r.probeFn = func(context.Context, *v1beta1.SpokeCluster) (time.Duration, error) {
@@ -302,11 +306,12 @@ func TestProbeFailureMessageNamesTheEndpoint(t *testing.T) {
 	if !strings.Contains(cond.Message, "https://spoke.example.com") {
 		t.Errorf("Connected message = %q, want it to name the spoke endpoint", cond.Message)
 	}
-}
+})
 
 // TestReconcileCredentialFailure checks both halves of a materialization failure: the
 // condition is recorded, and the error still surfaces so controller-runtime backs off.
-func TestReconcileCredentialFailure(t *testing.T) {
+var _ = It("ReconcileCredentialFailure", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		registry   credential.Registry
 		wantReason string
@@ -322,7 +327,7 @@ func TestReconcileCredentialFailure(t *testing.T) {
 	}
 
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := connectableSpoke("spoke-badcred")
 			r := connectedReconciler(t, sc)
 			r.Providers = tc.registry
@@ -338,19 +343,20 @@ func TestReconcileCredentialFailure(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // TestReconcileCredentialFailureMarksConnectionUnknown separates "we never got far enough to
 // know" from "we probed and it was down". It also covers the regression case: a spoke that
 // was Connected and then loses its credential must stop asserting reachability.
-func TestReconcileCredentialFailureMarksConnectionUnknown(t *testing.T) {
+var _ = It("ReconcileCredentialFailureMarksConnectionUnknown", func() {
+	t := GinkgoT()
 	cases := map[string]credential.Registry{
 		"no provider":        {},
 		"materialize failed": kubeconfigRegistry(nil, errors.New("kubeconfig is malformed")),
 	}
 
 	for name, registry := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := connectableSpoke("spoke-unknown")
 			sc.Status.Connection = v1beta1.ConnectionStateConnected
 			r := connectedReconciler(t, sc)
@@ -364,11 +370,12 @@ func TestReconcileCredentialFailureMarksConnectionUnknown(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // TestReconcileRegisterFailure covers the middle step: a Secret this SpokeCluster may not
 // adopt stops the sequence at registration and surfaces the error.
-func TestReconcileRegisterFailure(t *testing.T) {
+var _ = It("ReconcileRegisterFailure", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-collision")
 	r := newTestReconciler(t, sc, foreignGatewaySecret(sc.Name))
 	r.Providers = kubeconfigRegistry(tokenCredential(), nil)
@@ -390,11 +397,12 @@ func TestReconcileRegisterFailure(t *testing.T) {
 	if latest.Status.Connection != v1beta1.ConnectionStateUnknown {
 		t.Errorf("status.connection = %q, want %q after a registration failure", latest.Status.Connection, v1beta1.ConnectionStateUnknown)
 	}
-}
+})
 
 // TestReconcileDiscoveryFailurePreservesClusterInfo keeps a transient inventory failure
 // from erasing the last known good inventory, and from failing the pass.
-func TestReconcileDiscoveryFailurePreservesClusterInfo(t *testing.T) {
+var _ = It("ReconcileDiscoveryFailurePreservesClusterInfo", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-stale-info")
 	sc.Status.ClusterInfo = &v1beta1.SpokeClusterInfo{KubernetesVersion: "v1.30.0", NodeCount: 3}
 	r := connectedReconciler(t, sc)
@@ -415,11 +423,12 @@ func TestReconcileDiscoveryFailurePreservesClusterInfo(t *testing.T) {
 	if latest.Status.ClusterInfo.KubernetesVersion != "v1.30.0" || latest.Status.ClusterInfo.NodeCount != 3 {
 		t.Errorf("status.clusterInfo = %+v, want the previous value preserved", latest.Status.ClusterInfo)
 	}
-}
+})
 
 // TestReconcileIgnoresMissingSpokeCluster covers the ordinary case of reconciling an object
 // that has already been fully deleted.
-func TestReconcileIgnoresMissingSpokeCluster(t *testing.T) {
+var _ = It("ReconcileIgnoresMissingSpokeCluster", func() {
+	t := GinkgoT()
 	r := newTestReconciler(t)
 	res, err := r.Reconcile(context.Background(), ctrl.Request{
 		NamespacedName: client.ObjectKey{Name: "gone", Namespace: "vela-system"},
@@ -430,11 +439,12 @@ func TestReconcileIgnoresMissingSpokeCluster(t *testing.T) {
 	if res.RequeueAfter != 0 {
 		t.Errorf("RequeueAfter = %v, want no requeue for a missing object", res.RequeueAfter)
 	}
-}
+})
 
 // TestReconcileDeletionRunsNoConnectWork proves the deletion dispatch happens before any
 // external side effect, so a deleting spoke is never re-registered or re-probed.
-func TestReconcileDeletionRunsNoConnectWork(t *testing.T) {
+var _ = It("ReconcileDeletionRunsNoConnectWork", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-deleting")
 	now := metav1.Now()
 	sc.DeletionTimestamp = &now
@@ -454,11 +464,12 @@ func TestReconcileDeletionRunsNoConnectWork(t *testing.T) {
 	if _, err := reconcileOnce(t, r, sc); err != nil {
 		t.Fatalf("Reconcile on the deletion path returned an unexpected error: %v", err)
 	}
-}
+})
 
 // TestNextRequeue is the only coverage of the refresh cap, which is what keeps an AWS spoke
 // reconciling before its minted token expires instead of on the plain probe cadence.
-func TestNextRequeue(t *testing.T) {
+var _ = It("NextRequeue", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		intervalSeconds int32
 		nextRefreshIn   time.Duration
@@ -487,7 +498,7 @@ func TestNextRequeue(t *testing.T) {
 	}
 
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := connectableSpoke("spoke-requeue")
 			sc.Spec.ProbeIntervalSeconds = tc.intervalSeconds
 			m := tokenCredential()
@@ -502,11 +513,12 @@ func TestNextRequeue(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // TestReconcileRequeueFlooredAtMinimum stops a past-due refresh deadline from turning the
 // requeue into a hot loop.
-func TestReconcileRequeueFlooredAtMinimum(t *testing.T) {
+var _ = It("ReconcileRequeueFlooredAtMinimum", func() {
+	t := GinkgoT()
 	sc := connectableSpoke("spoke-expired-token")
 	overdue := tokenCredential()
 	overdue.NextRefresh = time.Now().Add(-time.Hour)
@@ -521,13 +533,14 @@ func TestReconcileRequeueFlooredAtMinimum(t *testing.T) {
 	if res.RequeueAfter != minRequeue {
 		t.Errorf("RequeueAfter = %v, want the %v floor for an overdue refresh deadline", res.RequeueAfter, minRequeue)
 	}
-}
+})
 
 // TestIgnoreOwnStatusWrites locks the event filter. Without it a healthy spoke reconciled
 // roughly four times more often than its probe interval asks for, because each status write
 // came back as an update event; with it, cadence comes from RequeueAfter alone. The deletion
 // and spec-change cases must still get through.
-func TestIgnoreOwnStatusWrites(t *testing.T) {
+var _ = It("IgnoreOwnStatusWrites", func() {
+	t := GinkgoT()
 	deleting := func(sc *v1beta1.SpokeCluster) *v1beta1.SpokeCluster {
 		out := sc.DeepCopy()
 		now := metav1.Now()
@@ -564,18 +577,19 @@ func TestIgnoreOwnStatusWrites(t *testing.T) {
 	}
 
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			got := ignoreOwnStatusWrites.Update(event.UpdateEvent{ObjectOld: base, ObjectNew: tc.newObj})
 			if got != tc.want {
 				t.Errorf("predicate returned %v, want %v", got, tc.want)
 			}
 		})
 	}
-}
+})
 
 // TestProbeIntervalFallback locks the guard that keeps working for objects built before the
 // schema default landed, and for objects built directly in tests.
-func TestProbeIntervalFallback(t *testing.T) {
+var _ = It("ProbeIntervalFallback", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		seconds int32
 		want    time.Duration
@@ -585,7 +599,7 @@ func TestProbeIntervalFallback(t *testing.T) {
 		"negative falls back":        {seconds: -5, want: defaultProbeInterval},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := connectableSpoke("spoke-interval")
 			sc.Spec.ProbeIntervalSeconds = tc.seconds
 			if got := probeInterval(sc); got != tc.want {
@@ -593,4 +607,4 @@ func TestProbeIntervalFallback(t *testing.T) {
 			}
 		})
 	}
-}
+})

@@ -19,9 +19,9 @@ package app
 import (
 	"os"
 	"path/filepath"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,22 +33,25 @@ func writeCertFiles(dir string) error {
 	return os.WriteFile(filepath.Join(dir, "tls.key"), []byte("key"), 0o600)
 }
 
-func TestWaitForWebhookCert_AlreadyPresent(t *testing.T) {
+var _ = It("WaitForWebhookCert AlreadyPresent", func() {
+	t := GinkgoT()
 	dir := t.TempDir()
 	require.NoError(t, writeCertFiles(dir))
 
 	err := waitForWebhookCert(dir, 2*time.Second, 10*time.Millisecond)
 	assert.NoError(t, err)
-}
+})
 
-func TestWaitForWebhookCert_TimesOut(t *testing.T) {
+var _ = It("WaitForWebhookCert TimesOut", func() {
+	t := GinkgoT()
 	dir := t.TempDir()
 
 	err := waitForWebhookCert(dir, 50*time.Millisecond, 10*time.Millisecond)
 	assert.Error(t, err)
-}
+})
 
-func TestWaitForWebhookCert_AppearsLater(t *testing.T) {
+var _ = It("WaitForWebhookCert AppearsLater", func() {
+	t := GinkgoT()
 	dir := t.TempDir()
 	writeErr := make(chan error, 1)
 
@@ -60,4 +63,4 @@ func TestWaitForWebhookCert_AppearsLater(t *testing.T) {
 	err := waitForWebhookCert(dir, 2*time.Second, 10*time.Millisecond)
 	assert.NoError(t, err)
 	require.NoError(t, <-writeErr)
-}
+})

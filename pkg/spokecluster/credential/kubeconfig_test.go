@@ -19,8 +19,8 @@ package credential
 import (
 	"context"
 	"strings"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -180,7 +180,7 @@ contexts:
     user: spoke
 `
 
-func newFakeClient(t *testing.T, objs ...runtime.Object) *fake.ClientBuilder {
+func newFakeClient(t GinkgoTInterface, objs ...runtime.Object) *fake.ClientBuilder {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -196,7 +196,8 @@ func kubeconfigSecret(ns, name, key, data string) *corev1.Secret {
 	}
 }
 
-func TestKubeconfigProviderToken(t *testing.T) {
+var _ = It("KubeconfigProviderToken", func() {
+	t := GinkgoT()
 	secret := kubeconfigSecret("vela-system", "spoke-kc", DefaultKubeconfigSecretKey, tokenKubeconfig)
 	cli := newFakeClient(t).WithObjects(secret).Build()
 	sc := &v1beta1.SpokeCluster{
@@ -227,9 +228,10 @@ func TestKubeconfigProviderToken(t *testing.T) {
 	if !m.NextRefresh.IsZero() {
 		t.Fatal("static kubeconfig should not schedule a refresh")
 	}
-}
+})
 
-func TestKubeconfigProviderClientCert(t *testing.T) {
+var _ = It("KubeconfigProviderClientCert", func() {
+	t := GinkgoT()
 	secret := kubeconfigSecret("vela-system", "spoke-kc", DefaultKubeconfigSecretKey, certKubeconfig)
 	cli := newFakeClient(t).WithObjects(secret).Build()
 	sc := &v1beta1.SpokeCluster{
@@ -254,9 +256,10 @@ func TestKubeconfigProviderClientCert(t *testing.T) {
 	if !m.NextRefresh.IsZero() {
 		t.Fatal("static kubeconfig should not schedule a refresh")
 	}
-}
+})
 
-func TestKubeconfigProviderResolutionErrors(t *testing.T) {
+var _ = It("KubeconfigProviderResolutionErrors", func() {
+	t := GinkgoT()
 	baseSC := func() *v1beta1.SpokeCluster {
 		return &v1beta1.SpokeCluster{
 			ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "vela-system"},
@@ -299,7 +302,7 @@ func TestKubeconfigProviderResolutionErrors(t *testing.T) {
 	}
 
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			builder := newFakeClient(t)
 			if tc.secret != nil {
 				builder = builder.WithObjects(tc.secret)
@@ -314,9 +317,10 @@ func TestKubeconfigProviderResolutionErrors(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
-func TestMaterializeFromKubeconfigParseErrors(t *testing.T) {
+var _ = It("MaterializeFromKubeconfigParseErrors", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		kubeconfig  string
 		wantErrText string
@@ -351,7 +355,7 @@ func TestMaterializeFromKubeconfigParseErrors(t *testing.T) {
 		},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			_, err := materializeFromKubeconfig([]byte(tc.kubeconfig))
 			if err == nil {
 				t.Fatal("expected an error, got nil")
@@ -361,9 +365,10 @@ func TestMaterializeFromKubeconfigParseErrors(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
-func TestMaterializeFromKubeconfigPreservesServerName(t *testing.T) {
+var _ = It("MaterializeFromKubeconfigPreservesServerName", func() {
+	t := GinkgoT()
 	// tls-server-name is a plain string (no file read) and must be carried into
 	// the materialized credential so TLS verification uses the intended name.
 	serverNameKubeconfig := `apiVersion: v1
@@ -392,9 +397,10 @@ contexts:
 	if m.ServerName != "api.internal.spoke" {
 		t.Fatalf("ServerName = %q, want api.internal.spoke", m.ServerName)
 	}
-}
+})
 
-func TestMaterializeFromKubeconfigInsecureSkipTLSVerify(t *testing.T) {
+var _ = It("MaterializeFromKubeconfigInsecureSkipTLSVerify", func() {
+	t := GinkgoT()
 	// insecure-skip-tls-verify must leave CAData empty even when the kubeconfig
 	// also carries certificate-authority-data: verification is skipped entirely,
 	// so there is no CA bundle to carry forward.
@@ -424,9 +430,10 @@ contexts:
 	if len(m.CAData) != 0 {
 		t.Fatalf("CAData = %q, want empty when insecure-skip-tls-verify is set", string(m.CAData))
 	}
-}
+})
 
-func TestKubeconfigProviderExplicitNamespace(t *testing.T) {
+var _ = It("KubeconfigProviderExplicitNamespace", func() {
+	t := GinkgoT()
 	// secretRef.namespace, when set explicitly, is read as given even though it
 	// differs from the SpokeCluster's own namespace. This complements the
 	// existing empty-namespace tests, which only exercise the same-namespace
@@ -451,4 +458,4 @@ func TestKubeconfigProviderExplicitNamespace(t *testing.T) {
 	if m.Endpoint != "https://spoke.example.com:6443" {
 		t.Fatalf("endpoint = %q", m.Endpoint)
 	}
-}
+})

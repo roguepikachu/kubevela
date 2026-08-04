@@ -20,11 +20,11 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"testing"
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	. "github.com/onsi/ginkgo/v2"
 )
 
 // fakePresigner is a deterministic stand-in for the STS presign client.
@@ -40,7 +40,8 @@ func (f *fakePresigner) PresignGetCallerIdentity(_ context.Context, _ *sts.GetCa
 	return &v4.PresignedHTTPRequest{URL: f.url, Method: "GET"}, nil
 }
 
-func TestGenerateEKSToken(t *testing.T) {
+var _ = It("GenerateEKSToken", func() {
+	t := GinkgoT()
 	now := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
 	presignedURL := "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15&X-Amz-Signature=abc"
 
@@ -68,9 +69,10 @@ func TestGenerateEKSToken(t *testing.T) {
 	if !refreshAt.Equal(wantRefresh) {
 		t.Fatalf("refreshAt = %v, want %v", refreshAt, wantRefresh)
 	}
-}
+})
 
-func TestGenerateEKSTokenErrors(t *testing.T) {
+var _ = It("GenerateEKSTokenErrors", func() {
+	t := GinkgoT()
 	now := time.Now()
 	if _, _, err := generateEKSToken(context.Background(), &fakePresigner{url: "https://x"}, "", now); err == nil {
 		t.Fatal("expected error for empty cluster name")
@@ -79,13 +81,14 @@ func TestGenerateEKSTokenErrors(t *testing.T) {
 	if _, _, err := generateEKSToken(context.Background(), &fakePresigner{err: presignErr}, "c", now); err == nil {
 		t.Fatal("expected error when presign fails")
 	}
-}
+})
 
-func TestDecodeEKSTokenURL(t *testing.T) {
+var _ = It("DecodeEKSTokenURL", func() {
+	t := GinkgoT()
 	if _, err := decodeEKSTokenURL("not-a-token"); err == nil {
 		t.Fatal("expected error for token without prefix")
 	}
 	if _, err := decodeEKSTokenURL(eksTokenPrefix + "!!not-base64!!"); err == nil {
 		t.Fatal("expected error for non-base64url payload")
 	}
-}
+})

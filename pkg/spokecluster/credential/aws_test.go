@@ -20,11 +20,11 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
+	. "github.com/onsi/ginkgo/v2"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
@@ -60,7 +60,8 @@ func awsSpoke() *v1beta1.SpokeCluster {
 
 func strptr(s string) *string { return &s }
 
-func TestAWSProviderMaterialize(t *testing.T) {
+var _ = It("AWSProviderMaterialize", func() {
+	t := GinkgoT()
 	now := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
 	caB64 := base64.StdEncoding.EncodeToString([]byte("spoke-ca-pem"))
 	presignedURL := "https://sts.amazonaws.com/?Action=GetCallerIdentity"
@@ -96,9 +97,10 @@ func TestAWSProviderMaterialize(t *testing.T) {
 	if want := now.Add(14 * time.Minute); !m.NextRefresh.Equal(want) {
 		t.Fatalf("nextRefresh = %v, want %v", m.NextRefresh, want)
 	}
-}
+})
 
-func TestAWSProviderValidation(t *testing.T) {
+var _ = It("AWSProviderValidation", func() {
+	t := GinkgoT()
 	p := NewAWSProvider()
 
 	// Missing aws arm.
@@ -113,9 +115,10 @@ func TestAWSProviderValidation(t *testing.T) {
 	if _, err := p.Materialize(context.Background(), nil, scPartial); err == nil {
 		t.Fatal("expected error when roleArn is empty")
 	}
-}
+})
 
-func TestAWSProviderDescribeFailure(t *testing.T) {
+var _ = It("AWSProviderDescribeFailure", func() {
+	t := GinkgoT()
 	p := &AWSProvider{
 		now: time.Now,
 		newClients: func(_ context.Context, _ *v1beta1.AWSCredential) (eksDescribeAPI, stsPresignAPI, error) {
@@ -125,9 +128,10 @@ func TestAWSProviderDescribeFailure(t *testing.T) {
 	if _, err := p.Materialize(context.Background(), nil, awsSpoke()); err == nil {
 		t.Fatal("expected error when DescribeCluster fails")
 	}
-}
+})
 
-func TestAWSProviderIncompleteCluster(t *testing.T) {
+var _ = It("AWSProviderIncompleteCluster", func() {
+	t := GinkgoT()
 	p := &AWSProvider{
 		now: time.Now,
 		newClients: func(_ context.Context, _ *v1beta1.AWSCredential) (eksDescribeAPI, stsPresignAPI, error) {
@@ -139,4 +143,4 @@ func TestAWSProviderIncompleteCluster(t *testing.T) {
 	if _, err := p.Materialize(context.Background(), nil, awsSpoke()); err == nil {
 		t.Fatal("expected error when cluster data is incomplete")
 	}
-}
+})

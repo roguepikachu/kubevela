@@ -52,7 +52,7 @@ func TestSpokeClusterAdmission(t *testing.T) {
 
 var _ = BeforeSuite(func() {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
-		Skip("KUBEBUILDER_ASSETS not set; skipping envtest schema-admission suite")
+		return
 	}
 
 	admissionTestEnv = &envtest.Environment{
@@ -80,6 +80,12 @@ var _ = AfterSuite(func() {
 })
 
 var _ = Describe("SpokeCluster schema admission", func() {
+	BeforeEach(func() {
+		if admissionK8sClient == nil {
+			Skip("KUBEBUILDER_ASSETS not set; skipping envtest schema-admission spec")
+		}
+	})
+
 	// Requirement 7, criterion 1: a valid kubeconfig SpokeCluster is admitted
 	// and the apiserver applies the CRD-level defaults.
 	It("admits a valid kubeconfig spoke and applies CRD defaults", func() {

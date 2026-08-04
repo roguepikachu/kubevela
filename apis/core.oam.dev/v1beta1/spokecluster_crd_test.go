@@ -18,8 +18,8 @@ package v1beta1
 
 import (
 	"os"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/require"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"sigs.k8s.io/yaml"
@@ -27,7 +27,7 @@ import (
 
 const spokeClusterCRDPath = "../../../charts/vela-core/crds/core.oam.dev_spokeclusters.yaml"
 
-func loadSpokeClusterCRD(t *testing.T) *apiextv1.CustomResourceDefinition {
+func loadSpokeClusterCRD(t GinkgoTInterface) *apiextv1.CustomResourceDefinition {
 	t.Helper()
 	raw, err := os.ReadFile(spokeClusterCRDPath)
 	require.NoError(t, err, "generated SpokeCluster CRD must be present in charts/vela-core/crds")
@@ -37,7 +37,7 @@ func loadSpokeClusterCRD(t *testing.T) *apiextv1.CustomResourceDefinition {
 }
 
 // v1beta1Schema returns the openAPIV3 schema of the v1beta1 version.
-func v1beta1Schema(t *testing.T, crd *apiextv1.CustomResourceDefinition) *apiextv1.JSONSchemaProps {
+func v1beta1Schema(t GinkgoTInterface, crd *apiextv1.CustomResourceDefinition) *apiextv1.JSONSchemaProps {
 	t.Helper()
 	for _, v := range crd.Spec.Versions {
 		if v.Name == "v1beta1" {
@@ -51,7 +51,8 @@ func v1beta1Schema(t *testing.T, crd *apiextv1.CustomResourceDefinition) *apiext
 
 // TestSpokeClusterCRD_Namespaced asserts the installed CRD is namespaced
 // and named to avoid the Cluster API collision (Requirement 1).
-func TestSpokeClusterCRD_Namespaced(t *testing.T) {
+var _ = It("SpokeClusterCRD Namespaced", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	crd := loadSpokeClusterCRD(t)
 
@@ -64,11 +65,12 @@ func TestSpokeClusterCRD_Namespaced(t *testing.T) {
 	// core.oam.dev CRD so `kubectl get oam` includes SpokeCluster.
 	r.Equal([]string{"spc"}, crd.Spec.Names.ShortNames)
 	r.Contains(crd.Spec.Names.Categories, "oam")
-}
+})
 
 // TestSpokeClusterCRD_PrinterColumns asserts the default and wide fleet-summary
 // columns are present (Requirement 5).
-func TestSpokeClusterCRD_PrinterColumns(t *testing.T) {
+var _ = It("SpokeClusterCRD PrinterColumns", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	crd := loadSpokeClusterCRD(t)
 
@@ -97,11 +99,12 @@ func TestSpokeClusterCRD_PrinterColumns(t *testing.T) {
 	for _, name := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "AUTH", "LAST PROBE"} {
 		r.Truef(wideCols[name], "expected wide (priority>0) column %q", name)
 	}
-}
+})
 
 // TestSpokeClusterCRD_Enums asserts the closed value sets are enforced at the
 // schema level (Requirements 2, 3, 4).
-func TestSpokeClusterCRD_Enums(t *testing.T) {
+var _ = It("SpokeClusterCRD Enums", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
 
@@ -135,13 +138,14 @@ func TestSpokeClusterCRD_Enums(t *testing.T) {
 
 	status := schema.Properties["status"]
 	r.ElementsMatch([]string{`"Connected"`, `"Disconnected"`, `"Unknown"`}, enumValues(status.Properties["connection"]))
-}
+})
 
 // TestSpokeClusterCRD_OptionalSecretNamespace asserts the kubeconfig Secret
 // reference only requires a name; namespace is optional and cross-namespace
 // references are rejected by the webhook's default policy later
 // (Requirement 2, criterion 2).
-func TestSpokeClusterCRD_OptionalSecretNamespace(t *testing.T) {
+var _ = It("SpokeClusterCRD OptionalSecretNamespace", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
 
@@ -153,13 +157,14 @@ func TestSpokeClusterCRD_OptionalSecretNamespace(t *testing.T) {
 
 	r.Contains(secretRef.Required, "name")
 	r.NotContains(secretRef.Required, "namespace")
-}
+})
 
 // TestSpokeClusterCRD_RequiredFields asserts credential is the only required
 // spec field. mode carries a default, so it is optional (a required field with
 // a default is contradictory), and root spec stays optional to match every
 // other core.oam.dev CRD.
-func TestSpokeClusterCRD_RequiredFields(t *testing.T) {
+var _ = It("SpokeClusterCRD RequiredFields", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
 
@@ -173,11 +178,12 @@ func TestSpokeClusterCRD_RequiredFields(t *testing.T) {
 	mode := spec.Properties["mode"]
 	r.NotNil(mode.Default)
 	r.JSONEq(`"connect"`, string(mode.Default.Raw))
-}
+})
 
 // TestSpokeClusterCRD_AuthColumnFromSpec asserts the wide AUTH column reads the
 // credential type from spec, not a status field (there is no status.authMethod).
-func TestSpokeClusterCRD_AuthColumnFromSpec(t *testing.T) {
+var _ = It("SpokeClusterCRD AuthColumnFromSpec", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	crd := loadSpokeClusterCRD(t)
 
@@ -196,13 +202,14 @@ func TestSpokeClusterCRD_AuthColumnFromSpec(t *testing.T) {
 		}
 	}
 	r.Equal(".spec.credential.type", authPath)
-}
+})
 
 // TestSpokeClusterCRD_Phase2Stubs asserts the forward-compatible Phase 2 fields
 // are present in the schema with their intended shape. No Phase 1 controller
 // reconciles them, but they are published now so the dispatch and rollout work
 // in a later phase does not require a breaking CRD change.
-func TestSpokeClusterCRD_Phase2Stubs(t *testing.T) {
+var _ = It("SpokeClusterCRD Phase2Stubs", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
 
@@ -226,4 +233,4 @@ func TestSpokeClusterCRD_Phase2Stubs(t *testing.T) {
 	for _, field := range []string{"status", "planesHealthy", "planesTotal", "lastPulledAt"} {
 		r.Contains(health.Properties, field)
 	}
-}
+})

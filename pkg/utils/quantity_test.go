@@ -17,12 +17,12 @@ limitations under the License.
 package utils
 
 import (
-	"testing"
-
+	. "github.com/onsi/ginkgo/v2"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-func TestHumanizeMemory(t *testing.T) {
+var _ = It("HumanizeMemory", func() {
+	t := GinkgoT()
 	tests := []struct {
 		name     string
 		quantity string
@@ -40,22 +40,23 @@ func TestHumanizeMemory(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			if got := HumanizeMemory(resource.MustParse(tt.quantity)); got != tt.want {
 				t.Errorf("HumanizeMemory(%s) = %q, want %q", tt.quantity, got, tt.want)
 			}
 		})
 	}
-}
+})
 
 // TestHumanizeMemoryOutputParsesAsQuantity guards the property that makes this helper
 // preferable to a general-purpose humanize library: the rendered value is still a valid
 // resource.Quantity, so consumers of a status field can parse it back.
-func TestHumanizeMemoryOutputParsesAsQuantity(t *testing.T) {
+var _ = It("HumanizeMemoryOutputParsesAsQuantity", func() {
+	t := GinkgoT()
 	for _, in := range []string{"32809156Ki", "24Gi", "2048Mi", "3Ti", "512Mi", "64Ki"} {
 		out := HumanizeMemory(resource.MustParse(in))
 		if _, err := resource.ParseQuantity(out); err != nil {
 			t.Errorf("HumanizeMemory(%s) = %q, which does not parse as a Quantity: %v", in, out, err)
 		}
 	}
-}
+})

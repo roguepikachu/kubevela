@@ -18,8 +18,8 @@ package v1beta1
 
 import (
 	"encoding/json"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -59,7 +59,8 @@ func sampleAWSSpokeCluster() *SpokeCluster {
 
 // TestSpokeCluster_JSONRoundTrip proves the type and its credential union
 // round-trip through JSON without losing fields.
-func TestSpokeCluster_JSONRoundTrip(t *testing.T) {
+var _ = It("SpokeCluster JSONRoundTrip", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	original := sampleAWSSpokeCluster()
 
@@ -69,11 +70,12 @@ func TestSpokeCluster_JSONRoundTrip(t *testing.T) {
 	decoded := &SpokeCluster{}
 	r.NoError(json.Unmarshal(data, decoded))
 	r.Equal(original, decoded)
-}
+})
 
 // TestSpokeCluster_DeepCopyRoundTrip proves generated deepcopy methods exist
 // and produce an equal, independent copy (Requirement 7, criterion 2).
-func TestSpokeCluster_DeepCopyRoundTrip(t *testing.T) {
+var _ = It("SpokeCluster DeepCopyRoundTrip", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	original := sampleAWSSpokeCluster()
 
@@ -83,30 +85,33 @@ func TestSpokeCluster_DeepCopyRoundTrip(t *testing.T) {
 	// Mutating the copy must not affect the original (independent memory).
 	cp.Spec.Credential.AWS.Region = "eu-west-1"
 	r.Equal("us-east-1", original.Spec.Credential.AWS.Region)
-}
+})
 
 // TestSpokeClusterList_DeepCopy proves the list type carries generated deepcopy.
-func TestSpokeClusterList_DeepCopy(t *testing.T) {
+var _ = It("SpokeClusterList DeepCopy", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	list := &SpokeClusterList{Items: []SpokeCluster{*sampleAWSSpokeCluster()}}
 	r.Equal(list, list.DeepCopy())
-}
+})
 
 // TestSpokeCluster_RegisteredInScheme proves SpokeCluster and SpokeClusterList
 // are registered with the API scheme so the type round-trips (Requirement 7).
-func TestSpokeCluster_RegisteredInScheme(t *testing.T) {
+var _ = It("SpokeCluster RegisteredInScheme", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	s := runtime.NewScheme()
 	r.NoError(AddToScheme(s))
 
 	r.True(s.Recognizes(SchemeGroupVersion.WithKind("SpokeCluster")))
 	r.True(s.Recognizes(SchemeGroupVersion.WithKind("SpokeClusterList")))
-}
+})
 
 // TestSpokeCluster_KubeconfigCredential proves the kubeconfig arm round-trips
 // with an optional Secret namespace (webhook rejects cross-namespace refs by
 // default policy; the same-namespace case needs no explicit namespace).
-func TestSpokeCluster_KubeconfigCredential(t *testing.T) {
+var _ = It("SpokeCluster KubeconfigCredential", func() {
+	t := GinkgoT()
 	r := require.New(t)
 	sc := &SpokeCluster{
 		ObjectMeta: metav1.ObjectMeta{Name: "dev-spoke", Namespace: "vela-system"},
@@ -134,4 +139,4 @@ func TestSpokeCluster_KubeconfigCredential(t *testing.T) {
 	secretRefData, err := json.Marshal(sc.Spec.Credential.Kubeconfig.SecretRef)
 	r.NoError(err)
 	r.NotContains(string(secretRefData), `"namespace"`)
-}
+})

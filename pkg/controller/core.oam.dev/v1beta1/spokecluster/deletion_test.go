@@ -20,8 +20,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +85,7 @@ func deletingSpokeIn(name, namespace string, policy v1beta1.SpokeDeletionPolicy)
 	return sc
 }
 
-func secretExists(t *testing.T, cli client.Client, name string) bool {
+func secretExists(t GinkgoTInterface, cli client.Client, name string) bool {
 	t.Helper()
 	key := gatewayKey(name)
 	err := cli.Get(context.Background(), key, &corev1.Secret{})
@@ -100,7 +100,8 @@ func secretExists(t *testing.T, cli client.Client, name string) bool {
 	}
 }
 
-func TestReconcileDeleteDetachRemovesSecret(t *testing.T) {
+var _ = It("ReconcileDeleteDetachRemovesSecret", func() {
+	t := GinkgoT()
 	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc, gatewaySecret(sc.Name))
 
@@ -114,14 +115,15 @@ func TestReconcileDeleteDetachRemovesSecret(t *testing.T) {
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released, the SpokeCluster stays wedged")
 	}
-}
+})
 
 // A detach spoke outside the gateway namespace never gets the owner-reference backstop,
 // because owner references cannot cross namespaces. The finalizer is what actually cleans
 // up, and it is namespace-independent, so deletion must still remove the Secret. This is
 // the compensating mechanism for the skipped reference in
 // TestRegisterOutsideGatewayNamespaceSkipsOwnerRef; without it the skip would leak.
-func TestReconcileDeleteDetachRemovesSecretOutsideGatewayNamespace(t *testing.T) {
+var _ = It("ReconcileDeleteDetachRemovesSecretOutsideGatewayNamespace", func() {
+	t := GinkgoT()
 	sc := deletingSpokeIn("spoke", "team-a", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc, gatewaySecretOwnedBy(sc.Name, sc.Namespace))
 
@@ -135,11 +137,12 @@ func TestReconcileDeleteDetachRemovesSecretOutsideGatewayNamespace(t *testing.T)
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released, the SpokeCluster stays wedged")
 	}
-}
+})
 
 // An unset policy has to behave as detach, so objects created before schema defaulting
 // still clean up after themselves.
-func TestReconcileDeleteUnsetPolicyDetaches(t *testing.T) {
+var _ = It("ReconcileDeleteUnsetPolicyDetaches", func() {
+	t := GinkgoT()
 	sc := deletingSpoke("spoke", "")
 	r := newTestReconciler(t, sc, gatewaySecret(sc.Name))
 
@@ -153,9 +156,10 @@ func TestReconcileDeleteUnsetPolicyDetaches(t *testing.T) {
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released")
 	}
-}
+})
 
-func TestReconcileDeleteOrphanKeepsSecret(t *testing.T) {
+var _ = It("ReconcileDeleteOrphanKeepsSecret", func() {
+	t := GinkgoT()
 	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyOrphan)
 	r := newTestReconciler(t, sc, gatewaySecret(sc.Name))
 
@@ -169,12 +173,13 @@ func TestReconcileDeleteOrphanKeepsSecret(t *testing.T) {
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released")
 	}
-}
+})
 
 // A spoke that never finished registering has no gateway Secret, so DetachCluster errors.
 // Deletion still has to complete through the direct-delete fallback, otherwise a
 // half-registered spoke can never be removed.
-func TestReconcileDeleteNeverRegisteredStillCompletes(t *testing.T) {
+var _ = It("ReconcileDeleteNeverRegisteredStillCompletes", func() {
+	t := GinkgoT()
 	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 
@@ -185,9 +190,10 @@ func TestReconcileDeleteNeverRegisteredStillCompletes(t *testing.T) {
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released for a never-registered spoke, deletion is wedged")
 	}
-}
+})
 
-func TestReconcileDeleteWithoutFinalizerIsNoOp(t *testing.T) {
+var _ = It("ReconcileDeleteWithoutFinalizerIsNoOp", func() {
+	t := GinkgoT()
 	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	sc.Finalizers = nil
 	r := newTestReconciler(t, gatewaySecret(sc.Name))
@@ -199,12 +205,13 @@ func TestReconcileDeleteWithoutFinalizerIsNoOp(t *testing.T) {
 	if !secretExists(t, r.Client, sc.Name) {
 		t.Error("gateway secret was removed without the finalizer present, want no cleanup at all")
 	}
-}
+})
 
 // A SpokeCluster whose name collides with something it never registered (a manually
 // joined cluster, or another SpokeCluster across namespaces) must release its own
 // finalizer without touching that foreign Secret at all when it is deleted.
-func TestReconcileDeleteSkipsCleanupForUnownedSecret(t *testing.T) {
+var _ = It("ReconcileDeleteSkipsCleanupForUnownedSecret", func() {
+	t := GinkgoT()
 	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	foreign := foreignGatewaySecret(sc.Name)
 	r := newTestReconciler(t, sc, foreign)
@@ -220,9 +227,10 @@ func TestReconcileDeleteSkipsCleanupForUnownedSecret(t *testing.T) {
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released for the deleting SpokeCluster")
 	}
-}
+})
 
-func TestIsExpectedDetachFailure(t *testing.T) {
+var _ = It("IsExpectedDetachFailure", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		err  error
 		want bool
@@ -249,13 +257,13 @@ func TestIsExpectedDetachFailure(t *testing.T) {
 		},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			if got := isExpectedDetachFailure(tc.err); got != tc.want {
 				t.Errorf("isExpectedDetachFailure(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
-}
+})
 
 func containsFinalizer(sc *v1beta1.SpokeCluster) bool {
 	for _, f := range sc.Finalizers {

@@ -21,8 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"testing"
 
+	. "github.com/onsi/ginkgo/v2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -35,7 +35,8 @@ const testSpokeEndpoint = "https://172.21.0.2:6443"
 // TestDescribeProbeFailureNamesTheSpokeEndpoint is the whole point of the helper. The raw
 // error from the gateway names the hub's own in-cluster proxy address, which sends whoever
 // reads the condition to the wrong machine.
-func TestDescribeProbeFailureNamesTheSpokeEndpoint(t *testing.T) {
+var _ = It("DescribeProbeFailureNamesTheSpokeEndpoint", func() {
+	t := GinkgoT()
 	sc := spoke("unreachable", v1beta1.SpokeDeletionPolicyDetach)
 	sc.Spec.ProbeTimeoutSeconds = 10
 
@@ -54,9 +55,10 @@ func TestDescribeProbeFailureNamesTheSpokeEndpoint(t *testing.T) {
 	if !strings.Contains(got, "context deadline exceeded") {
 		t.Errorf("message must retain the underlying error, got: %s", got)
 	}
-}
+})
 
-func TestDescribeProbeFailureClassifiesCauses(t *testing.T) {
+var _ = It("DescribeProbeFailureClassifiesCauses", func() {
+	t := GinkgoT()
 	gv := schema.GroupResource{Group: "cluster.core.oam.dev", Resource: "clustergateways"}
 
 	tests := []struct {
@@ -110,7 +112,7 @@ func TestDescribeProbeFailureClassifiesCauses(t *testing.T) {
 
 	sc := spoke("unreachable", v1beta1.SpokeDeletionPolicyDetach)
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		By(tt.name, func() {
 			got := describeProbeFailure(sc, testSpokeEndpoint, tt.err)
 			if !strings.Contains(got, tt.wantHint) {
 				t.Errorf("message = %q, want it to contain %q", got, tt.wantHint)
@@ -120,21 +122,23 @@ func TestDescribeProbeFailureClassifiesCauses(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // TestDescribeProbeFailureWithoutEndpoint guards the path where materialization produced no
 // endpoint: the message must still be readable rather than saying "unreachable at ".
-func TestDescribeProbeFailureWithoutEndpoint(t *testing.T) {
+var _ = It("DescribeProbeFailureWithoutEndpoint", func() {
+	t := GinkgoT()
 	sc := spoke("unreachable", v1beta1.SpokeDeletionPolicyDetach)
 	got := describeProbeFailure(sc, "", context.DeadlineExceeded)
 	if !strings.Contains(got, "unknown endpoint") {
 		t.Errorf("message = %q, want an explicit placeholder for a missing endpoint", got)
 	}
-}
+})
 
-func TestProbeTimeoutFallsBackToDefault(t *testing.T) {
+var _ = It("ProbeTimeoutFallsBackToDefault", func() {
+	t := GinkgoT()
 	sc := &v1beta1.SpokeCluster{ObjectMeta: metav1.ObjectMeta{Name: "no-timeout"}}
 	if got := probeTimeout(sc); got != defaultProbeTimeout {
 		t.Errorf("probeTimeout() = %v, want the default %v", got, defaultProbeTimeout)
 	}
-}
+})

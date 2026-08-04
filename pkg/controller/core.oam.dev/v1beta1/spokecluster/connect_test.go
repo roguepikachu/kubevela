@@ -18,9 +18,9 @@ package spokecluster
 
 import (
 	"context"
-	"testing"
 
 	clustercommon "github.com/oam-dev/cluster-gateway/pkg/common"
+	. "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,7 +41,7 @@ var credentialTypeLabel = clustercommon.LabelKeyClusterCredentialType
 
 // testScheme carries the core types plus the vela API group so SetControllerReference can
 // resolve the SpokeCluster GVK.
-func testScheme(t *testing.T) *runtime.Scheme {
+func testScheme(t GinkgoTInterface) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := corev1.AddToScheme(scheme); err != nil {
@@ -56,7 +56,7 @@ func testScheme(t *testing.T) *runtime.Scheme {
 // newTestReconciler builds a Reconciler over a fake client seeded with objs. The status
 // subresource is registered because the reconcile loop writes status through it; without
 // that the fake client would fold status writes into the main object and hide bugs.
-func newTestReconciler(t *testing.T, objs ...client.Object) *Reconciler {
+func newTestReconciler(t GinkgoTInterface, objs ...client.Object) *Reconciler {
 	t.Helper()
 	scheme := testScheme(t)
 	cli := fake.NewClientBuilder().
@@ -111,7 +111,7 @@ func gatewayKey(name string) apitypes.NamespacedName {
 }
 
 // readGatewaySecret fetches the gateway Secret for name, failing the test if absent.
-func readGatewaySecret(t *testing.T, cli client.Client, name string) *corev1.Secret {
+func readGatewaySecret(t GinkgoTInterface, cli client.Client, name string) *corev1.Secret {
 	t.Helper()
 	secret := &corev1.Secret{}
 	key := gatewayKey(name)
@@ -121,7 +121,8 @@ func readGatewaySecret(t *testing.T, cli client.Client, name string) *corev1.Sec
 	return secret
 }
 
-func TestRegisterSecretShape(t *testing.T) {
+var _ = It("RegisterSecretShape", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		materialized *credential.Materialized
 		wantData     map[string]string
@@ -161,7 +162,7 @@ func TestRegisterSecretShape(t *testing.T) {
 	}
 
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 			r := newTestReconciler(t, sc)
 
@@ -188,9 +189,10 @@ func TestRegisterSecretShape(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
-func TestRegisterOwnershipPerPolicy(t *testing.T) {
+var _ = It("RegisterOwnershipPerPolicy", func() {
+	t := GinkgoT()
 	cases := map[string]struct {
 		policy      v1beta1.SpokeDeletionPolicy
 		wantOwnedBy bool
@@ -201,7 +203,7 @@ func TestRegisterOwnershipPerPolicy(t *testing.T) {
 	}
 
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		By(name, func() {
 			sc := spoke("spoke", tc.policy)
 			r := newTestReconciler(t, sc)
 
@@ -215,14 +217,15 @@ func TestRegisterOwnershipPerPolicy(t *testing.T) {
 			}
 		})
 	}
-}
+})
 
 // A detach SpokeCluster outside the gateway namespace cannot own the gateway Secret,
 // because Kubernetes forbids cross-namespace owner references. Registration still has to
 // succeed: the owner reference is only a garbage-collection backstop, and refusing to
 // register would make the default deletion policy work in the gateway namespace alone.
 // The owner annotation is still written, so the finalizer can identify what to clean up.
-func TestRegisterOutsideGatewayNamespaceSkipsOwnerRef(t *testing.T) {
+var _ = It("RegisterOutsideGatewayNamespaceSkipsOwnerRef", func() {
+	t := GinkgoT()
 	sc := spokeIn("spoke", "team-a", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 
@@ -237,9 +240,10 @@ func TestRegisterOutsideGatewayNamespaceSkipsOwnerRef(t *testing.T) {
 	if got, want := secret.Annotations[secretOwnerAnnotation], sc.Namespace+"/"+sc.Name; got != want {
 		t.Errorf("owner annotation = %q, want %q (the finalizer needs it to identify the secret)", got, want)
 	}
-}
+})
 
-func TestRegisterIsIdempotent(t *testing.T) {
+var _ = It("RegisterIsIdempotent", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 	ctx := context.Background()
@@ -258,11 +262,12 @@ func TestRegisterIsIdempotent(t *testing.T) {
 	if got := string(secret.Data["token"]); got != "tok-2" {
 		t.Errorf("data[token] = %q, want the reminted %q", got, "tok-2")
 	}
-}
+})
 
 // A credential kind change has to replace the data keys wholesale, so the stale arm does
 // not linger and confuse cluster-gateway, and the credential-type label has to flip.
-func TestRegisterReplacesCredentialKind(t *testing.T) {
+var _ = It("RegisterReplacesCredentialKind", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 	ctx := context.Background()
@@ -284,13 +289,14 @@ func TestRegisterReplacesCredentialKind(t *testing.T) {
 	if got := secret.Labels[credentialTypeLabel]; got != "X509Certificate" {
 		t.Errorf("label %s = %q, want %q", credentialTypeLabel, got, "X509Certificate")
 	}
-}
+})
 
 // Flipping a registered spoke from detach to orphan has to clear the owner reference the
 // earlier detach register set. Leaving it behind means garbage collection still reaps the
 // Secret when the SpokeCluster is deleted, which is exactly what orphan promises not to
 // do. The prototype only ever added references, so this is a deliberate deviation.
-func TestRegisterClearsOwnershipOnPolicyFlipToOrphan(t *testing.T) {
+var _ = It("RegisterClearsOwnershipOnPolicyFlipToOrphan", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 	ctx := context.Background()
@@ -311,14 +317,15 @@ func TestRegisterClearsOwnershipOnPolicyFlipToOrphan(t *testing.T) {
 	if ownedBySpoke(secret, sc) {
 		t.Errorf("owner reference survived the flip to orphan, refs %+v", secret.OwnerReferences)
 	}
-}
+})
 
 // Clearing ownership must be surgical: a controller reference owned by something else is
 // not this controller's to remove. The fixture carries our own owner annotation, standing
 // in for a secret this SpokeCluster registered previously that some other system has since
 // also attached a controller reference to; without that annotation the adopt guard in
 // verifyAdoptable would refuse to touch it at all (see TestRegisterRefusesToAdoptForeignSecret).
-func TestRegisterKeepsForeignOwnerReference(t *testing.T) {
+var _ = It("RegisterKeepsForeignOwnerReference", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyOrphan)
 	foreign := metav1.OwnerReference{
 		APIVersion: "apps/v1",
@@ -345,12 +352,13 @@ func TestRegisterKeepsForeignOwnerReference(t *testing.T) {
 	if len(secret.OwnerReferences) != 1 || secret.OwnerReferences[0].Name != foreign.Name {
 		t.Errorf("owner references = %+v, want the foreign reference untouched", secret.OwnerReferences)
 	}
-}
+})
 
 // TestRegisterRefusesToAdoptForeignSecret is the fake-client counterpart to the live
 // hijack finding: a gateway Secret with no owner annotation, standing in for one
 // `vela cluster join` wrote by hand, must never be silently overwritten.
-func TestRegisterRefusesToAdoptForeignSecret(t *testing.T) {
+var _ = It("RegisterRefusesToAdoptForeignSecret", func() {
+	t := GinkgoT()
 	sc := spoke("victim", v1beta1.SpokeDeletionPolicyDetach)
 	manuallyJoined := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -374,13 +382,14 @@ func TestRegisterRefusesToAdoptForeignSecret(t *testing.T) {
 	if ownedBySpoke(secret, sc) {
 		t.Error("the SpokeCluster took ownership of a foreign secret despite the refusal")
 	}
-}
+})
 
 // TestRegisterRefusesCrossNamespaceNameCollision is the same guard from a different
 // angle: a gateway Secret already owned by a different, still-live SpokeCluster (a
 // same-named SpokeCluster in another namespace, since the Secret's identity is name-only
 // within the fixed gateway namespace) must not be taken over either.
-func TestRegisterRefusesCrossNamespaceNameCollision(t *testing.T) {
+var _ = It("RegisterRefusesCrossNamespaceNameCollision", func() {
+	t := GinkgoT()
 	other := spokeIn("shared-name", "team-a", v1beta1.SpokeDeletionPolicyDetach)
 	mine := spokeIn("shared-name", "team-b", v1beta1.SpokeDeletionPolicyDetach)
 	existing := &corev1.Secret{
@@ -401,11 +410,12 @@ func TestRegisterRefusesCrossNamespaceNameCollision(t *testing.T) {
 	if got := secret.Annotations[secretOwnerAnnotation]; got != other.Namespace+"/"+other.Name {
 		t.Errorf("owner annotation = %q, want the original owner untouched", got)
 	}
-}
+})
 
 // A SpokeCluster's own re-register, after the guard, must still converge: the marker this
 // controller writes on success is what makes the second call recognize the first's work.
-func TestRegisterOwnAnnotationAllowsReRegister(t *testing.T) {
+var _ = It("RegisterOwnAnnotationAllowsReRegister", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 	ctx := context.Background()
@@ -421,13 +431,14 @@ func TestRegisterOwnAnnotationAllowsReRegister(t *testing.T) {
 	if got := secret.Annotations[secretOwnerAnnotation]; got != sc.Namespace+"/"+sc.Name {
 		t.Errorf("owner annotation = %q, want %q", got, sc.Namespace+"/"+sc.Name)
 	}
-}
+})
 
 // TestRegisterRejectsIncompatibleServerName covers the case cluster-gateway has no
 // representation for: a kubeconfig tls-server-name that actually differs from the
 // endpoint's own host. Registering it anyway would silently produce a Secret that fails
 // TLS verification on every connection.
-func TestRegisterRejectsIncompatibleServerName(t *testing.T) {
+var _ = It("RegisterRejectsIncompatibleServerName", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 
@@ -443,11 +454,12 @@ func TestRegisterRejectsIncompatibleServerName(t *testing.T) {
 	if getErr := r.Get(context.Background(), gatewayKey(sc.Name), &corev1.Secret{}); !apierrors.IsNotFound(getErr) {
 		t.Errorf("gateway secret was written despite the refusal: %v", getErr)
 	}
-}
+})
 
 // A ServerName that already matches the endpoint host loses nothing by being discarded,
 // so registration must proceed normally.
-func TestRegisterAllowsServerNameMatchingEndpointHost(t *testing.T) {
+var _ = It("RegisterAllowsServerNameMatchingEndpointHost", func() {
+	t := GinkgoT()
 	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
 	r := newTestReconciler(t, sc)
 
@@ -459,7 +471,7 @@ func TestRegisterAllowsServerNameMatchingEndpointHost(t *testing.T) {
 	if err := r.register(context.Background(), sc, m); err != nil {
 		t.Fatalf("register refused a ServerName matching the endpoint host: %v", err)
 	}
-}
+})
 
 // ownedBySpoke reports whether the secret carries a controller reference naming sc.
 func ownedBySpoke(secret *corev1.Secret, sc *v1beta1.SpokeCluster) bool {

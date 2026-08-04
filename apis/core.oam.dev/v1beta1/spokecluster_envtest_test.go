@@ -20,9 +20,9 @@ import (
 	"context"
 	"os"
 	"strings"
-	"testing"
 	"time"
 
+	. "github.com/onsi/ginkgo/v2"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,7 +37,7 @@ import (
 
 // splitYAMLDocuments splits a multi-document YAML file (separated by "---")
 // into its individual document strings.
-func splitYAMLDocuments(t *testing.T, path string) []string {
+func splitYAMLDocuments(t GinkgoTInterface, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -54,8 +54,12 @@ func splitYAMLDocuments(t *testing.T, path string) []string {
 // TestSpokeClusterCRD_InstallAndApply installs the generated SpokeCluster CRD
 // into a real envtest API server, applies both worked examples, and retrieves
 // them back (Requirement 1, criterion 1; Requirement 7, criterion 1).
-func TestSpokeClusterCRD_InstallAndApply(t *testing.T) {
+var _ = It("SpokeClusterCRD InstallAndApply", func() {
+	t := GinkgoT()
 	r := require.New(t)
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		Skip("KUBEBUILDER_ASSETS not set; skipping envtest CRD installation spec")
+	}
 
 	testEnv := &envtest.Environment{
 		ControlPlaneStartTimeout: 2 * time.Minute,
@@ -94,7 +98,7 @@ func TestSpokeClusterCRD_InstallAndApply(t *testing.T) {
 	r.True(found, "spokeclusters resource must be registered with the API server")
 
 	// AWS Pod Identity example.
-	awsDocs := splitYAMLDocuments(t, "../../../examples/spokecluster-aws.yaml")
+	awsDocs := splitYAMLDocuments(t, "../../../docs/examples/spokecluster-connect/spokecluster-aws.yaml")
 	r.Len(awsDocs, 1)
 	awsCluster := &SpokeCluster{}
 	r.NoError(yaml.Unmarshal([]byte(awsDocs[0]), awsCluster))
@@ -107,7 +111,7 @@ func TestSpokeClusterCRD_InstallAndApply(t *testing.T) {
 
 	// Static kubeconfig example: a source Secret plus the SpokeCluster that
 	// references it.
-	kubeconfigDocs := splitYAMLDocuments(t, "../../../examples/spokecluster-kubeconfig.yaml")
+	kubeconfigDocs := splitYAMLDocuments(t, "../../../docs/examples/spokecluster-connect/spokecluster-kubeconfig.yaml")
 	r.Len(kubeconfigDocs, 2)
 
 	secret := &corev1.Secret{}
@@ -128,4 +132,4 @@ func TestSpokeClusterCRD_InstallAndApply(t *testing.T) {
 	list := &SpokeClusterList{}
 	r.NoError(k8sClient.List(ctx, list, client.InNamespace("vela-system")))
 	r.Len(list.Items, 2)
-}
+})
