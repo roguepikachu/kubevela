@@ -32,9 +32,7 @@ spec:
 #
 #   kubectl get spokecluster tenant-spoke -n team-a
 #   NAME           MODE      VERSION        NODES  PLATFORM  STATUS      AGE
-#   tenant-spoke   connect   v1.31.5+k3s1                    Connected   10s
-#
-# NODES and PLATFORM stay blank until GWCP-102133 (discovery inventory) lands.
+#   tenant-spoke   connect   v1.31.5+k3s1   1      k3s       Connected   10s
 #
 #   kubectl get secret tenant-spoke -n vela-system -o jsonpath='{.metadata.ownerReferences}'
 #   (empty, by design)
