@@ -41,9 +41,11 @@ var memoryUnits = []struct {
 // which is why a sum of node capacities almost always comes back in Ki.
 //
 // One decimal place, with a trailing .0 dropped so exact values stay exact: 24Gi, not 24.0Gi.
-// That rounding is lossy by up to ~0.05% of the unit, so this is for display and status
-// reporting, not for arithmetic on the original value. The output does still parse as a
-// resource.Quantity, unlike the "31 GiB" form the common humanize libraries emit.
+// Rounding is lossy by up to 0.05 of the displayed unit, which is roughly 51 MiB at Gi scale.
+// Relatively that is worst just above 1.0 of a unit, about 4.8%, and shrinks as the value
+// grows: 0.16% at 31Gi, 0.01% at 512Gi. So this is for display and status reporting, not for
+// arithmetic on the original value. The output does still parse as a resource.Quantity,
+// unlike the "31 GiB" form the common humanize libraries emit.
 func HumanizeMemory(q resource.Quantity) string {
 	bytes := q.Value()
 	if bytes <= 0 {
