@@ -57,6 +57,10 @@ spec:
       name: LATENCY
       priority: 1
       type: integer
+    - jsonPath: .status.clusterInfo.lastSyncedTime
+      name: SYNCED
+      priority: 1
+      type: date
     - jsonPath: .spec.credential.type
       name: AUTH
       priority: 1
@@ -327,6 +331,17 @@ spec:
                     type: string
                   kubernetesVersion:
                     description: KubernetesVersion is the spoke API server version.
+                    type: string
+                  lastSyncedTime:
+                    description: |-
+                      LastSyncedTime is when this inventory was last discovered successfully.
+
+                      It advances only on a successful discovery, so it does not move while the spoke is
+                      unreachable (discovery is skipped) or while discovery is failing. That is what makes
+                      it the field to read for staleness: the InfoSynced condition's lastTransitionTime
+                      records when discovery first started succeeding, not when it last did, and
+                      status.lastProbeTime advances even on failed passes.
+                    format: date-time
                     type: string
                   latencyMillis:
                     description: LatencyMillis is the last observed hub-to-spoke round-trip

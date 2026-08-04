@@ -413,6 +413,16 @@ type SpokeClusterInfo struct {
 	// LatencyMillis is the last observed hub-to-spoke round-trip latency.
 	// +optional
 	LatencyMillis int64 `json:"latencyMillis,omitempty"`
+
+	// LastSyncedTime is when this inventory was last discovered successfully.
+	//
+	// It advances only on a successful discovery, so it does not move while the spoke is
+	// unreachable (discovery is skipped) or while discovery is failing. That is what makes
+	// it the field to read for staleness: the InfoSynced condition's lastTransitionTime
+	// records when discovery first started succeeding, not when it last did, and
+	// status.lastProbeTime advances even on failed passes.
+	// +optional
+	LastSyncedTime *metav1.Time `json:"lastSyncedTime,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -429,6 +439,7 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="CPU",type=string,JSONPath=`.status.clusterInfo.totalCPU`,priority=1
 // +kubebuilder:printcolumn:name="MEMORY",type=string,JSONPath=`.status.clusterInfo.totalMemory`,priority=1
 // +kubebuilder:printcolumn:name="LATENCY",type=integer,JSONPath=`.status.clusterInfo.latencyMillis`,priority=1
+// +kubebuilder:printcolumn:name="SYNCED",type=date,JSONPath=`.status.clusterInfo.lastSyncedTime`,priority=1
 // +kubebuilder:printcolumn:name="AUTH",type=string,JSONPath=`.spec.credential.type`,priority=1
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
 // +genclient
