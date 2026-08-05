@@ -27,11 +27,7 @@ spec:
       imagePullSecrets:
       {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.clusterCore.aws.serviceAccountRoleArn }}
-      serviceAccountName: {{ include "kubevela.fullname" . }}-cluster-core
-      {{- else }}
-      serviceAccountName: {{ include "kubevela.serviceAccountName" . }}
-      {{- end }}
+      serviceAccountName: {{ include "kubevela.clusterCoreServiceAccountName" . }}
       securityContext:
       {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:

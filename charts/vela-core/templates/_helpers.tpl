@@ -68,6 +68,26 @@ Create the name of the service account to use
 {{- end -}}
 
 {{/*
+Name of the service account vela-cluster-core runs as.
+
+This is the dedicated account the cluster-core ClusterRole and Role are bound to, so the pod
+always runs with those least-privilege rules rather than inheriting the main controller's
+account (which is bound to cluster-admin unless authentication.enabled is set). It is not
+conditional on any cloud setting: clusterCore.aws.serviceAccountRoleArn only annotates this
+account for IRSA, it does not select which account is used.
+
+When serviceAccount.create is false the chart creates no accounts at all, so there is nothing
+dedicated to run as and the configured account is used instead.
+*/}}
+{{- define "kubevela.clusterCoreServiceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+    {{ include "kubevela.fullname" . }}-cluster-core
+{{- else -}}
+    {{ include "kubevela.serviceAccountName" . }}
+{{- end -}}
+{{- end -}}
+
+{{/*
 systemDefinitionNamespace value defaulter
 */}}
 {{- define "systemDefinitionNamespace" -}}

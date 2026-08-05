@@ -56,9 +56,11 @@ rules:
     resources: ["clustergateways/proxy"]
     verbs: ["get"]
   # DetachCluster lists all ResourceTrackers and updates those referencing the detached cluster.
+  # get and watch are required because the manager's cached client starts an informer on the
+  # first List; without them the reflector retries forever with Forbidden remapped to unknown.
   - apiGroups: ["core.oam.dev"]
     resources: ["resourcetrackers"]
-    verbs: ["list", "update"]
+    verbs: ["get", "list", "watch", "update"]
   # Event recorder wired in SetupWithManager; SpokeCluster events land in any namespace.
   - apiGroups: [""]
     resources: ["events"]
