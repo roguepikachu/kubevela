@@ -38,9 +38,11 @@ rules:
   - apiGroups: ["core.oam.dev"]
     resources: ["spokeclusters/finalizers"]
     verbs: ["update"]
-  # Cluster-scoped Secret reads: the source kubeconfig Secret can live in any namespace,
-  # and the manager's informer cache needs list/watch to start. Writes are namespace-scoped
-  # (see the Role below).
+  # Cluster-scoped Secret reads: a SpokeCluster may live in any namespace and its
+  # kubeconfig Secret must sit in that same namespace. The manager's informer
+  # cache needs list/watch to start. Cross-namespace secretRef is rejected by
+  # admission (and again by the provider). Writes are namespace-scoped (see the
+  # Role below).
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]

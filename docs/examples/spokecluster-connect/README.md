@@ -9,7 +9,7 @@ They are easy to conflate and they have opposite ownership.
 | | Credential Secret | Gateway Secret |
 |---|---|---|
 | Who creates it | **You, by hand** | The controller |
-| Where | The SpokeCluster's own namespace (or `secretRef.namespace`) | Always `vela-system` |
+| Where | The SpokeCluster's own namespace (`secretRef.namespace` must match if set) | Always `vela-system` |
 | Name | Whatever you choose | Same as the SpokeCluster's name |
 | Contents | A kubeconfig under key `kubeconfig` | `endpoint`, `ca.crt`, and either `token` or `tls.crt`/`tls.key` |
 | Applies to | `credential.type: kubeconfig` only | Every credential type |

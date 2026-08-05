@@ -53,8 +53,11 @@ limitations under the License.
 // optional key). The data key defaults to "kubeconfig" via the exported constant
 // DefaultKubeconfigSecretKey (declared in kubeconfig.go),
 // and an empty namespace falls back to the SpokeCluster's own namespace at resolve
-// time. No label of any kind is required on the source Secret: the
-// credential type is chosen by spec.credential.type, not by a Secret label.
+// time. An explicit namespace that differs from the SpokeCluster's is rejected by
+// the admission webhook and again here, so a tenant SpokeCluster cannot coerce
+// the controller into reading another namespace's Secret. No label of any kind is
+// required on the source Secret: the credential type is chosen by
+// spec.credential.type, not by a Secret label.
 // Structural validation of the union is the webhook's job; providers
 // validate the resolved credential material at materialize time. The aws arm has
 // no source Secret at all; its provider mints an EKS token from workload identity

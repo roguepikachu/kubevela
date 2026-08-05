@@ -432,12 +432,35 @@ contexts:
 	}
 })
 
-var _ = It("KubeconfigProviderExplicitNamespace", func() {
+var _ = It("KubeconfigProviderSameNamespaceExplicit", func() {
 	t := GinkgoT()
-	// secretRef.namespace, when set explicitly, is read as given even though it
-	// differs from the SpokeCluster's own namespace. This complements the
-	// existing empty-namespace tests, which only exercise the same-namespace
-	// fallback because the Secret happens to sit in "vela-system" either way.
+	// secretRef.namespace may be set explicitly when it matches the SpokeCluster
+	// namespace. Cross-namespace values are rejected (see next case); empty falls
+	// back to the SpokeCluster namespace.
+	secret := kubeconfigSecret("vela-system", "spoke-kc", DefaultKubeconfigSecretKey, tokenKubeconfig)
+	cli := newFakeClient(t).WithObjects(secret).Build()
+	sc := &v1beta1.SpokeCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "vela-system"},
+		Spec: v1beta1.SpokeClusterSpec{
+			Credential: v1beta1.CredentialSpec{
+				Type: v1beta1.CredentialTypeKubeconfig,
+				Kubeconfig: &v1beta1.KubeconfigCredential{
+					SecretRef: v1beta1.SecretKeyRef{Name: "spoke-kc", Namespace: "vela-system"},
+				},
+			},
+		},
+	}
+	m, err := NewKubeconfigProvider().Materialize(context.Background(), cli, sc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.Endpoint != "https://spoke.example.com:6443" {
+		t.Fatalf("endpoint = %q", m.Endpoint)
+	}
+})
+
+var _ = It("KubeconfigProviderRejectsCrossNamespace", func() {
+	t := GinkgoT()
 	secret := kubeconfigSecret("other-ns", "spoke-kc", DefaultKubeconfigSecretKey, tokenKubeconfig)
 	cli := newFakeClient(t).WithObjects(secret).Build()
 	sc := &v1beta1.SpokeCluster{
@@ -451,11 +474,11 @@ var _ = It("KubeconfigProviderExplicitNamespace", func() {
 			},
 		},
 	}
-	m, err := NewKubeconfigProvider().Materialize(context.Background(), cli, sc)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := NewKubeconfigProvider().Materialize(context.Background(), cli, sc)
+	if err == nil {
+		t.Fatal("expected cross-namespace secretRef to be rejected")
 	}
-	if m.Endpoint != "https://spoke.example.com:6443" {
-		t.Fatalf("endpoint = %q", m.Endpoint)
+	if !strings.Contains(err.Error(), "cross-namespace") {
+		t.Fatalf("error %q should mention cross-namespace", err)
 	}
 })

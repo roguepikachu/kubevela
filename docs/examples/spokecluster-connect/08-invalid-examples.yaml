@@ -104,9 +104,27 @@ spec:
       name: eks-standard
 
 ---
-# 7. Registered stubs. These are ACCEPTED by admission and then fail at
-#    materialization with a clear not-implemented error, rather than being
-#    silently unregistered. The object exists; CredentialValid goes False.
+# 7. Cross-namespace kubeconfig secretRef. Rejected by the webhook (and again by
+#    the provider if admission is bypassed). Empty secretRef.namespace is fine;
+#    it falls back to the SpokeCluster's own namespace.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: invalid-cross-ns-secret
+  namespace: tenant-a
+spec:
+  mode: connect
+  credential:
+    type: kubeconfig
+    kubeconfig:
+      secretRef:
+        name: privileged-spoke-kubeconfig
+        namespace: platform-secrets
+
+---
+# 8. Registered stubs. azure/gcp are rejected by the webhook when enabled
+#    (unsupported type). With the webhook off they are ACCEPTED by admission and
+#    then fail at materialization with a clear not-implemented error.
 apiVersion: core.oam.dev/v1beta1
 kind: SpokeCluster
 metadata:
@@ -122,7 +140,7 @@ spec:
       clusterName: aks-prod
 
 ---
-# 8. Runtime rejections, not admission ones. These pass the webhook and fail during
+# 9. Runtime rejections, not admission ones. These pass the webhook and fail during
 #    registration, which is the point: they are properties of the credential, not the spec.
 #
 #    a. kubeconfig with a file-path certificate-authority

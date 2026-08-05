@@ -51,6 +51,11 @@ func (p *KubeconfigProvider) Materialize(ctx context.Context, cli client.Client,
 	ns := ref.Namespace
 	if ns == "" {
 		ns = sc.Namespace
+	} else if ns != sc.Namespace {
+		// Defense in depth for the webhook's same-namespace policy: a SpokeCluster
+		// admitted before that check existed, or with the webhook disabled, must
+		// still not be able to coerce a cross-namespace Secret read.
+		return nil, fmt.Errorf("cross-namespace kubeconfig secretRef is not permitted (SpokeCluster is in %q, secretRef.namespace is %q)", sc.Namespace, ns)
 	}
 	key := ref.Key
 	if key == "" {

@@ -32,8 +32,9 @@ const defaultSecretKey = "kubeconfig"
 // Validate checks a SpokeCluster against the Phase 1 policy rules that the
 // structural schema cannot express: connect-only mode, the reserved cluster
 // name, the credential union's exactly-one-arm and per-provider required
-// fields, and rejection of the Phase 2 dispatch stubs. It has no client or
-// context dependency so it can run identically in the webhook and in tests.
+// fields, same-namespace kubeconfig secretRef, and rejection of the Phase 2
+// dispatch stubs. It has no client or context dependency so it can run
+// identically in the webhook and in tests.
 func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	var errs field.ErrorList
 
@@ -47,7 +48,7 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 			"name must not be the reserved local cluster name"))
 	}
 
-	errs = append(errs, validateCredential(sc.Spec.Credential)...)
+	errs = append(errs, validateCredential(sc.Namespace, sc.Spec.Credential)...)
 
 	// Phase 2 dispatch stubs must not be set in connect mode. They exist in the
 	// schema for forward compatibility, but no Phase 1 controller reconciles them.
@@ -69,8 +70,9 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 
 // validateCredential enforces the discriminated union: exactly the arm named
 // by type is set (every other arm is forbidden), plus the per-provider required
-// fields.
-func validateCredential(cred v1beta1.CredentialSpec) field.ErrorList {
+// fields. spokeNamespace is the SpokeCluster's own namespace and is used to
+// reject cross-namespace kubeconfig secretRef (confused-deputy Secret reads).
+func validateCredential(spokeNamespace string, cred v1beta1.CredentialSpec) field.ErrorList {
 	credPath := field.NewPath("spec", "credential")
 	var errs field.ErrorList
 
@@ -96,8 +98,8 @@ func validateCredential(cred v1beta1.CredentialSpec) field.ErrorList {
 	case v1beta1.CredentialTypeKubeconfig:
 		if cred.Kubeconfig == nil {
 			errs = append(errs, field.Required(credPath.Child("kubeconfig"), "kubeconfig is required when type is 'kubeconfig'"))
-		} else if cred.Kubeconfig.SecretRef.Name == "" {
-			errs = append(errs, field.Required(credPath.Child("kubeconfig", "secretRef", "name"), "secretRef.name is required"))
+		} else {
+			errs = append(errs, validateKubeconfigCredential(spokeNamespace, credPath.Child("kubeconfig"), cred.Kubeconfig)...)
 		}
 
 	case v1beta1.CredentialTypeAWS:
@@ -112,6 +114,24 @@ func validateCredential(cred v1beta1.CredentialSpec) field.ErrorList {
 			[]string{string(v1beta1.CredentialTypeKubeconfig), string(v1beta1.CredentialTypeAWS)}))
 	}
 
+	return errs
+}
+
+// validateKubeconfigCredential checks the kubeconfig arm's required fields and
+// the same-namespace secretRef policy. An empty secretRef.namespace is fine:
+// Materialize falls back to the SpokeCluster's namespace. An explicit value that
+// differs lets any principal who can create a SpokeCluster coerce the
+// controller's cluster-wide Secret read into an exfil of another namespace's
+// credential, so it is forbidden here.
+func validateKubeconfigCredential(spokeNamespace string, kubePath *field.Path, kc *v1beta1.KubeconfigCredential) field.ErrorList {
+	var errs field.ErrorList
+	if kc.SecretRef.Name == "" {
+		errs = append(errs, field.Required(kubePath.Child("secretRef", "name"), "secretRef.name is required"))
+	}
+	if ns := kc.SecretRef.Namespace; ns != "" && ns != spokeNamespace {
+		errs = append(errs, field.Forbidden(kubePath.Child("secretRef", "namespace"),
+			fmt.Sprintf("cross-namespace secretRef is not permitted (SpokeCluster is in %q, secretRef.namespace is %q); omit namespace to use the SpokeCluster's namespace", spokeNamespace, ns)))
+	}
 	return errs
 }
 

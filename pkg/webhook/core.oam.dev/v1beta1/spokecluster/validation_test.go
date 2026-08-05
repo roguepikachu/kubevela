@@ -70,6 +70,11 @@ var _ = Describe("Validate", func() {
 		},
 		Entry("valid kubeconfig spoke", validKubeconfigSpoke),
 		Entry("valid aws spoke", validAWSSpoke),
+		Entry("kubeconfig with explicit same-namespace secretRef", func() *v1beta1.SpokeCluster {
+			sc := validKubeconfigSpoke()
+			sc.Spec.Credential.Kubeconfig.SecretRef.Namespace = sc.Namespace
+			return sc
+		}),
 	)
 
 	DescribeTable("rejects invalid spokes",
@@ -109,6 +114,9 @@ var _ = Describe("Validate", func() {
 		Entry("kubeconfig without secretRef.name", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Credential.Kubeconfig.SecretRef.Name = ""
 		}, "spec.credential.kubeconfig.secretRef.name"),
+		Entry("cross-namespace secretRef", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Credential.Kubeconfig.SecretRef.Namespace = "other-ns"
+		}, "spec.credential.kubeconfig.secretRef.namespace"),
 		Entry("azure type", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Credential = v1beta1.CredentialSpec{Type: v1beta1.CredentialTypeAzure, Azure: &v1beta1.AzureCredential{}}
 		}, "spec.credential.type"),
