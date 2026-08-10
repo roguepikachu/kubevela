@@ -75,6 +75,7 @@ clusters:
 - name: spoke
   cluster:
     server: https://spoke.example.com:6443
+    certificate-authority-data: Y2FkYXRh
 users:
 - name: spoke
   user:
@@ -462,11 +463,10 @@ contexts:
 	}
 })
 
-var _ = It("MaterializeFromKubeconfigInsecureSkipTLSVerify", func() {
+var _ = It("MaterializeFromKubeconfigRejectsInsecureSkipTLSVerify", func() {
 	t := GinkgoT()
-	// insecure-skip-tls-verify must leave CAData empty even when the kubeconfig
-	// also carries certificate-authority-data: verification is skipped entirely,
-	// so there is no CA bundle to carry forward.
+	// insecure-skip-tls-verify would drop the CA and register an unverified
+	// gateway Secret. Reject it even when certificate-authority-data is present.
 	insecureSkipTLSKubeconfig := `apiVersion: v1
 kind: Config
 current-context: spoke
@@ -486,12 +486,40 @@ contexts:
     cluster: spoke
     user: spoke
 `
-	m, err := materializeFromKubeconfig([]byte(insecureSkipTLSKubeconfig))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := materializeFromKubeconfig([]byte(insecureSkipTLSKubeconfig))
+	if err == nil {
+		t.Fatal("expected error for insecure-skip-tls-verify")
 	}
-	if len(m.CAData) != 0 {
-		t.Fatalf("CAData = %q, want empty when insecure-skip-tls-verify is set", string(m.CAData))
+	if !strings.Contains(err.Error(), "insecure-skip-tls-verify") {
+		t.Fatalf("error %q should mention insecure-skip-tls-verify", err)
+	}
+})
+
+var _ = It("MaterializeFromKubeconfigRejectsMissingCAData", func() {
+	t := GinkgoT()
+	noCAKubeconfig := `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+	_, err := materializeFromKubeconfig([]byte(noCAKubeconfig))
+	if err == nil {
+		t.Fatal("expected error for missing certificate-authority-data")
+	}
+	if !strings.Contains(err.Error(), "certificate-authority-data") {
+		t.Fatalf("error %q should mention certificate-authority-data", err)
 	}
 })
 

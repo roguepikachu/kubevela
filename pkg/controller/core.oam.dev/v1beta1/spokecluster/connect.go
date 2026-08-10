@@ -236,8 +236,10 @@ func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 //     kubeconfig tls-server-name that actually differs from the endpoint host is refused
 //     (see verifyServerNameCompatible) rather than silently registered and left to fail TLS
 //     verification on every connection.
-//   - An absent ca.crt means an insecure endpoint to cluster-gateway, not "verify against
-//     the system roots". That matches the Materialized contract for an empty CAData.
+//   - An absent ca.crt historically meant an insecure endpoint to cluster-gateway
+//     (not "verify against the system roots"). Kubeconfig materialization now
+//     rejects insecure-skip-tls-verify and missing certificate-authority-data, so
+//     a successfully materialized connect credential always carries ca.crt.
 //
 // A proxied spoke also loses data["proxy-url"], which the join path writes from the
 // kubeconfig, because Materialized carries no proxy. Accepted for Phase 1.

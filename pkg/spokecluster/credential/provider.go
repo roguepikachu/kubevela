@@ -104,8 +104,9 @@ import (
 type Materialized struct {
 	// Endpoint is the spoke API server URL.
 	Endpoint string
-	// CAData is the PEM CA bundle; empty means the endpoint is trusted without
-	// verification.
+	// CAData is the PEM CA bundle cluster-gateway uses to verify the spoke API
+	// server. Kubeconfig materialization requires a non-empty bundle; an empty
+	// value is only safe for tests that build Materialized by hand.
 	CAData []byte
 	// ServerName overrides the hostname the endpoint's certificate is verified
 	// against (kubeconfig tls-server-name). Empty means verify against the

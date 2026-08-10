@@ -28,7 +28,8 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 - Auth must be an **embedded** `token`, or an embedded `client-certificate-data` plus `client-key-data`. Exec plugins (`aws eks get-token`, `gke-gcloud-auth-plugin`) and file-path credentials are rejected.
 - `tls-server-name`, if set, must equal the endpoint host. cluster-gateway always derives the verified ServerName from the endpoint, so a differing value is rejected at registration rather than producing a spoke that registers and then fails every handshake.
 - The cluster `server` must be `https` and must not target hub-internal DNS (`*.svc`, `*.cluster.local`, `kubernetes.default…`) or cloud metadata/link-local addresses (`169.254.0.0/16`, loopback, Azure `168.63.129.16`, AWS IMDS IPv6). RFC1918 endpoints (for example k3d Docker IPs) and public cloud API hostnames (for example `*.eks.amazonaws.com`) are allowed.
-- `insecure-skip-tls-verify: true` causes the CA to be dropped, which registers an unverified connection. Avoid.
+- `insecure-skip-tls-verify: true` is rejected. cluster-gateway treats a missing `ca.crt` as skip-verify, so connect requires inline `certificate-authority-data` and refuses to drop the trust anchor.
+- A kubeconfig with neither `certificate-authority-data` nor a usable CA path is likewise rejected (file-path CAs are already refused separately).
 
 ## Files
 

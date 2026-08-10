@@ -109,12 +109,21 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		return nil, err
 	}
 
+	// insecure-skip-tls-verify would register a gateway Secret with no ca.crt.
+	// cluster-gateway treats a missing CA as skip-verify, so admitting that flag
+	// silently turns TLS off for the spoke hop. Refuse it; operators who need an
+	// exception must put a real CA in the kubeconfig instead.
+	if cluster.InsecureSkipTLSVerify {
+		return nil, fmt.Errorf("kubeconfig cluster %q sets insecure-skip-tls-verify; connect requires TLS verification with inline certificate-authority-data", kubeCtx.Cluster)
+	}
+	if len(cluster.CertificateAuthorityData) == 0 {
+		return nil, fmt.Errorf("kubeconfig cluster %q has no certificate-authority-data; connect requires an inline CA bundle so cluster-gateway can verify the spoke API server", kubeCtx.Cluster)
+	}
+
 	m := &Materialized{
 		Endpoint:   cluster.Server,
+		CAData:     cluster.CertificateAuthorityData,
 		ServerName: cluster.TLSServerName,
-	}
-	if !cluster.InsecureSkipTLSVerify {
-		m.CAData = cluster.CertificateAuthorityData
 	}
 
 	switch {
