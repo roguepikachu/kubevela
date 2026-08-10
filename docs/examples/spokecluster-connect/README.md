@@ -47,12 +47,19 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 
 ## Applying them
 
-The feature gate must be on, or nothing reconciles and status stays empty:
+The feature gate must be on, or nothing reconciles and status stays empty. The SpokeCluster admission webhook is enabled by default whenever the gate is on (`clusterCore.webhook.enabled=true`); set it to `false` only if you intentionally want CRD-schema-only admission:
+
+```
+helm install vela-core charts/vela-core -n vela-system --create-namespace \
+  --set featureGates.enableClusterInfrastructure=true
+```
+
+For production, prefer cert-manager so the validating webhook can use `failurePolicy: Fail` from the first apply (job-patch installs briefly with `Ignore` until the patch Job rewrites the CA and policy):
 
 ```
 helm install vela-core charts/vela-core -n vela-system --create-namespace \
   --set featureGates.enableClusterInfrastructure=true \
-  --set clusterCore.webhook.enabled=true
+  --set admissionWebhooks.certManager.enabled=true
 ```
 
 Note the gate does **not** control whether the CRD exists. Helm applies `crds/` unconditionally, so `kubectl get spokeclusters` works either way; with the gate off the objects simply never get a status.
