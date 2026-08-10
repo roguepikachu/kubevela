@@ -17,7 +17,7 @@ They are easy to conflate and they have opposite ownership.
 
 We manually create the kubeconfig and a Secret for it is **but only for the kubeconfig credential type**, and the Secret you create is the input, not the cluster-gateway registration. The controller reads your Secret, materializes the credential, and writes a second Secret in `vela-system` that cluster-gateway actually consumes. That output Secret is deliberately bit-compatible with what `vela cluster join` writes, so existing consumers cannot tell the two apart.
 
-For `credential.type: aws` you create **no Secret at all**. The hub uses its ambient Pod Identity or IRSA identity, assumes the per-cluster role, calls `eks:DescribeCluster`, and mints a short-lived token. Nothing static is stored.
+For `credential.type: aws` you create **no Secret at all**. The hub uses its ambient Pod Identity or IRSA identity, assumes the per-cluster role, calls `eks:DescribeCluster`, and mints a short-lived EKS bearer token (`k8s-aws-v1.`). The real token lifetime is **15 minutes** (STS GetCallerIdentity presign window); the controller schedules remint at **+13 minutes** (`Materialized.NextRefresh`, a 2-minute lead) and `nextRequeue` is `min(probeIntervalSeconds, time until NextRefresh)`. Cached credentials are reused until that deadline. Keep the probe interval under about 13 minutes if you want continuous Connected probes between remints.
 
 ## What the kubeconfig must look like
 

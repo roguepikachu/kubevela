@@ -19,11 +19,15 @@ package credential
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	. "github.com/onsi/ginkgo/v2"
 )
 
@@ -64,10 +68,47 @@ var _ = It("GenerateEKSToken", func() {
 	if decoded != presignedURL {
 		t.Fatalf("decoded URL = %q, want %q", decoded, presignedURL)
 	}
-	// Refresh must land one minute before the 15-minute presign window closes.
+	// Refresh must land tokenRefreshLead before the 15-minute STS window closes.
 	wantRefresh := now.Add(13 * time.Minute)
 	if !refreshAt.Equal(wantRefresh) {
 		t.Fatalf("refreshAt = %v, want %v", refreshAt, wantRefresh)
+	}
+})
+
+var _ = It("EKSTokenLifetimeAlignedWithRefresh", func() {
+	t := GinkgoT()
+	// X-Amz-Expires must describe the same 15-minute window NextRefresh is derived from.
+	if want := int(presignExpiry / time.Second); presignTokenExpirySeconds != want {
+		t.Fatalf("presignTokenExpirySeconds = %d, want %d (presignExpiry)", presignTokenExpirySeconds, want)
+	}
+	if got := presignExpiry - tokenRefreshLead; got != 13*time.Minute {
+		t.Fatalf("presignExpiry-tokenRefreshLead = %v, want 13m", got)
+	}
+	if presignTokenExpirySeconds > 900 {
+		t.Fatalf("X-Amz-Expires %d exceeds aws-iam-authenticator max 900", presignTokenExpirySeconds)
+	}
+})
+
+var _ = It("SetExpiresMiddlewareInjectsQuery", func() {
+	t := GinkgoT()
+	raw, err := http.NewRequest(http.MethodGet, "https://sts.amazonaws.com/?Action=GetCallerIdentity", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	sreq := &smithyhttp.Request{Request: raw}
+	mw := setExpiresMiddleware{seconds: presignTokenExpirySeconds}
+	next := middleware.BuildHandlerFunc(func(ctx context.Context, in middleware.BuildInput) (middleware.BuildOutput, middleware.Metadata, error) {
+		got, ok := in.Request.(*smithyhttp.Request)
+		if !ok {
+			t.Fatal("expected smithyhttp.Request")
+		}
+		if v := got.URL.Query().Get("X-Amz-Expires"); v != strconv.Itoa(presignTokenExpirySeconds) {
+			t.Fatalf("X-Amz-Expires = %q, want %d", v, presignTokenExpirySeconds)
+		}
+		return middleware.BuildOutput{}, middleware.Metadata{}, nil
+	})
+	if _, _, err := mw.HandleBuild(context.Background(), middleware.BuildInput{Request: sreq}, next); err != nil {
+		t.Fatalf("HandleBuild: %v", err)
 	}
 })
 
