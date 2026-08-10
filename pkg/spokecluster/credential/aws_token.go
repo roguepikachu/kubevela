@@ -69,7 +69,6 @@ func (m setExpiresMiddleware) ID() string {
 	return "SpokeClusterSetPresignExpires:" + strconv.Itoa(m.seconds)
 }
 
-
 func (m setExpiresMiddleware) HandleBuild(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
 	if req, ok := in.Request.(*smithyhttp.Request); ok {
 		q := req.URL.Query()
