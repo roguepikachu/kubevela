@@ -242,6 +242,7 @@ func (r *Reconciler) discoverSpoke(ctx context.Context, sc *v1beta1.SpokeCluster
 // pass. Status is written first so a failure is still visible to an operator even though
 // the pass errors out.
 func (r *Reconciler) finish(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus, requeue time.Duration, reconcileErr error) (ctrl.Result, error) {
+	r.emitStatusEvents(sc, &sc.Status, status)
 	if err := r.updateStatus(ctx, sc, status); err != nil {
 		return ctrl.Result{}, err
 	}
