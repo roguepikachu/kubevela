@@ -1,0 +1,16 @@
+{{- if and .Values.featureGates.enableClusterInfrastructure .Values.clusterCore.podDisruptionBudget.enabled (gt (int .Values.clusterCore.replicaCount) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "kubevela.fullname" . }}-cluster-core
+  namespace: {{ .Release.Namespace }}
+  labels:
+    controller.oam.dev/name: vela-cluster-core
+    {{- include "kubevela.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.clusterCore.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      controller.oam.dev/name: vela-cluster-core
+      {{- include "kubevela.selectorLabels" . | nindent 6 }}
+{{- end }}

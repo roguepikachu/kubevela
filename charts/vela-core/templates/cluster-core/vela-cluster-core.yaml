@@ -13,6 +13,11 @@ spec:
     matchLabels:
       controller.oam.dev/name: vela-cluster-core
       {{- include "kubevela.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
   template:
     metadata:
       labels:
@@ -91,6 +96,26 @@ spec:
       {{- with .Values.nodeSelector }}
       nodeSelector:
       {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+      {{- if .Values.clusterCore.affinity }}
+        {{- toYaml .Values.clusterCore.affinity | nindent 8 }}
+      {{- else if .Values.affinity }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+      {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    controller.oam.dev/name: vela-cluster-core
+                    {{- include "kubevela.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      {{- with .Values.clusterCore.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

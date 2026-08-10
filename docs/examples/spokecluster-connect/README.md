@@ -47,7 +47,7 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 
 ## Applying them
 
-The feature gate must be on, or nothing reconciles and status stays empty. The SpokeCluster admission webhook is enabled by default whenever the gate is on (`clusterCore.webhook.enabled=true`); set it to `false` only if you intentionally want CRD-schema-only admission:
+The feature gate must be on, or nothing reconciles and status stays empty. The SpokeCluster admission webhook is enabled by default whenever the gate is on (`clusterCore.webhook.enabled=true`); set it to `false` only if you intentionally want CRD-schema-only admission. `clusterCore.replicaCount` defaults to `2` with preferred pod anti-affinity, soft topology spread, and a PodDisruptionBudget so the webhook and leader-elected controller survive a node drain; use `--set clusterCore.replicaCount=1` on single-node sandboxes if you need a lighter footprint:
 
 ```
 helm install vela-core charts/vela-core -n vela-system --create-namespace \
