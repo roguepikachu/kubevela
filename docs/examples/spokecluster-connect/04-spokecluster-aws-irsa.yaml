@@ -26,7 +26,9 @@ spec:
       # externalId is optional but recommended. Omit only if the scoped role's
       # trust policy does not require it.
       externalId: us-east-1/111122223333/hub-cluster/vela-system/vela-core-cluster-core
-  # Shorter interval than the 14-minute token deadline is fine; the requeue takes
-  # whichever comes first, so the token is reminted before it expires either way.
+  # Any probeIntervalSeconds is fine for token freshness: nextRequeue is
+  # min(probeInterval, time until the +13m NextRefresh). Prefer <= 13m so
+  # Connected probes keep running between remints; values above 13m still remint
+  # on time, they just probe less often.
   probeIntervalSeconds: 60
   deletionPolicy: detach

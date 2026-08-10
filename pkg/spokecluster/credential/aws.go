@@ -94,13 +94,18 @@ func (p *AWSProvider) Materialize(ctx context.Context, _ client.Client, sc *v1be
 		return nil, fmt.Errorf("failed to decode CA data for %q: %w", cred.ClusterName, err)
 	}
 
+	endpoint := *out.Cluster.Endpoint
+	if err := ValidateSpokeEndpoint(endpoint); err != nil {
+		return nil, err
+	}
+
 	token, refreshAt, err := generateEKSToken(ctx, presigner, cred.ClusterName, p.now())
 	if err != nil {
 		return nil, err
 	}
 
 	return &Materialized{
-		Endpoint:    *out.Cluster.Endpoint,
+		Endpoint:    endpoint,
 		CAData:      caData,
 		Token:       token,
 		Region:      cred.Region,

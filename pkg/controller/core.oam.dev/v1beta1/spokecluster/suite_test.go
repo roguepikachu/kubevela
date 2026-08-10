@@ -17,13 +17,24 @@ limitations under the License.
 package spokecluster
 
 import (
+	"context"
+	"net"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+
+	"github.com/oam-dev/kubevela/pkg/spokecluster/credential"
 )
 
 func TestSpokeClusterController(t *testing.T) {
+	// Controller fixtures use hostnames like spoke.example.com that are not real DNS.
+	// Stub SSRF resolution to TEST-NET-3 so ValidateSpokeEndpoint stays offline-safe.
+	restore := credential.SetLookupIPsForTest(func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	})
+	t.Cleanup(restore)
+
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "SpokeCluster Controller Suite")
 }

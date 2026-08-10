@@ -37,18 +37,27 @@ const (
 	// clusterIDHeader is the header EKS binds the presigned URL to, so a token minted for one
 	// cluster cannot be replayed against another.
 	clusterIDHeader = "x-k8s-aws-id"
-	// presignExpiry is the presigned URL validity window that AWS enforces (15 minutes).
+	// presignExpiry is the real EKS bearer-token lifetime. STS GetCallerIdentity presigned URLs
+	// expire 15 minutes after X-Amz-Date regardless of X-Amz-Expires (STS ignores that query
+	// parameter for this API). aws-iam-authenticator and `aws eks get-token` both treat the
+	// usable window as 15 minutes and advertise refresh one minute earlier.
 	presignExpiry = 15 * time.Minute
-	// tokenRefreshLead is how long before presignExpiry the controller remints the token.
-	// The controller caches a materialized credential until this deadline rather than
-	// reminting every pass, so the lead is the only slack covering hub-to-AWS clock skew
-	// and the gap between minting a token and cluster-gateway presenting it.
+	// tokenRefreshLead is how long before presignExpiry the controller schedules a remint via
+	// Materialized.NextRefresh. Two minutes leaves slack for hub-to-AWS clock skew and for the
+	// gap between minting a token and cluster-gateway presenting it, which matters more now that
+	// the controller caches a materialized credential until this deadline rather than reminting
+	// every pass.
 	tokenRefreshLead = 2 * time.Minute
 	// stsGetCallerIdentityAction is the action encoded in the presigned request.
 	stsGetCallerIdentityAction = "Action=GetCallerIdentity&Version=2011-06-15"
-	// presignTokenExpirySeconds is the X-Amz-Expires value on the presigned URL. EKS requires the
-	// presigned request to carry an explicit expiry; `aws eks get-token` uses 60 seconds.
-	presignTokenExpirySeconds = 60
+	// presignTokenExpirySeconds is the X-Amz-Expires value embedded in the presigned URL.
+	// aws-iam-authenticator accepts 0..900 and historically used 60 only for legacy server-side
+	// checks; the real lifetime is still presignExpiry. We set the EKS maximum (900) so the
+	// signed URL, NextRefresh (+13m with tokenRefreshLead), and operator-facing docs all describe
+	// the same 15-minute window. A 60s value here previously implied the token died at one minute
+	// while refresh stayed near the end of the window, which was wrong for static gateway-Secret
+	// storage.
+	presignTokenExpirySeconds = 900
 )
 
 // setExpiresMiddleware injects X-Amz-Expires into the request query in the Build step, before the
@@ -56,7 +65,9 @@ const (
 // presign omits X-Amz-Expires and EKS rejects the token with 401 Unauthorized.
 type setExpiresMiddleware struct{ seconds int }
 
-func (m setExpiresMiddleware) ID() string { return "SpokeClusterSetPresignExpires" }
+func (m setExpiresMiddleware) ID() string {
+	return "SpokeClusterSetPresignExpires:" + strconv.Itoa(m.seconds)
+}
 
 func (m setExpiresMiddleware) HandleBuild(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
 	if req, ok := in.Request.(*smithyhttp.Request); ok {
@@ -82,10 +93,14 @@ type stsPresignAPI interface {
 
 // generateEKSToken mints an EKS bearer token by presigning an STS GetCallerIdentity request bound
 // to the cluster via the x-k8s-aws-id header, then base64url-encoding the presigned URL with the
-// k8s-aws-v1. prefix. It returns the token and the time at which it should be reminted.
+// k8s-aws-v1. prefix. It returns the token and the time at which it should be reminted
+// (now + presignExpiry - tokenRefreshLead, currently +13 minutes).
 //
-// The algorithm matches `aws eks get-token`: EKS validates the token by replaying the presigned
-// URL against STS and checking the returned identity and the cluster-id header.
+// The algorithm matches `aws eks get-token` / aws-iam-authenticator: EKS validates the token by
+// replaying the presigned URL against STS and checking the returned identity and the cluster-id
+// header. Unlike exec-plugin refresh, cluster-gateway stores this token in a Secret, so the
+// reconcile loop must remint before the 15-minute window closes (see nextRequeue and the
+// credential cache).
 func generateEKSToken(ctx context.Context, presigner stsPresignAPI, clusterName string, now time.Time) (string, time.Time, error) {
 	if clusterName == "" {
 		return "", time.Time{}, fmt.Errorf("clusterName is required to mint an EKS token")

@@ -266,6 +266,11 @@ func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 	if err := verifyServerNameCompatible(m); err != nil {
 		return err
 	}
+	// Defense in depth: every provider must pass endpoint policy, but register is the
+	// last gate before the gateway Secret is written (covers mocks and future providers).
+	if err := credential.ValidateSpokeEndpoint(m.Endpoint); err != nil {
+		return err
+	}
 
 	secret.Name = key.Name
 	secret.Namespace = key.Namespace

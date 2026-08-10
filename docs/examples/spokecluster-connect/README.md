@@ -17,7 +17,7 @@ They are easy to conflate and they have opposite ownership.
 
 We manually create the kubeconfig and a Secret for it is **but only for the kubeconfig credential type**, and the Secret you create is the input, not the cluster-gateway registration. The controller reads your Secret, materializes the credential, and writes a second Secret in `vela-system` that cluster-gateway actually consumes. That output Secret is deliberately bit-compatible with what `vela cluster join` writes, so existing consumers cannot tell the two apart.
 
-For `credential.type: aws` you create **no Secret at all**. The hub uses its ambient Pod Identity or IRSA identity, assumes the per-cluster role, calls `eks:DescribeCluster`, and mints a short-lived token. Nothing static is stored.
+For `credential.type: aws` you create **no Secret at all**. The hub uses its ambient Pod Identity or IRSA identity, assumes the per-cluster role, calls `eks:DescribeCluster`, and mints a short-lived EKS bearer token (`k8s-aws-v1.`). The real token lifetime is **15 minutes** (STS GetCallerIdentity presign window); the controller schedules remint at **+13 minutes** (`Materialized.NextRefresh`, a 2-minute lead) and `nextRequeue` is `min(probeIntervalSeconds, time until NextRefresh)`. Cached credentials are reused until that deadline. Keep the probe interval under about 13 minutes if you want continuous Connected probes between remints.
 
 ## What the kubeconfig must look like
 
@@ -27,6 +27,7 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 - `certificate-authority-data` must be **inline**. A file-path `certificate-authority` is rejected, because the path refers to the machine that produced the kubeconfig, not the hub controller.
 - Auth must be an **embedded** `token`, or an embedded `client-certificate-data` plus `client-key-data`. Exec plugins (`aws eks get-token`, `gke-gcloud-auth-plugin`) and file-path credentials are rejected.
 - `tls-server-name`, if set, must equal the endpoint host. cluster-gateway always derives the verified ServerName from the endpoint, so a differing value is rejected at registration rather than producing a spoke that registers and then fails every handshake.
+- The cluster `server` must be `https` and must not target hub-internal DNS (`*.svc`, `*.cluster.local`, `kubernetes.default…`) or cloud metadata/link-local addresses (`169.254.0.0/16`, loopback, Azure `168.63.129.16`, AWS IMDS IPv6). RFC1918 endpoints (for example k3d Docker IPs) and public cloud API hostnames (for example `*.eks.amazonaws.com`) are allowed.
 - `insecure-skip-tls-verify: true` causes the CA to be dropped, which registers an unverified connection. Avoid.
 
 ## Files
@@ -46,12 +47,19 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 
 ## Applying them
 
-The feature gate must be on, or nothing reconciles and status stays empty:
+The feature gate must be on, or nothing reconciles and status stays empty. The SpokeCluster admission webhook is enabled by default whenever the gate is on (`clusterCore.webhook.enabled=true`); set it to `false` only if you intentionally want CRD-schema-only admission:
+
+```
+helm install vela-core charts/vela-core -n vela-system --create-namespace \
+  --set featureGates.enableClusterInfrastructure=true
+```
+
+For production, prefer cert-manager so the validating webhook can use `failurePolicy: Fail` from the first apply (job-patch installs briefly with `Ignore` until the patch Job rewrites the CA and policy):
 
 ```
 helm install vela-core charts/vela-core -n vela-system --create-namespace \
   --set featureGates.enableClusterInfrastructure=true \
-  --set clusterCore.webhook.enabled=true
+  --set admissionWebhooks.certManager.enabled=true
 ```
 
 Note the gate does **not** control whether the CRD exists. Helm applies `crds/` unconditionally, so `kubectl get spokeclusters` works either way; with the gate off the objects simply never get a status.

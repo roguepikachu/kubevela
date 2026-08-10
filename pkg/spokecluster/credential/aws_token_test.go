@@ -19,11 +19,15 @@ package credential
 import (
 	"context"
 	"errors"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	. "github.com/onsi/ginkgo/v2"
 )
 
@@ -38,6 +42,62 @@ func (f *fakePresigner) PresignGetCallerIdentity(_ context.Context, _ *sts.GetCa
 		return nil, f.err
 	}
 	return &v4.PresignedHTTPRequest{URL: f.url, Method: "GET"}, nil
+}
+
+// recordingPresigner applies PresignOptions like the real STS client so tests can assert
+// generateEKSToken wired withPresignExpires and the x-k8s-aws-id header into APIOptions.
+type recordingPresigner struct {
+	baseURL          string
+	apiOptionCount   int
+	expiresMWSeen    bool
+	expiresMWSeconds int
+	headerMWSeen     bool
+	clusterIDHeader  string
+}
+
+func (r *recordingPresigner) PresignGetCallerIdentity(ctx context.Context, _ *sts.GetCallerIdentityInput, optFns ...func(*sts.PresignOptions)) (*v4.PresignedHTTPRequest, error) {
+	opts := &sts.PresignOptions{}
+	for _, fn := range optFns {
+		fn(opts)
+	}
+	so := sts.Options{}
+	for _, clientOpt := range opts.ClientOptions {
+		clientOpt(&so)
+	}
+	r.apiOptionCount = len(so.APIOptions)
+
+	raw, err := http.NewRequest(http.MethodGet, r.baseURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	sreq := &smithyhttp.Request{Request: raw}
+
+	st := middleware.NewStack("recording", smithyhttp.NewStackRequest)
+	wantExpiresPrefix := "SpokeClusterSetPresignExpires:"
+	for _, apiOpt := range so.APIOptions {
+		if err := apiOpt(st); err != nil {
+			return nil, err
+		}
+	}
+	for _, id := range st.List() {
+		if strings.HasPrefix(id, wantExpiresPrefix) {
+			r.expiresMWSeen = true
+			r.expiresMWSeconds, _ = strconv.Atoi(strings.TrimPrefix(id, wantExpiresPrefix))
+		}
+		if id == "HTTPHeaderHelper" || strings.Contains(strings.ToLower(id), "header") {
+			r.headerMWSeen = true
+		}
+	}
+	_, _, err = st.Build.HandleMiddleware(ctx, sreq, middleware.HandlerFunc(
+		func(ctx context.Context, input interface{}) (output interface{}, metadata middleware.Metadata, err error) {
+			return input, middleware.Metadata{}, nil
+		},
+	))
+	if err != nil {
+		return nil, err
+	}
+	r.clusterIDHeader = sreq.Header.Get(clusterIDHeader)
+	return &v4.PresignedHTTPRequest{URL: sreq.URL.String(), Method: "GET"}, nil
 }
 
 var _ = It("GenerateEKSToken", func() {
@@ -64,10 +124,81 @@ var _ = It("GenerateEKSToken", func() {
 	if decoded != presignedURL {
 		t.Fatalf("decoded URL = %q, want %q", decoded, presignedURL)
 	}
-	// Refresh must land one minute before the 15-minute presign window closes.
+	// Refresh must land tokenRefreshLead before the 15-minute STS window closes.
 	wantRefresh := now.Add(13 * time.Minute)
 	if !refreshAt.Equal(wantRefresh) {
 		t.Fatalf("refreshAt = %v, want %v", refreshAt, wantRefresh)
+	}
+})
+
+var _ = It("GenerateEKSTokenWiresPresignExpires", func() {
+	t := GinkgoT()
+	now := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	const clusterName = "prod-us-east-1"
+	rec := &recordingPresigner{baseURL: "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&Version=2011-06-15"}
+
+	token, _, err := generateEKSToken(context.Background(), rec, clusterName, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rec.apiOptionCount < 2 {
+		t.Fatalf("apiOptionCount = %d, want cluster-id header + X-Amz-Expires options", rec.apiOptionCount)
+	}
+	if !rec.headerMWSeen {
+		t.Fatal("x-k8s-aws-id SetHeaderValue middleware was not registered on the presign stack")
+	}
+	if rec.clusterIDHeader != clusterName {
+		t.Fatalf("x-k8s-aws-id header = %q, want %q", rec.clusterIDHeader, clusterName)
+	}
+	if !rec.expiresMWSeen {
+		t.Fatal("withPresignExpires middleware was not registered on the presign stack")
+	}
+	if rec.expiresMWSeconds != presignTokenExpirySeconds {
+		t.Fatalf("expires middleware seconds = %d, want %d", rec.expiresMWSeconds, presignTokenExpirySeconds)
+	}
+	decoded, err := decodeEKSTokenURL(token)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !strings.Contains(decoded, "X-Amz-Expires="+strconv.Itoa(presignTokenExpirySeconds)) {
+		t.Fatalf("presigned URL %q missing X-Amz-Expires=%d", decoded, presignTokenExpirySeconds)
+	}
+})
+
+var _ = It("EKSTokenLifetimeAlignedWithRefresh", func() {
+	t := GinkgoT()
+	// X-Amz-Expires must describe the same 15-minute window NextRefresh is derived from.
+	if want := int(presignExpiry / time.Second); presignTokenExpirySeconds != want {
+		t.Fatalf("presignTokenExpirySeconds = %d, want %d (presignExpiry)", presignTokenExpirySeconds, want)
+	}
+	if got := presignExpiry - tokenRefreshLead; got != 13*time.Minute {
+		t.Fatalf("presignExpiry-tokenRefreshLead = %v, want 13m", got)
+	}
+	if presignTokenExpirySeconds > 900 {
+		t.Fatalf("X-Amz-Expires %d exceeds aws-iam-authenticator max 900", presignTokenExpirySeconds)
+	}
+})
+
+var _ = It("SetExpiresMiddlewareInjectsQuery", func() {
+	t := GinkgoT()
+	raw, err := http.NewRequest(http.MethodGet, "https://sts.amazonaws.com/?Action=GetCallerIdentity", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	sreq := &smithyhttp.Request{Request: raw}
+	mw := setExpiresMiddleware{seconds: presignTokenExpirySeconds}
+	next := middleware.BuildHandlerFunc(func(ctx context.Context, in middleware.BuildInput) (middleware.BuildOutput, middleware.Metadata, error) {
+		got, ok := in.Request.(*smithyhttp.Request)
+		if !ok {
+			t.Fatal("expected smithyhttp.Request")
+		}
+		if v := got.URL.Query().Get("X-Amz-Expires"); v != strconv.Itoa(presignTokenExpirySeconds) {
+			t.Fatalf("X-Amz-Expires = %q, want %d", v, presignTokenExpirySeconds)
+		}
+		return middleware.BuildOutput{}, middleware.Metadata{}, nil
+	})
+	if _, _, err := mw.HandleBuild(context.Background(), middleware.BuildInput{Request: sreq}, next); err != nil {
+		t.Fatalf("HandleBuild: %v", err)
 	}
 })
 

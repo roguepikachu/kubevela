@@ -353,6 +353,69 @@ var _ = It("MaterializeFromKubeconfigParseErrors", func() {
 			kubeconfig:  filePathCAKubeconfig,
 			wantErrText: "only inline certificate-authority-data is supported",
 		},
+		"ssrf metadata endpoint rejected": {
+			kubeconfig: `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://169.254.169.254/latest/meta-data/
+    certificate-authority-data: Y2FkYXRh
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`,
+			wantErrText: "not permitted",
+		},
+		"ssrf hub kubernetes.default.svc rejected": {
+			kubeconfig: `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://kubernetes.default.svc
+    certificate-authority-data: Y2FkYXRh
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`,
+			wantErrText: "not permitted",
+		},
+		"http scheme rejected": {
+			kubeconfig: `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: http://172.25.0.2:6443
+    certificate-authority-data: Y2FkYXRh
+users:
+- name: spoke
+  user:
+    token: tok
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`,
+			wantErrText: "must use https",
+		},
 	}
 	for name, tc := range cases {
 		By(name, func() {
