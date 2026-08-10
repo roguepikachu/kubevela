@@ -105,6 +105,10 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		return nil, fmt.Errorf("kubeconfig cluster %q uses a file-path certificate-authority; only inline certificate-authority-data is supported for connect", kubeCtx.Cluster)
 	}
 
+	if err := ValidateSpokeEndpoint(cluster.Server); err != nil {
+		return nil, err
+	}
+
 	m := &Materialized{
 		Endpoint:   cluster.Server,
 		ServerName: cluster.TLSServerName,

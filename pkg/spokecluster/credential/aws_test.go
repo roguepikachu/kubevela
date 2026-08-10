@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -127,6 +128,29 @@ var _ = It("AWSProviderDescribeFailure", func() {
 	}
 	if _, err := p.Materialize(context.Background(), nil, awsSpoke()); err == nil {
 		t.Fatal("expected error when DescribeCluster fails")
+	}
+})
+
+var _ = It("AWSProviderRejectsBlockedEndpoint", func() {
+	t := GinkgoT()
+	caB64 := base64.StdEncoding.EncodeToString([]byte("spoke-ca-pem"))
+	p := &AWSProvider{
+		now: time.Now,
+		newClients: func(_ context.Context, _ *v1beta1.AWSCredential) (eksDescribeAPI, stsPresignAPI, error) {
+			// Defense in depth: even if DescribeCluster returned a metadata IP, refuse it.
+			ek := &fakeEKS{out: &eks.DescribeClusterOutput{Cluster: &ekstypes.Cluster{
+				Endpoint:             strptr("https://169.254.169.254/"),
+				CertificateAuthority: &ekstypes.Certificate{Data: strptr(caB64)},
+			}}}
+			return ek, &fakePresigner{url: "https://sts.amazonaws.com/?Action=GetCallerIdentity"}, nil
+		},
+	}
+	_, err := p.Materialize(context.Background(), nil, awsSpoke())
+	if err == nil {
+		t.Fatal("expected endpoint policy error")
+	}
+	if !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("error = %q, want not permitted", err.Error())
 	}
 })
 
