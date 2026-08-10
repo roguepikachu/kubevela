@@ -40,7 +40,10 @@ const (
 	// presignExpiry is the presigned URL validity window that AWS enforces (15 minutes).
 	presignExpiry = 15 * time.Minute
 	// tokenRefreshLead is how long before presignExpiry the controller remints the token.
-	tokenRefreshLead = 1 * time.Minute
+	// The controller caches a materialized credential until this deadline rather than
+	// reminting every pass, so the lead is the only slack covering hub-to-AWS clock skew
+	// and the gap between minting a token and cluster-gateway presenting it.
+	tokenRefreshLead = 2 * time.Minute
 	// stsGetCallerIdentityAction is the action encoded in the presigned request.
 	stsGetCallerIdentityAction = "Action=GetCallerIdentity&Version=2011-06-15"
 	// presignTokenExpirySeconds is the X-Amz-Expires value on the presigned URL. EKS requires the

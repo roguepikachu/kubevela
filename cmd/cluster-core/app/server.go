@@ -18,6 +18,7 @@ package app
 
 import (
 	"flag"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -43,11 +44,15 @@ type options struct {
 	healthAddr           string
 	enableLeaderElection bool
 	leaderElectionNS     string
+	leaseDuration        time.Duration
+	renewDeadline        time.Duration
+	retryPeriod          time.Duration
 	useWebhook           bool
 	webhookPort          int
 	certDir              string
 	concurrentReconciles int
 	autoUpgradeSecret    bool
+	credentialCacheTTL   time.Duration
 }
 
 // defaultOptions returns the options with their documented defaults.
@@ -57,11 +62,15 @@ func defaultOptions() *options {
 		healthAddr:           ":9440",
 		enableLeaderElection: false,
 		leaderElectionNS:     "",
+		leaseDuration:        30 * time.Second,
+		renewDeadline:        20 * time.Second,
+		retryPeriod:          5 * time.Second,
 		useWebhook:           false,
 		webhookPort:          9445,
 		certDir:              "/k8s-webhook-server/serving-certs",
 		concurrentReconciles: 5,
 		autoUpgradeSecret:    false,
+		credentialCacheTTL:   spokecluster.DefaultCredentialCacheTTL,
 	}
 }
 
@@ -75,6 +84,12 @@ func addFlags(fs *pflag.FlagSet, o *options) {
 		"Enable leader election for the vela-cluster-core manager. Enabling this will ensure there is only one active manager.")
 	fs.StringVar(&o.leaderElectionNS, "leader-election-namespace", o.leaderElectionNS,
 		"Determines the namespace in which the leader election lease will be created. Defaults to the pod namespace.")
+	fs.DurationVar(&o.leaseDuration, "leader-election-lease-duration", o.leaseDuration,
+		"The duration that non-leader candidates will wait to force acquire leadership")
+	fs.DurationVar(&o.renewDeadline, "leader-election-renew-deadline", o.renewDeadline,
+		"The duration that the acting controlplane will retry refreshing leadership before giving up")
+	fs.DurationVar(&o.retryPeriod, "leader-election-retry-period", o.retryPeriod,
+		"The duration the LeaderElector clients should wait between tries of actions")
 	fs.BoolVar(&o.useWebhook, "use-webhook", o.useWebhook,
 		"Enable the SpokeCluster admission webhooks.")
 	fs.IntVar(&o.webhookPort, "webhook-port", o.webhookPort,
@@ -85,6 +100,11 @@ func addFlags(fs *pflag.FlagSet, o *options) {
 		"The number of concurrent reconciles for cluster-infrastructure controllers.")
 	fs.BoolVar(&o.autoUpgradeSecret, "auto-upgrade-cluster-secret", o.autoUpgradeSecret,
 		"Automatically upgrade legacy cluster-gateway secrets on startup.")
+	fs.DurationVar(&o.credentialCacheTTL, "credential-cache-ttl", o.credentialCacheTTL,
+		"The longest a materialized spoke credential may be reused before it is re-derived. "+
+			"A credential is reused only until its own refresh deadline anyway, so this is an upper "+
+			"bound rather than the usual lifetime. Set to 0 to disable caching and re-derive on every "+
+			"reconcile, which for AWS spokes means an sts:AssumeRole and an eks:DescribeCluster per pass.")
 
 	utilfeature.DefaultMutableFeatureGate.AddFlag(fs)
 }
@@ -141,12 +161,16 @@ func run(o *options) error {
 	restConfig := ctrl.GetConfigOrDie()
 
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
-		Scheme:                  common.Scheme,
-		Metrics:                 metricsserver.Options{BindAddress: o.metricsAddr},
-		HealthProbeBindAddress:  o.healthAddr,
-		LeaderElection:          o.enableLeaderElection,
-		LeaderElectionID:        "vela-cluster-core",
-		LeaderElectionNamespace: o.leaderElectionNS,
+		Scheme:                        common.Scheme,
+		Metrics:                       metricsserver.Options{BindAddress: o.metricsAddr},
+		HealthProbeBindAddress:        o.healthAddr,
+		LeaderElection:                o.enableLeaderElection,
+		LeaderElectionID:              "vela-cluster-core",
+		LeaderElectionNamespace:       o.leaderElectionNS,
+		LeaseDuration:                 &o.leaseDuration,
+		RenewDeadline:                 &o.renewDeadline,
+		RetryPeriod:                   &o.retryPeriod,
+		LeaderElectionReleaseOnCancel: true,
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
 			Port:    o.webhookPort,
 			CertDir: o.certDir,
@@ -164,7 +188,7 @@ func run(o *options) error {
 	// Setup does its own feature-gate check and registers nothing when the gate is off, but
 	// the error still has to be returned: swallowing it would start a manager that looks
 	// healthy and silently reconciles nothing.
-	if err := spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles}); err != nil {
+	if err := spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles}, o.credentialCacheTTL); err != nil {
 		klog.ErrorS(err, "Unable to register the SpokeCluster controller")
 		return err
 	}

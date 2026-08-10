@@ -18,6 +18,7 @@ package app
 
 import (
 	"errors"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	"github.com/spf13/pflag"
@@ -37,11 +38,15 @@ var _ = It("DefaultOptions", func() {
 	assert.Equal(t, ":9440", o.healthAddr)
 	assert.False(t, o.enableLeaderElection)
 	assert.Equal(t, "", o.leaderElectionNS)
+	assert.Equal(t, 30*time.Second, o.leaseDuration)
+	assert.Equal(t, 20*time.Second, o.renewDeadline)
+	assert.Equal(t, 5*time.Second, o.retryPeriod)
 	assert.False(t, o.useWebhook)
 	assert.Equal(t, 9445, o.webhookPort)
 	assert.Equal(t, "/k8s-webhook-server/serving-certs", o.certDir)
 	assert.Equal(t, 5, o.concurrentReconciles)
 	assert.False(t, o.autoUpgradeSecret)
+	assert.Equal(t, 15*time.Minute, o.credentialCacheTTL)
 })
 
 var _ = It("AddFlags", func() {
@@ -55,16 +60,37 @@ var _ = It("AddFlags", func() {
 		"health-probe-bind-address",
 		"enable-leader-election",
 		"leader-election-namespace",
+		"leader-election-lease-duration",
+		"leader-election-renew-deadline",
+		"leader-election-retry-period",
 		"use-webhook",
 		"webhook-port",
 		"webhook-cert-dir",
 		"concurrent-reconciles",
 		"auto-upgrade-cluster-secret",
+		"credential-cache-ttl",
 		"feature-gates",
 	} {
 		f := fs.Lookup(name)
 		require.NotNilf(t, f, "expected flag %q to be registered", name)
 	}
+})
+
+var _ = It("AddFlagsBindsLeaderElectionDurations", func() {
+	t := GinkgoT()
+	o := defaultOptions()
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	addFlags(fs, o)
+
+	require.NoError(t, fs.Parse([]string{
+		"--leader-election-lease-duration=45s",
+		"--leader-election-renew-deadline=30s",
+		"--leader-election-retry-period=7s",
+	}))
+
+	assert.Equal(t, 45*time.Second, o.leaseDuration)
+	assert.Equal(t, 30*time.Second, o.renewDeadline)
+	assert.Equal(t, 7*time.Second, o.retryPeriod)
 })
 
 var _ = It("ConfigureSpokeClusterWebhooksRequiresBothGates", func() {

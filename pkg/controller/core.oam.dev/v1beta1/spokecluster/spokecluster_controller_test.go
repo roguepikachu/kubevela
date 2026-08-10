@@ -24,8 +24,10 @@ import (
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -40,26 +42,49 @@ type mockProvider struct {
 	credType     v1beta1.CredentialType
 	materialized *credential.Materialized
 	err          error
+	// calls counts Materialize invocations. It is the only way to observe the credential
+	// cache: a hit and a miss produce identical conditions and an identical gateway Secret
+	// by design, so nothing else tells them apart. A pointer receiver is required for the
+	// count to survive. Unsynchronized on purpose, since no test drives Reconcile
+	// concurrently.
+	calls int
 }
 
-func (m mockProvider) Type() v1beta1.CredentialType { return m.credType }
+func (m *mockProvider) Type() v1beta1.CredentialType { return m.credType }
 
-func (m mockProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1.SpokeCluster) (*credential.Materialized, error) {
+func (m *mockProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1.SpokeCluster) (*credential.Materialized, error) {
+	m.calls++
 	if m.err != nil {
 		return nil, m.err
 	}
-	return m.materialized, nil
+	// A fresh copy per call, so a caller that mutates one result cannot corrupt the next.
+	return m.materialized.DeepCopy(), nil
 }
 
 // kubeconfigRegistry is a one-arm registry answering for the kubeconfig credential type.
 func kubeconfigRegistry(m *credential.Materialized, err error) credential.Registry {
-	return credential.Registry{
-		v1beta1.CredentialTypeKubeconfig: mockProvider{
-			credType:     v1beta1.CredentialTypeKubeconfig,
-			materialized: m,
-			err:          err,
-		},
+	reg, _ := kubeconfigRegistryWithProvider(m, err)
+	return reg
+}
+
+// kubeconfigRegistryWithProvider is kubeconfigRegistry for tests that need to count
+// Materialize calls.
+func kubeconfigRegistryWithProvider(m *credential.Materialized, err error) (credential.Registry, *mockProvider) {
+	p := &mockProvider{
+		credType:     v1beta1.CredentialTypeKubeconfig,
+		materialized: m,
+		err:          err,
 	}
+	return credential.Registry{v1beta1.CredentialTypeKubeconfig: p}, p
+}
+
+// refreshingCredential stands in for the aws arm: a bearer token carrying a refresh
+// deadline, which is the only kind the credential cache will hold. tokenCredential has a
+// zero NextRefresh and is therefore uncacheable by design.
+func refreshingCredential(in time.Duration) *credential.Materialized {
+	m := tokenCredential()
+	m.NextRefresh = time.Now().Add(in)
+	return m
 }
 
 // connectableSpoke is a SpokeCluster the loop can carry all the way to Connected: it names
@@ -604,6 +629,184 @@ var _ = It("ProbeIntervalFallback", func() {
 			sc.Spec.ProbeIntervalSeconds = tc.seconds
 			if got := probeInterval(sc); got != tc.want {
 				t.Errorf("probeInterval = %v, want %v", got, tc.want)
+			}
+		})
+	}
+})
+
+// cachingReconciler is connectedReconciler with a real credential cache and a provider
+// whose Materialize calls can be counted. A hit and a miss are indistinguishable in status
+// and in the gateway Secret by design, so the counter is the only observable difference.
+func cachingReconciler(t GinkgoTInterface, sc *v1beta1.SpokeCluster, m *credential.Materialized) (*Reconciler, *mockProvider) {
+	t.Helper()
+	r := connectedReconciler(t, sc)
+	reg, provider := kubeconfigRegistryWithProvider(m, nil)
+	r.Providers = reg
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	r.credentials = newCredentialCache(ctx, DefaultCredentialCacheTTL)
+	return r, provider
+}
+
+var _ = It("ReconcileReusesTheCachedCredential", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("cached")
+	r, provider := cachingReconciler(t, sc, refreshingCredential(13*time.Minute))
+
+	var messages []string
+	for pass := 1; pass <= 3; pass++ {
+		if _, err := reconcileOnce(t, r, sc); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		latest := readSpoke(t, r, sc)
+		wantCondition(t, latest, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionTrue, reasonMaterialized)
+		wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
+		messages = append(messages, meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionCredentialValid).Message)
+	}
+
+	if provider.calls != 1 {
+		t.Errorf("Materialize ran %d times across three passes, want 1", provider.calls)
+	}
+	// The message is asserted, not just the reason: a cached pass must be invisible to an
+	// operator reading status, and the message is the part carrying the endpoint.
+	for i, msg := range messages {
+		if msg != messages[0] {
+			t.Errorf("pass %d message = %q, want %q on every pass", i+1, msg, messages[0])
+		}
+	}
+})
+
+var _ = It("ReconcileWritesIdenticalSecretBytesOnACachedPass", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("stable-bytes")
+	r, _ := cachingReconciler(t, sc, refreshingCredential(13*time.Minute))
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	first := readGatewaySecret(t, r.Client, sc.Name)
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	second := readGatewaySecret(t, r.Client, sc.Name)
+
+	// Identical bytes are what make the real apiserver skip the etcd write. The fake client
+	// bumps resourceVersion on every Update regardless, so the bytes are the assertable part.
+	for _, key := range []string{secretKeyToken, secretKeyCACert, secretKeyEndpoint} {
+		if string(first.Data[key]) != string(second.Data[key]) {
+			t.Errorf("secret key %q changed between a fresh pass and a cached one", key)
+		}
+	}
+})
+
+var _ = It("ReconcileDoesNotCacheCredentialsWithoutARefreshDeadline", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("static-cred")
+	// tokenCredential has a zero NextRefresh, which is what every kubeconfig spoke reports.
+	r, provider := cachingReconciler(t, sc, tokenCredential())
+
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := reconcileOnce(t, r, sc); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+
+	if provider.calls != 2 {
+		t.Errorf("Materialize ran %d times, want 2: a credential with no refresh deadline must be re-read every pass so a rotated source Secret is picked up", provider.calls)
+	}
+	if _, hit := r.credentials.Get(readSpoke(t, r, sc), 0); hit {
+		t.Errorf("a credential with no refresh deadline must not be stored")
+	}
+})
+
+var _ = It("ReconcileWithoutACredentialCacheRematerializes", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("no-cache")
+	r := connectedReconciler(t, sc)
+	reg, provider := kubeconfigRegistryWithProvider(refreshingCredential(13*time.Minute), nil)
+	r.Providers = reg
+	// r.credentials stays nil, as it does for every Reconciler built directly.
+
+	for pass := 1; pass <= 2; pass++ {
+		if _, err := reconcileOnce(t, r, sc); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+	}
+
+	if provider.calls != 2 {
+		t.Errorf("Materialize ran %d times, want 2: a nil cache means caching is off", provider.calls)
+	}
+})
+
+var _ = It("ReconcileRematerializesAfterASpecChange", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("spec-change")
+	r, provider := cachingReconciler(t, sc, refreshingCredential(13*time.Minute))
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+
+	latest := readSpoke(t, r, sc)
+	latest.Generation++
+	if err := r.Update(context.Background(), latest); err != nil {
+		t.Fatalf("failed to bump generation: %v", err)
+	}
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if provider.calls != 2 {
+		t.Errorf("Materialize ran %d times, want 2: a spec change must not reuse the old credential", provider.calls)
+	}
+})
+
+var _ = It("ReconcileEvictsTheCachedCredentialOnlyOn401", func() {
+	t := GinkgoT()
+	for _, tc := range []struct {
+		name      string
+		probeErr  error
+		wantCalls int
+	}{
+		{
+			name:      "401 evicts, so the next pass remints",
+			probeErr:  apierrors.NewUnauthorized("the spoke rejected the credential"),
+			wantCalls: 2,
+		},
+		{
+			name:      "403 does not evict, because reminting cannot fix RBAC",
+			probeErr:  apierrors.NewForbidden(schema.GroupResource{Resource: "healthz"}, "healthz", errors.New("forbidden")),
+			wantCalls: 1,
+		},
+		{
+			name:      "a timeout does not evict, because the credential was never tested",
+			probeErr:  context.DeadlineExceeded,
+			wantCalls: 1,
+		},
+	} {
+		By(tc.name, func() {
+			sc := connectableSpoke("probe-fail")
+			r, provider := cachingReconciler(t, sc, refreshingCredential(13*time.Minute))
+			r.probeFn = func(_ context.Context, _ *v1beta1.SpokeCluster) (time.Duration, error) {
+				return 0, tc.probeErr
+			}
+
+			for pass := 1; pass <= 2; pass++ {
+				if _, err := reconcileOnce(t, r, sc); err != nil {
+					t.Fatalf("pass %d: %v", pass, err)
+				}
+			}
+
+			if provider.calls != tc.wantCalls {
+				t.Errorf("Materialize ran %d times, want %d", provider.calls, tc.wantCalls)
+			}
+			// Whatever the eviction did, status reads the same: the spoke is unreachable.
+			latest := readSpoke(t, r, sc)
+			wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionFalse, reasonProbeFailed)
+			if latest.Status.Connection != v1beta1.ConnectionStateDisconnected {
+				t.Errorf("connection = %q, want %q", latest.Status.Connection, v1beta1.ConnectionStateDisconnected)
 			}
 		})
 	}

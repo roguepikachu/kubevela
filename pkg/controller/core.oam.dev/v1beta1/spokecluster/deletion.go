@@ -23,6 +23,7 @@ import (
 
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
@@ -43,6 +44,12 @@ import (
 // place and so never wrote anything of its own; deleting it must not reach for someone
 // else's Secret just because the names match.
 func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
+	// Unconditional, and before anything else. A SpokeCluster whose finalizer was already
+	// removed returns below without reaching any cleanup, and a detach that has to be
+	// retried must not leave a live entry between attempts. The purge is an O(1) delete
+	// with no failure mode, so gating it on either would only create ways to skip it.
+	r.credentials.Invalidate(client.ObjectKeyFromObject(sc))
+
 	if !controllerutil.ContainsFinalizer(sc, FinalizerName) {
 		return ctrl.Result{}, nil
 	}

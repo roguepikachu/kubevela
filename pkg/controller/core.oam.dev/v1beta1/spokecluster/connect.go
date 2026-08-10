@@ -190,6 +190,20 @@ type Reconciler struct {
 
 	concurrentReconciles int
 
+	// credentials holds the last materialized credential per spoke, so a pass whose
+	// credential is still well short of its refresh deadline can skip Materialize. For
+	// the aws arm that call is an sts:AssumeRole plus an eks:DescribeCluster every pass,
+	// re-deriving an endpoint and CA that are fixed for the cluster's lifetime.
+	//
+	// A nil cache means caching is off and is fully supported: every method is nil-safe,
+	// so a Reconciler built directly behaves exactly as it did before this field existed.
+	// Setup installs a real one.
+	//
+	// Only a spec change, a delete, a 401 from the spoke, or a controller restart evicts
+	// an entry early. Editing a label or an annotation does not, because neither bumps
+	// metadata.generation, so there is no "annotate the object to force a refresh".
+	credentials *credentialCache
+
 	probeFn    func(ctx context.Context, sc *v1beta1.SpokeCluster) (time.Duration, error)
 	discoverFn func(ctx context.Context, sc *v1beta1.SpokeCluster, m *credential.Materialized, latency time.Duration) (*v1beta1.SpokeClusterInfo, error)
 }

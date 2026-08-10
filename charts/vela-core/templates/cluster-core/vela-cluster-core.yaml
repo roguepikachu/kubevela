@@ -42,6 +42,7 @@ spec:
             - "--health-probe-bind-address=:{{ .Values.clusterCore.healthCheck.port }}"
             - "--enable-leader-election"
             - "--concurrent-reconciles={{ .Values.clusterCore.concurrentReconciles }}"
+            - "--credential-cache-ttl={{ include "kubevela.clusterCore.credentialCacheTTLSeconds" . }}s"
             - "--feature-gates=EnableClusterInfrastructure=true"
             {{- if .Values.clusterCore.webhook.enabled }}
             - "--use-webhook=true"

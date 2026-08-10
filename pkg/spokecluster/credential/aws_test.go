@@ -93,8 +93,8 @@ var _ = It("AWSProviderMaterialize", func() {
 	if m.Region != "us-east-1" {
 		t.Fatalf("region = %q", m.Region)
 	}
-	// The EKS token must schedule a refresh 14 minutes out.
-	if want := now.Add(14 * time.Minute); !m.NextRefresh.Equal(want) {
+	// The EKS token must schedule a refresh 13 minutes out.
+	if want := now.Add(13 * time.Minute); !m.NextRefresh.Equal(want) {
 		t.Fatalf("nextRefresh = %v, want %v", m.NextRefresh, want)
 	}
 })

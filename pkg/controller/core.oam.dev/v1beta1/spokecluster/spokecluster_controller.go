@@ -23,6 +23,7 @@ import (
 
 	recorder "github.com/crossplane/crossplane-runtime/pkg/event"
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
@@ -123,11 +124,27 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 		return r.finish(ctx, sc, status, 0, err)
 	}
 
-	materialized, err := provider.Materialize(ctx, r.Client, sc)
-	if err != nil {
-		setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonMaterializeFailed, err.Error())
-		status.Connection = v1beta1.ConnectionStateUnknown
-		return r.finish(ctx, sc, status, 0, err)
+	// A credential still well short of its refresh deadline is reused rather than
+	// re-derived. Every Materialize on the aws arm is an sts:AssumeRole plus an
+	// eks:DescribeCluster, so an uncached loop spends two AWS calls per spoke per probe
+	// interval to rebuild an endpoint and CA fixed for the cluster's lifetime and a token
+	// good for another twelve minutes. It also rewrote the gateway Secret every pass,
+	// because a freshly presigned token never repeats byte for byte, making every pass a
+	// real etcd write.
+	//
+	// The margin is one probe interval, so anything served here stays valid past the next
+	// scheduled pass rather than merely valid now; see nextRequeue and the probe-failure
+	// exit below, which requeues without consulting the refresh deadline. A provider that
+	// reports no deadline is never cached at all: see credentialCache.Put.
+	materialized, cached := r.credentials.Get(sc, probeInterval(sc))
+	if !cached {
+		materialized, err = provider.Materialize(ctx, r.Client, sc)
+		if err != nil {
+			setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonMaterializeFailed, err.Error())
+			status.Connection = v1beta1.ConnectionStateUnknown
+			return r.finish(ctx, sc, status, 0, err)
+		}
+		r.credentials.Put(sc, materialized)
 	}
 	setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionTrue, reasonMaterialized,
 		"credential materialized for endpoint "+materialized.Endpoint)
@@ -152,6 +169,23 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 		status.Connection = v1beta1.ConnectionStateDisconnected
 		klog.InfoS("Spoke probe failed", "spokecluster", klog.KObj(sc), "endpoint", materialized.Endpoint,
 			"timeout", probeTimeout(sc), "err", probeErr)
+		// A 401 is the only probe outcome carrying credential information: the spoke read
+		// the token and rejected it. Drop the cached copy so the next pass remints rather
+		// than serving the same rejected credential until its refresh deadline, which an
+		// out-of-band revocation (role deleted, trust policy narrowed, access entry
+		// removed) would otherwise stretch to the full reuse window.
+		//
+		// Deliberately not any other failure. A 403 means the token authenticated and RBAC
+		// refused it, so reminting cannot help. A timeout, a gateway 5xx, a refused
+		// connection or a TLS error never tested the credential at all, and evicting on
+		// those would turn a regional outage into a synchronized AssumeRole burst against
+		// an account-wide STS quota exactly when it can least absorb one.
+		//
+		// A permanently rejected credential therefore remints once per probe interval,
+		// which is what this controller did on every pass before the cache existed.
+		if apierrors.IsUnauthorized(probeErr) {
+			r.credentials.Invalidate(client.ObjectKeyFromObject(sc))
+		}
 		// Deliberately no error: an unreachable spoke is state to report, not a controller
 		// fault to back off on. The plain probe interval also skips the refresh cap, so a
 		// disconnected spoke with an expiring credential can idle up to one interval past
@@ -316,12 +350,37 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 //
 // This runs in the separate vela-cluster-core manager (cmd/cluster-core), never in
 // vela-core; see the note on pkg/controller/core.oam.dev/v1beta1.Setup.
-func Setup(mgr ctrl.Manager, args oamctrl.Args) error {
+// credentialCacheTTL is passed separately from args rather than added to oamctrl.Args,
+// which is shared with the vela-core controllers that have no credential cache.
+func Setup(mgr ctrl.Manager, args oamctrl.Args, credentialCacheTTL time.Duration) error {
 	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableClusterInfrastructure) {
 		klog.InfoS("SpokeCluster controller disabled because its feature gate is off",
 			"gate", features.EnableClusterInfrastructure)
 		return nil
 	}
+	// The TTL is a ceiling, never an extension: an entry is served until the earlier of it
+	// and the credential's own refresh deadline, so a value above the default cannot make
+	// any credential live longer than its provider allows today. It does disarm the
+	// backstop that stops a provider reporting an implausible deadline from pinning a
+	// credential in memory, which is worth saying out loud rather than leaving to be
+	// discovered when the azure or gcp arms start reporting deadlines of their own.
+	switch {
+	case credentialCacheTTL <= 0:
+		klog.InfoS("Spoke credential caching is disabled; every reconcile will re-derive its credential, "+
+			"which for aws spokes is an sts:AssumeRole and an eks:DescribeCluster per spoke per probe interval",
+			"credentialCacheTTL", credentialCacheTTL)
+	case credentialCacheTTL > DefaultCredentialCacheTTL:
+		// The chart refuses to render above the default, so reaching this means the flag was
+		// set directly. Log rather than fail: the value is inert while every provider reports
+		// a nearer deadline of its own, and refusing to start would be a harsh response to a
+		// setting that changes nothing today.
+		klog.InfoS("Spoke credential cache TTL is above the default, weakening the ceiling on how long a "+
+			"credential may be reused if a provider ever reports an implausibly distant refresh deadline",
+			"credentialCacheTTL", credentialCacheTTL, "default", DefaultCredentialCacheTTL)
+	default:
+		klog.V(1).InfoS("Spoke credential cache enabled", "credentialCacheTTL", credentialCacheTTL)
+	}
+
 	// Uncached and multicluster-aware, for the reason spelled out on Reconciler.SpokeReader.
 	spokeReader, err := pkgmulticluster.NewDefaultClient(mgr.GetConfig(), client.Options{Scheme: mgr.GetScheme()})
 	if err != nil {
@@ -334,6 +393,11 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args) error {
 		Config:               mgr.GetConfig(),
 		Providers:            credential.DefaultRegistry(),
 		concurrentReconciles: args.ConcurrentReconciles,
+		// Background rather than a manager context: the cache's sweeper goroutine should
+		// live exactly as long as the process, and Setup runs before the manager exposes
+		// a context of its own. A non-positive TTL yields a nil cache, which disables
+		// caching and restores per-pass materialization.
+		credentials: newCredentialCache(context.Background(), credentialCacheTTL),
 	}
 	return r.SetupWithManager(mgr)
 }

@@ -97,3 +97,22 @@ systemDefinitionNamespace value defaulter
     {{ .Release.Namespace }}
 {{- end -}}
 {{- end -}}
+{{/*
+Credential cache TTL for vela-cluster-core, in seconds, validated on the way out.
+
+Emits the value so callers get validation for free by using it: there is no way to render
+the flag without passing the check. 900 seconds is the EKS presigned-token window, and a
+spoke credential is served until the earlier of this ceiling and its own refresh deadline
+(the AWS arm reports that deadline 13 minutes out), so anything above 900 can never take
+effect. Failing the install beats rendering a value the controller will silently ignore.
+
+Zero and below are allowed and disable caching, which restores per-reconcile
+materialization.
+*/}}
+{{- define "kubevela.clusterCore.credentialCacheTTLSeconds" -}}
+{{- $ttl := int .Values.clusterCore.credentialCacheTTLSeconds -}}
+{{- if gt $ttl 900 -}}
+{{- fail (printf "clusterCore.credentialCacheTTLSeconds is %d, which exceeds the maximum of 900 (15 minutes). AWS spoke credentials expire after 900 seconds, so a longer TTL can never take effect. Use 900 or less, or 0 to disable credential caching." $ttl) -}}
+{{- end -}}
+{{- $ttl -}}
+{{- end -}}

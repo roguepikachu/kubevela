@@ -65,7 +65,7 @@ var _ = It("GenerateEKSToken", func() {
 		t.Fatalf("decoded URL = %q, want %q", decoded, presignedURL)
 	}
 	// Refresh must land one minute before the 15-minute presign window closes.
-	wantRefresh := now.Add(14 * time.Minute)
+	wantRefresh := now.Add(13 * time.Minute)
 	if !refreshAt.Equal(wantRefresh) {
 		t.Fatalf("refreshAt = %v, want %v", refreshAt, wantRefresh)
 	}

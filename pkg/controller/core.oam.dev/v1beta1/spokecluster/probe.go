@@ -39,8 +39,10 @@ import (
 // The measured latency is returned for discovery to record as clusterInfo.latencyMillis, so
 // the probe is where that number comes from rather than a second round trip.
 //
-// A richer probe, where a 401 forces a credential refresh and a 403 maps to its own reason,
-// is a later refinement.
+// A 401 already forces a credential refresh: reconcileConnect evicts the cached credential
+// on that one status, so the next pass remints rather than reusing a rejected token. Mapping
+// a 403 to its own condition reason is still a later refinement; today it is described in the
+// probe-failure message (see describeProbeFailure) but shares reasonProbeFailed.
 func (r *Reconciler) probe(ctx context.Context, sc *v1beta1.SpokeCluster) (time.Duration, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout(sc))
 	defer cancel()

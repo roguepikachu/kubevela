@@ -66,16 +66,27 @@ limitations under the License.
 // # Refresh semantics contract
 //
 // NextRefresh is the contract between providers and the reconcile loop.
-// A zero NextRefresh marks a static credential: no remint is
-// scheduled and the reconcile cadence is the probe interval alone (the kubeconfig
-// provider always returns zero). A non-zero NextRefresh requires the controller to
-// reconcile - and thereby re-materialize and rewrite the gateway Secret - no later
-// than that time. Providers set NextRefresh with a renew-before-expiry lead so the
-// credential is reminted before it stops working rather than at expiry (the AWS
-// provider uses its 15 minute presign window minus a 1 minute lead).
+//
+// A zero NextRefresh marks a static credential whose source can change with nothing
+// to signal it, which is every kubeconfig spoke. Nothing is scheduled, the reconcile
+// cadence is the probe interval alone, and the controller re-materializes on every
+// pass so a rotated source Secret is picked up. Zero therefore means "do not cache",
+// never "cache forever".
+//
+// A non-zero NextRefresh requires the controller to re-materialize and rewrite the
+// gateway Secret no later than that time. Between then and the previous remint the
+// controller may reuse the result rather than re-deriving it, which is what keeps an
+// aws spoke from spending an sts:AssumeRole and an eks:DescribeCluster on every probe.
+//
+// Providers set NextRefresh with a renew-before-expiry lead, so a credential is
+// reminted while it still works rather than as it stops. The aws provider takes its
+// 15 minute presign window and subtracts a 2 minute lead, leaving room for clock skew
+// between the hub and AWS and for the gap between minting a token and cluster-gateway
+// presenting it.
 package credential
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -120,6 +131,26 @@ type Materialized struct {
 // must not emit a half pair.
 func (m *Materialized) HasClientCert() bool {
 	return len(m.ClientCertData) > 0 && len(m.ClientKeyData) > 0
+}
+
+// DeepCopy returns a copy that shares no memory with m. The three []byte fields are
+// the reason it exists: the connect step aliases CAData, ClientCertData and
+// ClientKeyData straight into the gateway Secret rather than copying them, so a
+// Materialized that outlives a single reconcile (the controller caches one until its
+// refresh deadline) must not stay reachable for mutation from an earlier pass.
+//
+// Hand-written rather than generated: Materialized is not an API type and carries no
+// deepcopy-gen marker, so a new field has to be added here too.
+func (m *Materialized) DeepCopy() *Materialized {
+	if m == nil {
+		return nil
+	}
+	// Strings and time.Time are values; only the three []byte fields alias.
+	out := *m
+	out.CAData = bytes.Clone(m.CAData)
+	out.ClientCertData = bytes.Clone(m.ClientCertData)
+	out.ClientKeyData = bytes.Clone(m.ClientKeyData)
+	return &out
 }
 
 // Provider resolves connectivity for one SpokeCluster credential type.
