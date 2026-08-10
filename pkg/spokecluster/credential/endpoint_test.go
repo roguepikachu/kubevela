@@ -17,12 +17,23 @@ limitations under the License.
 package credential
 
 import (
+	"context"
+	"net"
+	"os"
 	"strings"
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	// Unit tests must not depend on ambient DNS. Hostnames resolve to TEST-NET-3
+	// unless a case overrides lookupIPs (for rebinding coverage).
+	lookupIPs = func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("203.0.113.10")}, nil
+	}
+	os.Exit(m.Run())
+}
+
 func TestValidateSpokeEndpoint_allow(t *testing.T) {
-	t.Parallel()
 	for _, ep := range []string{
 		// Public / cloud API hostnames (AWS EKS shapes)
 		"https://ABCDEF123.gr7.us-west-2.eks.amazonaws.com",
@@ -65,7 +76,6 @@ func TestValidateSpokeEndpoint_allow(t *testing.T) {
 }
 
 func TestValidateSpokeEndpoint_deny(t *testing.T) {
-	t.Parallel()
 	cases := []struct {
 		ep   string
 		want string
@@ -76,10 +86,13 @@ func TestValidateSpokeEndpoint_deny(t *testing.T) {
 		{"ftp://api.example.com", "https"},
 		{"https://", "no host"},
 		{"https:///path-only", "no host"},
-		// Loopback
+		// Loopback / unspecified
 		{"https://127.0.0.1:6443", "blocked"},
 		{"https://127.0.0.1", "blocked"},
 		{"https://127.255.255.255:6443", "blocked"},
+		{"https://0.0.0.0:6443", "unspecified"},
+		{"https://0.0.0.0", "unspecified"},
+		{"https://[::]:6443", "unspecified"},
 		{"https://localhost:6443", "loopback"},
 		{"https://LOCALHOST", "loopback"},
 		{"https://LocalHost:443", "loopback"},
@@ -93,6 +106,8 @@ func TestValidateSpokeEndpoint_deny(t *testing.T) {
 		{"https://169.254.255.255/", "blocked"},
 		{"https://[fe80::1]:6443", "blocked"},
 		{"https://[fe80::a00:27ff:fe4e:66a1]:6443", "blocked"},
+		// Zone IDs must be percent-encoded as %25 in URLs; Go rejects bare "%eth0".
+		{"https://[fe80::1%25eth0]:6443", "blocked"},
 		{"https://168.63.129.16/", "blocked"},
 		{"https://168.63.129.16:80/", "blocked"},
 		{"https://[fd00:ec2::254]/", "blocked"},
@@ -132,10 +147,45 @@ func TestValidateSpokeEndpoint_deny(t *testing.T) {
 	}
 }
 
+func TestValidateSpokeEndpoint_dnsRebinding(t *testing.T) {
+	orig := lookupIPs
+	t.Cleanup(func() { lookupIPs = orig })
+
+	lookupIPs = func(_ context.Context, host string) ([]net.IP, error) {
+		switch host {
+		case "169.254.169.254.nip.io", "imds.example":
+			return []net.IP{net.ParseIP("169.254.169.254")}, nil
+		case "loopback.example":
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		case "unspecified.example":
+			return []net.IP{net.ParseIP("0.0.0.0")}, nil
+		default:
+			return []net.IP{net.ParseIP("203.0.113.10")}, nil
+		}
+	}
+
+	cases := []struct {
+		ep   string
+		want string
+	}{
+		{"https://169.254.169.254.nip.io/", "blocked"},
+		{"https://imds.example:443/", "blocked"},
+		{"https://loopback.example:6443", "blocked"},
+		{"https://unspecified.example/", "unspecified"},
+	}
+	for _, tc := range cases {
+		err := ValidateSpokeEndpoint(tc.ep)
+		if err == nil {
+			t.Errorf("ValidateSpokeEndpoint(%q) = nil, want error containing %q", tc.ep, tc.want)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tc.want)) {
+			t.Errorf("ValidateSpokeEndpoint(%q) = %v, want substring %q", tc.ep, err, tc.want)
+		}
+	}
+}
+
 func TestValidateSpokeEndpoint_boundaryCIDRs(t *testing.T) {
-	t.Parallel()
-	// Immediately outside blocked ranges must remain allowed (regression guard
-	// against over-broad CIDR denylists that would break k3d/EKS private nets).
 	allowJustOutside := []string{
 		"https://126.255.255.255:6443", // below 127/8
 		"https://128.0.0.1:6443",       // above 127/8
@@ -152,9 +202,6 @@ func TestValidateSpokeEndpoint_boundaryCIDRs(t *testing.T) {
 }
 
 func TestValidateSpokeEndpoint_tableDrivenPairs(t *testing.T) {
-	t.Parallel()
-	// Same host, scheme flip or port flip: https+allowed host must pass,
-	// http must always fail regardless of host.
 	hosts := []string{
 		"172.27.0.2:6443",
 		"ABCDEF123.gr7.us-west-2.eks.amazonaws.com",
@@ -179,6 +226,7 @@ func TestValidateSpokeEndpoint_tableDrivenPairs(t *testing.T) {
 		"127.0.0.1:6443",
 		"kubernetes.default.svc",
 		"localhost:6443",
+		"0.0.0.0:6443",
 	}
 	for _, host := range blockedHosts {
 		ep := "https://" + host
@@ -189,7 +237,6 @@ func TestValidateSpokeEndpoint_tableDrivenPairs(t *testing.T) {
 }
 
 func TestValidateSpokeEndpoint_errorMentionsEndpoint(t *testing.T) {
-	t.Parallel()
 	ep := "https://169.254.169.254/latest/meta-data/"
 	err := ValidateSpokeEndpoint(ep)
 	if err == nil {
@@ -198,7 +245,6 @@ func TestValidateSpokeEndpoint_errorMentionsEndpoint(t *testing.T) {
 	if !strings.Contains(err.Error(), ep) {
 		t.Fatalf("error %q should quote the endpoint for operator debugging", err)
 	}
-	// Stable error shape used by MaterializeFailed condition messages.
 	if !strings.Contains(err.Error(), "not permitted") {
 		t.Fatalf("error %q should say not permitted", err)
 	}

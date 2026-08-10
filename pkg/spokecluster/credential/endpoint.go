@@ -17,10 +17,12 @@ limitations under the License.
 package credential
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // ValidateSpokeEndpoint refuses endpoints that would let a SpokeCluster coerce
@@ -29,7 +31,17 @@ import (
 // Policy is a deny-list, not an allow-list: https is required, but RFC1918 /
 // Docker/k3d private IPs and public cloud API hostnames (for example
 // *.eks.amazonaws.com) remain allowed so real spokes keep working.
+//
+// Hostnames are resolved and every returned address is checked against the same
+// IP deny-list, so spellings like 169.254.169.254.nip.io cannot bypass the
+// literal-IP checks. DNS rebinding after this check remains a residual risk
+// (validation is point-in-time); cluster-gateway dials whatever the name
+// resolves to later.
 func ValidateSpokeEndpoint(endpoint string) error {
+	return validateSpokeEndpoint(context.Background(), endpoint)
+}
+
+func validateSpokeEndpoint(ctx context.Context, endpoint string) error {
 	if endpoint == "" {
 		return fmt.Errorf("spoke endpoint is empty")
 	}
@@ -47,13 +59,13 @@ func ValidateSpokeEndpoint(endpoint string) error {
 	if host == "" {
 		return fmt.Errorf("spoke endpoint %q has no host", endpoint)
 	}
-	if err := denyHubOrMetadataHost(host); err != nil {
+	if err := denyHubOrMetadataHost(ctx, host); err != nil {
 		return fmt.Errorf("spoke endpoint %q is not permitted: %w", endpoint, err)
 	}
 	return nil
 }
 
-func denyHubOrMetadataHost(host string) error {
+func denyHubOrMetadataHost(ctx context.Context, host string) error {
 	lower := strings.ToLower(strings.TrimSuffix(host, "."))
 
 	if lower == "localhost" {
@@ -70,11 +82,40 @@ func denyHubOrMetadataHost(host string) error {
 		}
 	}
 
-	ip := net.ParseIP(host)
-	if ip == nil {
-		// Hostname that is not an IP literal and not on the deny name list is allowed
-		// (EKS/AKS/GKE public or private DNS names, on-prem FQDNs, etc.).
-		return nil
+	// IPv6 zone identifiers (fe80::1%eth0) are not accepted by net.ParseIP. Strip the
+	// zone and evaluate the address; a bare "%zone" that is not an IP is rejected.
+	ipHost := host
+	if i := strings.Index(host, "%"); i >= 0 {
+		ipHost = host[:i]
+		if ipHost == "" {
+			return fmt.Errorf("host %q has an IPv6 zone identifier and is not a valid spoke API endpoint", host)
+		}
+	}
+	if ip := net.ParseIP(ipHost); ip != nil {
+		return denyBlockedIP(ip, host)
+	}
+	if strings.Contains(host, "%") {
+		return fmt.Errorf("host %q has an IPv6 zone identifier and is not a valid spoke API endpoint", host)
+	}
+
+	ips, err := lookupIPs(ctx, lower)
+	if err != nil {
+		return fmt.Errorf("host %q could not be resolved for SSRF checks: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return fmt.Errorf("host %q resolved to no addresses", host)
+	}
+	for _, ip := range ips {
+		if err := denyBlockedIP(ip, host); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func denyBlockedIP(ip net.IP, host string) error {
+	if ip.IsUnspecified() {
+		return fmt.Errorf("host %q is an unspecified address", host)
 	}
 	for _, cidr := range blockedCIDRs {
 		if cidr.Contains(ip) {
@@ -87,6 +128,32 @@ func denyHubOrMetadataHost(host string) error {
 		}
 	}
 	return nil
+}
+
+// lookupIPs resolves a hostname for SSRF checks. Tests replace this to avoid network
+// dependency and to simulate rebinding targets.
+var lookupIPs = defaultLookupIPs
+
+// SetLookupIPsForTest replaces the DNS resolver used by ValidateSpokeEndpoint.
+// Callers must restore via the returned function. Intended for tests only.
+func SetLookupIPsForTest(fn func(context.Context, string) ([]net.IP, error)) (restore func()) {
+	prev := lookupIPs
+	lookupIPs = fn
+	return func() { lookupIPs = prev }
+}
+
+func defaultLookupIPs(ctx context.Context, host string) ([]net.IP, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.IP)
+	}
+	return out, nil
 }
 
 var blockedExactHosts = []string{

@@ -65,7 +65,10 @@ const (
 // presign omits X-Amz-Expires and EKS rejects the token with 401 Unauthorized.
 type setExpiresMiddleware struct{ seconds int }
 
-func (m setExpiresMiddleware) ID() string { return "SpokeClusterSetPresignExpires" }
+func (m setExpiresMiddleware) ID() string {
+	return "SpokeClusterSetPresignExpires:" + strconv.Itoa(m.seconds)
+}
+
 
 func (m setExpiresMiddleware) HandleBuild(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
 	if req, ok := in.Request.(*smithyhttp.Request); ok {
