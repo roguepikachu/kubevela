@@ -43,7 +43,7 @@ func (p *KubeconfigProvider) Type() v1beta1.CredentialType { return v1beta1.Cred
 
 // Materialize reads the referenced Secret, parses the kubeconfig, and extracts the current
 // context's endpoint, CA, and auth (bearer token or client cert/key).
-func (p *KubeconfigProvider) Materialize(ctx context.Context, cli client.Client, sc *v1beta1.SpokeCluster) (*Materialized, error) {
+func (p *KubeconfigProvider) Materialize(ctx context.Context, cli client.Reader, sc *v1beta1.SpokeCluster) (*Materialized, error) {
 	if sc.Spec.Credential.Kubeconfig == nil {
 		return nil, fmt.Errorf("credential.kubeconfig is required when type is kubeconfig")
 	}

@@ -139,7 +139,7 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 	// reports no deadline is never cached at all: see credentialCache.Put.
 	materialized, cached := r.credentials.Get(sc, probeInterval(sc))
 	if !cached {
-		materialized, err = provider.Materialize(ctx, r.Client, sc)
+		materialized, err = provider.Materialize(ctx, r.secretReader(), sc)
 		if err != nil {
 			setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonMaterializeFailed, err.Error())
 			status.Connection = v1beta1.ConnectionStateUnknown
@@ -390,6 +390,7 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args, credentialCacheTTL time.Duration
 	r := &Reconciler{
 		Client:               mgr.GetClient(),
 		SpokeReader:          spokeReader,
+		SecretReader:         mgr.GetAPIReader(),
 		Scheme:               mgr.GetScheme(),
 		Config:               mgr.GetConfig(),
 		Providers:            credential.DefaultRegistry(),

@@ -52,7 +52,7 @@ type mockProvider struct {
 
 func (m *mockProvider) Type() v1beta1.CredentialType { return m.credType }
 
-func (m *mockProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1.SpokeCluster) (*credential.Materialized, error) {
+func (m *mockProvider) Materialize(_ context.Context, _ client.Reader, _ *v1beta1.SpokeCluster) (*credential.Materialized, error) {
 	m.calls++
 	if m.err != nil {
 		return nil, m.err

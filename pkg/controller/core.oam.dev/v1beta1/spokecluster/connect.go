@@ -200,6 +200,11 @@ type Reconciler struct {
 	// spoke's. Discovery must therefore go through this client, never through Client.
 	SpokeReader client.Client
 
+	// SecretReader is an uncached hub reader for source kubeconfig Secrets. The
+	// manager caches Secrets only in the gateway namespace (RBAC-01); tenant-ns
+	// Gets must bypass that cache so we never start a cluster-wide Secret informer.
+	SecretReader client.Reader
+
 	record recorder.Recorder
 
 	concurrentReconciles int
@@ -228,6 +233,16 @@ type Reconciler struct {
 // rather than captured.
 func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 	return apitypes.NamespacedName{Name: sc.Name, Namespace: multicluster.ClusterGatewaySecretNamespace}
+}
+
+// secretReader returns the uncached hub reader for source Secrets, falling back to the
+// embedded Client so unit tests that construct a Reconciler with only a fake client keep
+// working.
+func (r *Reconciler) secretReader() client.Reader {
+	if r.SecretReader != nil {
+		return r.SecretReader
+	}
+	return r.Client
 }
 
 // register upserts the cluster-gateway Secret from the materialized credential, in the

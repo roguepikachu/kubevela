@@ -160,9 +160,11 @@ type Provider interface {
 	Type() v1beta1.CredentialType
 	// Materialize resolves connectivity for the given SpokeCluster. cli is a
 	// hub-side reader used for source Secrets; it must not mutate the gateway
-	// Secret. When the declared credential is invalid or unresolvable, Materialize
-	// returns a descriptive error rather than a partial result.
-	Materialize(ctx context.Context, cli client.Client, sc *v1beta1.SpokeCluster) (*Materialized, error)
+	// Secret. Prefer an uncached reader (mgr.GetAPIReader) so source Gets do not
+	// start a cluster-wide Secret informer. When the declared credential is
+	// invalid or unresolvable, Materialize returns a descriptive error rather
+	// than a partial result.
+	Materialize(ctx context.Context, cli client.Reader, sc *v1beta1.SpokeCluster) (*Materialized, error)
 }
 
 // Registry maps credential types to their providers.

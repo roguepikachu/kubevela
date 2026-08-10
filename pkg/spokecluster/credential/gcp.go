@@ -49,7 +49,7 @@ func (p *GCPProvider) Type() v1beta1.CredentialType { return v1beta1.CredentialT
 
 // Materialize is not implemented. The gcp arm is accepted by the schema so the
 // API is forward-compatible, but no connectivity is resolved yet.
-func (p *GCPProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1.SpokeCluster) (*Materialized, error) {
+func (p *GCPProvider) Materialize(_ context.Context, _ client.Reader, _ *v1beta1.SpokeCluster) (*Materialized, error) {
 	// TODO: implement GKE connectivity (see the type doc above and aws.go).
 	return nil, fmt.Errorf("gcp credential provider is not implemented yet")
 }

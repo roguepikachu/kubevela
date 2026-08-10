@@ -22,14 +22,18 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	corev1 "k8s.io/api/core/v1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
 	"k8s.io/klog/v2/textlogger"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"github.com/oam-dev/kubevela/apis/types"
 	oamcontroller "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
 	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1/spokecluster"
 	"github.com/oam-dev/kubevela/pkg/features"
@@ -160,6 +164,17 @@ func run(o *options) error {
 
 	restConfig := ctrl.GetConfigOrDie()
 
+	// Resolve the gateway Secret namespace before building the manager cache. Without a
+	// namespace-scoped Secret informer, controller-runtime tries to watch Secrets
+	// cluster-wide and needs secrets list/watch ClusterRole verbs that RBAC-01 removes.
+	if _, err := multicluster.Initialize(restConfig, o.autoUpgradeSecret); err != nil {
+		klog.ErrorS(err, "Failed to detect cluster-gateway; spoke probes and discovery will fail until it is ready")
+	}
+	gatewayNS := multicluster.ClusterGatewaySecretNamespace
+	if gatewayNS == "" {
+		gatewayNS = types.DefaultKubeVelaNS
+	}
+
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:                        common.Scheme,
 		Metrics:                       metricsserver.Options{BindAddress: o.metricsAddr},
@@ -175,14 +190,21 @@ func run(o *options) error {
 			Port:    o.webhookPort,
 			CertDir: o.certDir,
 		}),
+		// RBAC-01: cache Secrets only in the gateway namespace. Source kubeconfig
+		// Secrets in tenant namespaces are read via mgr.GetAPIReader() instead.
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {
+					Namespaces: map[string]cache.Config{
+						gatewayNS: {},
+					},
+				},
+			},
+		},
 	})
 	if err != nil {
 		klog.ErrorS(err, "Unable to create the vela-cluster-core manager")
 		return err
-	}
-
-	if _, err := multicluster.Initialize(restConfig, o.autoUpgradeSecret); err != nil {
-		klog.ErrorS(err, "Failed to detect cluster-gateway; spoke probes and discovery will fail until it is ready")
 	}
 
 	// Setup does its own feature-gate check and registers nothing when the gate is off, but
