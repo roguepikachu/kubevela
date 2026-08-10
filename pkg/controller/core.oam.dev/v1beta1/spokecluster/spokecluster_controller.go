@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
@@ -398,6 +399,9 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args, credentialCacheTTL time.Duration
 		// a context of its own. A non-positive TTL yields a nil cache, which disables
 		// caching and restores per-pass materialization.
 		credentials: newCredentialCache(context.Background(), credentialCacheTTL),
+	}
+	if err := mgr.Add(manager.RunnableFunc(r.StartGatewaySecretJanitor)); err != nil {
+		return fmt.Errorf("unable to add gateway secret janitor: %w", err)
 	}
 	return r.SetupWithManager(mgr)
 }

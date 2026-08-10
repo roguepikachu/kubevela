@@ -75,6 +75,14 @@ const (
 // SpokeCluster that happens to share a name across namespaces.
 const secretOwnerAnnotation = "spokecluster.core.oam.dev/owner"
 
+// secretDeletionPolicyAnnotation records the SpokeCluster's deletionPolicy at the time the
+// gateway Secret was last written. Cross-namespace spokes cannot use an OwnerReference
+// backstop (Kubernetes forbids cross-namespace owners), so a force-deleted SpokeCluster
+// would otherwise leak its Secret. The gateway-secret janitor uses this annotation to
+// decide whether a Secret whose owner SpokeCluster is gone should be detached (default)
+// or kept (orphan).
+const secretDeletionPolicyAnnotation = "spokecluster.core.oam.dev/deletion-policy"
+
 // verifyAdoptable refuses to touch a gateway Secret this SpokeCluster does not already
 // own. A Secret with no owner annotation is foreign, most likely a manually joined
 // cluster; adopting one is a Secret-migration concern, not this controller's. A Secret owned
@@ -94,13 +102,19 @@ func verifyAdoptable(sc *v1beta1.SpokeCluster, secret *corev1.Secret) error {
 	}
 }
 
-// markOwner stamps the gateway Secret with the SpokeCluster that wrote it, so a later
-// register call can tell this Secret apart from one it does not manage.
+// markOwner stamps the gateway Secret with the SpokeCluster that wrote it and the
+// deletionPolicy in force, so a later register call can tell this Secret apart from one it
+// does not manage and the janitor can GC force-deleted cross-namespace spokes correctly.
 func markOwner(sc *v1beta1.SpokeCluster, secret *corev1.Secret) {
 	if secret.Annotations == nil {
 		secret.Annotations = map[string]string{}
 	}
 	secret.Annotations[secretOwnerAnnotation] = sc.Namespace + "/" + sc.Name
+	policy := sc.Spec.DeletionPolicy
+	if policy == "" {
+		policy = v1beta1.SpokeDeletionPolicyDetach
+	}
+	secret.Annotations[secretDeletionPolicyAnnotation] = string(policy)
 }
 
 // ownsGatewaySecret reports whether the gateway Secret at sc's name, if any, is one this
