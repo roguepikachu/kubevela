@@ -636,14 +636,18 @@ var _ = It("MaterializeFromKubeconfigExpiredJWTLeavesRefreshUnset", func() {
 	}
 })
 
-var _ = It("MaterializeFromKubeconfigJWTInsideLeadWindowLeavesRefreshUnset", func() {
+var _ = It("MaterializeFromKubeconfigJWTInsideLeadWindowUsesHardExpiry", func() {
 	t := GinkgoT()
-	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWith(unsignedJWT(time.Now().Add(30 * time.Second)))))
+	exp := time.Now().Add(30 * time.Second).Truncate(time.Second)
+	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWith(unsignedJWT(exp))))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !m.NextRefresh.IsZero() {
-		t.Fatalf("JWT already inside the lead window must leave NextRefresh unset, got %v", m.NextRefresh)
+	if m.NextRefresh.IsZero() {
+		t.Fatal("JWT inside the lead window must schedule refresh at hard expiry, not leave NextRefresh unset")
+	}
+	if delta := m.NextRefresh.Sub(exp); delta > time.Second || delta < -time.Second {
+		t.Fatalf("NextRefresh = %v, want hard expiry ~%v (delta %v)", m.NextRefresh, exp, delta)
 	}
 })
 

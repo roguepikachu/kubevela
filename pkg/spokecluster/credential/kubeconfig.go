@@ -148,13 +148,21 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		return nil, fmt.Errorf("kubeconfig user %q has no embedded token or client cert/key; exec and file-path credentials are not supported for connect", kubeCtx.AuthInfo)
 	}
 	if expiry := kubeconfigCredentialExpiry(m.Token, m.ClientCertData); !expiry.IsZero() {
+		now := time.Now()
 		refreshAt := expiry.Add(-kubeconfigRefreshLead)
-		if refreshAt.After(time.Now()) {
+		switch {
+		case refreshAt.After(now):
+			// Plenty of life left: rematerialize two minutes before expiry.
 			m.NextRefresh = refreshAt
+		case expiry.After(now):
+			// Inside the lead window but not dead yet. Schedule the hard
+			// expiry so a 10-minute probe interval cannot leave this token
+			// in the gateway Secret after it stops working. Setting
+			// NextRefresh to now would floor at minRequeue and busy-loop.
+			m.NextRefresh = expiry
 		}
-		// Already inside the lead window (or expired): leave NextRefresh zero so
-		// the credential stays uncacheable and the next pass follows the probe
-		// interval. Setting it to time.Now() would floor at minRequeue and busy-loop.
+		// Already expired: leave NextRefresh zero. The credential is
+		// uncacheable and the next pass follows the probe interval.
 	}
 	return m, nil
 }

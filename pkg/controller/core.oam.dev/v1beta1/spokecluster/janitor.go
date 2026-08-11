@@ -18,7 +18,6 @@ package spokecluster
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -35,7 +34,7 @@ import (
 
 // gatewaySecretJanitorInterval is how often the controller sweeps gateway Secrets whose
 // owning SpokeCluster was force-deleted (finalizer bypassed). Cross-namespace spokes cannot
-// rely on OwnerReference GC, so this is the backstop for detach.
+// rely on OwnerReference GC, so this is the backstop that UID-deletes the leaked Secret.
 const gatewaySecretJanitorInterval = 30 * time.Second
 
 // StartGatewaySecretJanitor runs a periodic sweep until ctx is cancelled. It is registered
@@ -105,8 +104,12 @@ func (r *Reconciler) reapGatewaySecretIfOwnerGone(ctx context.Context, secret *c
 		return err
 	}
 
-	// Re-read before detach. DetachCluster deletes by cluster name, so a Secret that
-	// was replaced (new UID) or re-owned between List and now must be left alone.
+	// Re-read, then delete only that UID. DetachCluster looks up the Secret by
+	// cluster name and scrubs ResourceTrackers for that name, so a SpokeCluster
+	// recreated between this check and the delete would lose its new registration.
+	// The janitor is the force-delete backstop; it must not impersonate a detach
+	// of whatever currently holds the name. Stale ResourceTracker refs are left
+	// for the next owned detach (or stay, if the name is reused on purpose).
 	fresh := &corev1.Secret{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(secret), fresh); err != nil {
 		return client.IgnoreNotFound(err)
@@ -123,14 +126,8 @@ func (r *Reconciler) reapGatewaySecretIfOwnerGone(ctx context.Context, secret *c
 
 	klog.InfoS("gateway secret janitor reclaiming Secret whose SpokeCluster is gone",
 		"secret", klog.KObj(fresh), "owner", owner, "deletionPolicy", policy)
-	if err := multicluster.DetachCluster(ctx, r.Client, fresh.Name); err != nil {
-		if !isExpectedDetachFailure(err) {
-			return fmt.Errorf("detach %s: %w", fresh.Name, err)
-		}
-		uid := fresh.UID
-		return client.IgnoreNotFound(r.Delete(ctx, fresh, client.Preconditions{UID: &uid}))
-	}
-	return nil
+	uid := fresh.UID
+	return client.IgnoreNotFound(r.Delete(ctx, fresh, client.Preconditions{UID: &uid}))
 }
 
 func parseSecretOwner(owner string) (namespace, name string, ok bool) {
