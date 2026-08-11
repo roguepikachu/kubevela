@@ -8,6 +8,15 @@
 #
 # The hub only needs to probe /healthz, GET /version, and list nodes.
 # Do not bind cluster-admin.
+#
+# Apply the ServiceAccount too. The ClusterRoleBinding below names it; without
+# the account the binding is inert and connect probes fail with Forbidden.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubevela-spoke-connect
+  namespace: kube-system
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

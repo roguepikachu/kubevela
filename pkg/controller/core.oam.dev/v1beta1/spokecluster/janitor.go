@@ -105,13 +105,30 @@ func (r *Reconciler) reapGatewaySecretIfOwnerGone(ctx context.Context, secret *c
 		return err
 	}
 
+	// Re-read before detach. DetachCluster deletes by cluster name, so a Secret that
+	// was replaced (new UID) or re-owned between List and now must be left alone.
+	fresh := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(secret), fresh); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if fresh.UID != secret.UID {
+		return nil
+	}
+	if fresh.Annotations == nil || fresh.Annotations[secretOwnerAnnotation] != owner {
+		return nil
+	}
+	if fresh.ResourceVersion != secret.ResourceVersion {
+		return nil
+	}
+
 	klog.InfoS("gateway secret janitor reclaiming Secret whose SpokeCluster is gone",
-		"secret", klog.KObj(secret), "owner", owner, "deletionPolicy", policy)
-	if err := multicluster.DetachCluster(ctx, r.Client, secret.Name); err != nil {
+		"secret", klog.KObj(fresh), "owner", owner, "deletionPolicy", policy)
+	if err := multicluster.DetachCluster(ctx, r.Client, fresh.Name); err != nil {
 		if !isExpectedDetachFailure(err) {
-			return fmt.Errorf("detach %s: %w", secret.Name, err)
+			return fmt.Errorf("detach %s: %w", fresh.Name, err)
 		}
-		return client.IgnoreNotFound(r.Delete(ctx, secret))
+		uid := fresh.UID
+		return client.IgnoreNotFound(r.Delete(ctx, fresh, client.Preconditions{UID: &uid}))
 	}
 	return nil
 }

@@ -47,10 +47,10 @@ func init() {
 	for _, to := range []string{"Connected", "Disconnected"} {
 		spokeConnectionTransitions.WithLabelValues(to)
 	}
-	for _, reason := range []string{reasonMaterializeFailed, reasonNoProvider, reasonRegisterFailed} {
-		spokeConditionFailures.WithLabelValues(v1beta1.SpokeClusterConditionCredentialValid, reason)
-		spokeConditionFailures.WithLabelValues(v1beta1.SpokeClusterConditionRegistered, reason)
-	}
+	// Only the (condition, reason) pairs emitStatusEvents can increment.
+	spokeConditionFailures.WithLabelValues(v1beta1.SpokeClusterConditionCredentialValid, reasonMaterializeFailed)
+	spokeConditionFailures.WithLabelValues(v1beta1.SpokeClusterConditionCredentialValid, reasonNoProvider)
+	spokeConditionFailures.WithLabelValues(v1beta1.SpokeClusterConditionRegistered, reasonRegisterFailed)
 	for _, result := range []string{"success", "error"} {
 		spokeDetachTotal.WithLabelValues(result)
 	}

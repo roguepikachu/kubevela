@@ -76,7 +76,10 @@ limitations under the License.
 // A kubeconfig bearer JWT with exp, or a parseable client certificate, is not
 // static: the provider sets NextRefresh two minutes before that expiry so a
 // projected ServiceAccount token or short-lived cert is rematerialized (and a
-// rotated source Secret is re-read) before the previous credential dies.
+// rotated source Secret is re-read) before the previous credential dies. If
+// expiry is already inside that lead window (or past), NextRefresh stays zero:
+// the credential is uncacheable and the next pass follows the probe interval,
+// rather than forcing a minRequeue busy loop.
 //
 // A non-zero NextRefresh requires the controller to re-materialize and rewrite the
 // gateway Secret no later than that time. Between then and the previous remint the

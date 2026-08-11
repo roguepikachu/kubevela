@@ -157,6 +157,8 @@ spec:
 #
 #    d. a SpokeCluster whose name collides with a gateway Secret written by
 #       `vela cluster join` (no owner annotation)
+#         -> "already exists and is not managed by a SpokeCluster (likely a
+#            manually joined cluster); refusing to overwrite it"
 #
 #    e. kubeconfig whose server is http://..., or https://169.254.169.254/...,
 #       or https://kubernetes.default.svc (hub SSRF). Rejected at materialize/
@@ -171,11 +173,6 @@ spec:
 #         -> "has no certificate-authority-data; connect requires an inline CA
 #            bundle so cluster-gateway can verify the spoke API server"
 #
-#    h. a SpokeCluster whose name collides with a gateway Secret written by
-#       `vela cluster join` (no owner annotation)
-#         -> "already exists and is not managed by a SpokeCluster (likely a
-#            manually joined cluster); refusing to overwrite it"
-#
-#    i. two SpokeClusters with the same name in different namespaces
+#    h. two SpokeClusters with the same name in different namespaces
 #         -> the second gets "is owned by a different SpokeCluster (ns/name);
 #            refusing to overwrite it"

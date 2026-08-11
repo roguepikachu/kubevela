@@ -423,5 +423,6 @@ func (r *Reconciler) deleteGatewaySecret(ctx context.Context, sc *v1beta1.SpokeC
 	if verifyAdoptable(sc, secret) != nil {
 		return nil
 	}
-	return client.IgnoreNotFound(r.Delete(ctx, secret))
+	uid := secret.UID
+	return client.IgnoreNotFound(r.Delete(ctx, secret, client.Preconditions{UID: &uid}))
 }

@@ -40,7 +40,6 @@ import (
 // an ExternalSecret rotation land before the previous credential dies.
 const kubeconfigRefreshLead = 2 * time.Minute
 
-
 // DefaultKubeconfigSecretKey is the Secret data key used when the credential does not name one.
 const DefaultKubeconfigSecretKey = "kubeconfig"
 
@@ -149,12 +148,13 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		return nil, fmt.Errorf("kubeconfig user %q has no embedded token or client cert/key; exec and file-path credentials are not supported for connect", kubeCtx.AuthInfo)
 	}
 	if expiry := kubeconfigCredentialExpiry(m.Token, m.ClientCertData); !expiry.IsZero() {
-		m.NextRefresh = expiry.Add(-kubeconfigRefreshLead)
-		if !m.NextRefresh.After(time.Now()) {
-			// Already inside the lead window (or expired). Force the next pass to
-			// re-read the source Secret so a rotated projected token is picked up.
-			m.NextRefresh = time.Now()
+		refreshAt := expiry.Add(-kubeconfigRefreshLead)
+		if refreshAt.After(time.Now()) {
+			m.NextRefresh = refreshAt
 		}
+		// Already inside the lead window (or expired): leave NextRefresh zero so
+		// the credential stays uncacheable and the next pass follows the probe
+		// interval. Setting it to time.Now() would floor at minRequeue and busy-loop.
 	}
 	return m, nil
 }

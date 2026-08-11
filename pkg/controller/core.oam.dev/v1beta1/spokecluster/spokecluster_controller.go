@@ -242,10 +242,14 @@ func (r *Reconciler) discoverSpoke(ctx context.Context, sc *v1beta1.SpokeCluster
 // pass. Status is written first so a failure is still visible to an operator even though
 // the pass errors out.
 func (r *Reconciler) finish(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus, requeue time.Duration, reconcileErr error) (ctrl.Result, error) {
-	r.emitStatusEvents(sc, &sc.Status, status)
+	prev := sc.Status
 	if err := r.updateStatus(ctx, sc, status); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Events and counters describe the status that was actually persisted. Emitting
+	// first would fire ProbeSucceeded (and increment the transition counter) on a
+	// conflict that then retries, so the next successful write looks like a no-op.
+	r.emitStatusEvents(sc, &prev, status)
 	if reconcileErr != nil {
 		return ctrl.Result{}, reconcileErr
 	}

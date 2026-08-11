@@ -20,9 +20,32 @@ import (
 	"context"
 
 	. "github.com/onsi/ginkgo/v2"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
+
+// secretGetMutator wraps Get so tests can simulate a Secret that changed between
+// List and the janitor's re-read (new UID, new owner, or a bumped resourceVersion).
+type secretGetMutator struct {
+	client.Client
+	mutate func(*corev1.Secret)
+}
+
+func (c secretGetMutator) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if c.mutate == nil {
+		return nil
+	}
+	if secret, ok := obj.(*corev1.Secret); ok {
+		c.mutate(secret)
+	}
+	return nil
+}
 
 var _ = It("ParseSecretOwner", func() {
 	t := GinkgoT()
@@ -88,6 +111,43 @@ var _ = It("JanitorIgnoresManuallyJoinedSecret", func() {
 
 	if !secretExists(t, r.Client, "manual-join") {
 		t.Fatal("janitor deleted a manually joined Secret without owner annotation")
+	}
+})
+
+var _ = It("JanitorSkipsSecretReplacedBetweenListAndReap", func() {
+	t := GinkgoT()
+	secret := gatewaySecretOwnedBy("replaced-spoke", "team-a")
+	r := newTestReconciler(t, secret)
+	r.Client = secretGetMutator{
+		Client: r.Client,
+		mutate: func(s *corev1.Secret) {
+			s.UID = types.UID("uid-after-replace")
+			s.Annotations[secretOwnerAnnotation] = "other-ns/other"
+		},
+	}
+
+	r.sweepOrphanedGatewaySecrets(context.Background())
+
+	if !secretExists(t, r.Client.(secretGetMutator).Client, "replaced-spoke") {
+		t.Fatal("janitor detached a Secret whose UID/owner changed after list")
+	}
+})
+
+var _ = It("JanitorSkipsSecretWhenResourceVersionMoved", func() {
+	t := GinkgoT()
+	secret := gatewaySecretOwnedBy("rv-spoke", "team-a")
+	r := newTestReconciler(t, secret)
+	r.Client = secretGetMutator{
+		Client: r.Client,
+		mutate: func(s *corev1.Secret) {
+			s.ResourceVersion = s.ResourceVersion + "-stale"
+		},
+	}
+
+	r.sweepOrphanedGatewaySecrets(context.Background())
+
+	if !secretExists(t, r.Client.(secretGetMutator).Client, "rv-spoke") {
+		t.Fatal("janitor detached a Secret whose resourceVersion changed after list")
 	}
 })
 

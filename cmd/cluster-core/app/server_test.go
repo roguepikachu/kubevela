@@ -27,6 +27,7 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	featuregatetesting "k8s.io/component-base/featuregate/testing"
 
+	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/features"
 )
 
@@ -47,6 +48,7 @@ var _ = It("DefaultOptions", func() {
 	assert.Equal(t, 5, o.concurrentReconciles)
 	assert.False(t, o.autoUpgradeSecret)
 	assert.Equal(t, 15*time.Minute, o.credentialCacheTTL)
+	assert.Equal(t, "", o.gatewaySecretNS)
 })
 
 var _ = It("AddFlags", func() {
@@ -69,6 +71,7 @@ var _ = It("AddFlags", func() {
 		"concurrent-reconciles",
 		"auto-upgrade-cluster-secret",
 		"credential-cache-ttl",
+		"cluster-gateway-secret-namespace",
 		"feature-gates",
 	} {
 		f := fs.Lookup(name)
@@ -180,4 +183,11 @@ var _ = It("ConfigureSpokeClusterWebhooksStopsWhenCertWaitFails", func() {
 
 	assert.ErrorIs(t, err, waitErr)
 	assert.Equal(t, []string{"wait"}, calls)
+})
+
+var _ = It("ResolveGatewaySecretNamespacePrefersConfigured", func() {
+	t := GinkgoT()
+	assert.Equal(t, "kubevela", resolveGatewaySecretNamespace("vela-system", "kubevela"))
+	assert.Equal(t, "vela-system", resolveGatewaySecretNamespace("vela-system", ""))
+	assert.Equal(t, types.DefaultKubeVelaNS, resolveGatewaySecretNamespace("", ""))
 })

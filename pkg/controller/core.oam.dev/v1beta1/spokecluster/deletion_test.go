@@ -161,7 +161,9 @@ var _ = It("ReconcileDeleteUnsetPolicyDetaches", func() {
 var _ = It("ReconcileDeleteOrphanKeepsSecret", func() {
 	t := GinkgoT()
 	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyOrphan)
+	rec := &recordingRecorder{}
 	r := newTestReconciler(t, sc, gatewaySecret(sc.Name))
+	r.record = rec
 
 	if _, err := r.reconcileDelete(context.Background(), sc); err != nil {
 		t.Fatalf("reconcileDelete returned an unexpected error: %v", err)
@@ -172,6 +174,24 @@ var _ = It("ReconcileDeleteOrphanKeepsSecret", func() {
 	}
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released")
+	}
+	if len(rec.events) != 0 {
+		t.Errorf("orphan deletion emitted %#v, want no Detached event", rec.events)
+	}
+})
+
+var _ = It("ReconcileDeleteDetachEmitsDetached", func() {
+	t := GinkgoT()
+	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	rec := &recordingRecorder{}
+	r := newTestReconciler(t, sc, gatewaySecret(sc.Name))
+	r.record = rec
+
+	if _, err := r.reconcileDelete(context.Background(), sc); err != nil {
+		t.Fatalf("reconcileDelete returned an unexpected error: %v", err)
+	}
+	if len(rec.events) != 1 || rec.events[0].Reason != reasonDetached {
+		t.Fatalf("detach deletion events = %#v, want one Detached", rec.events)
 	}
 })
 
@@ -226,6 +246,21 @@ var _ = It("ReconcileDeleteSkipsCleanupForUnownedSecret", func() {
 	}
 	if containsFinalizer(sc) {
 		t.Error("finalizer was not released for the deleting SpokeCluster")
+	}
+})
+
+var _ = It("ReconcileDeleteUnownedDoesNotEmitDetached", func() {
+	t := GinkgoT()
+	sc := deletingSpoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	rec := &recordingRecorder{}
+	r := newTestReconciler(t, sc, foreignGatewaySecret(sc.Name))
+	r.record = rec
+
+	if _, err := r.reconcileDelete(context.Background(), sc); err != nil {
+		t.Fatalf("reconcileDelete returned an unexpected error: %v", err)
+	}
+	if len(rec.events) != 0 {
+		t.Errorf("unowned deletion emitted %#v, want no Detached event", rec.events)
 	}
 })
 

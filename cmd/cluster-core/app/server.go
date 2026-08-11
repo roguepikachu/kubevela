@@ -57,6 +57,7 @@ type options struct {
 	concurrentReconciles int
 	autoUpgradeSecret    bool
 	credentialCacheTTL   time.Duration
+	gatewaySecretNS      string
 }
 
 // defaultOptions returns the options with their documented defaults.
@@ -109,6 +110,11 @@ func addFlags(fs *pflag.FlagSet, o *options) {
 			"A credential is reused only until its own refresh deadline anyway, so this is an upper "+
 			"bound rather than the usual lifetime. Set to 0 to disable caching and re-derive on every "+
 			"reconcile, which for AWS spokes means an sts:AssumeRole and an eks:DescribeCluster per pass.")
+	fs.StringVar(&o.gatewaySecretNS, "cluster-gateway-secret-namespace", o.gatewaySecretNS,
+		"Namespace of cluster-gateway Secrets. Must match the Role that grants secrets list/watch. "+
+			"The chart sets this to the release namespace. When set, it wins over both the package "+
+			"default (vela-system) and the namespace discovered from the cluster-gateway APIService, "+
+			"so a failed or late Initialize cannot point the Secret informer at a namespace the Role does not cover.")
 
 	utilfeature.DefaultMutableFeatureGate.AddFlag(fs)
 }
@@ -170,10 +176,12 @@ func run(o *options) error {
 	if _, err := multicluster.Initialize(restConfig, o.autoUpgradeSecret); err != nil {
 		klog.ErrorS(err, "Failed to detect cluster-gateway; spoke probes and discovery will fail until it is ready")
 	}
-	gatewayNS := multicluster.ClusterGatewaySecretNamespace
-	if gatewayNS == "" {
-		gatewayNS = types.DefaultKubeVelaNS
+	gatewayNS := resolveGatewaySecretNamespace(multicluster.ClusterGatewaySecretNamespace, o.gatewaySecretNS)
+	if gatewayNS != multicluster.ClusterGatewaySecretNamespace {
+		klog.InfoS("using configured cluster-gateway Secret namespace so the informer matches RBAC",
+			"discovered", multicluster.ClusterGatewaySecretNamespace, "configured", gatewayNS)
 	}
+	multicluster.ClusterGatewaySecretNamespace = gatewayNS
 
 	mgr, err := ctrl.NewManager(restConfig, ctrl.Options{
 		Scheme:                        common.Scheme,
@@ -241,4 +249,18 @@ func run(o *options) error {
 
 	klog.InfoS("Starting vela-cluster-core manager")
 	return mgr.Start(ctrl.SetupSignalHandler())
+}
+
+// resolveGatewaySecretNamespace picks the Secret namespace the manager cache (and
+// therefore the namespaced Role) will watch. A configured value always wins so a
+// failed Initialize cannot leave the informer on the package default (vela-system)
+// while the Role is in the release namespace.
+func resolveGatewaySecretNamespace(discovered, configured string) string {
+	if configured != "" {
+		return configured
+	}
+	if discovered != "" {
+		return discovered
+	}
+	return types.DefaultKubeVelaNS
 }

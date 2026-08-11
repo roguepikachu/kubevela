@@ -56,6 +56,7 @@ spec:
             - "--enable-leader-election"
             - "--concurrent-reconciles={{ .Values.clusterCore.concurrentReconciles }}"
             - "--credential-cache-ttl={{ include "kubevela.clusterCore.credentialCacheTTLSeconds" . }}s"
+            - "--cluster-gateway-secret-namespace={{ .Release.Namespace }}"
             - "--feature-gates=EnableClusterInfrastructure=true"
             {{- if .Values.clusterCore.webhook.enabled }}
             - "--use-webhook=true"
@@ -125,9 +126,20 @@ spec:
                     {{- include "kubevela.selectorLabels" . | nindent 20 }}
                 topologyKey: kubernetes.io/hostname
       {{- end }}
-      {{- with .Values.clusterCore.topologySpreadConstraints }}
+      {{- if kindIs "slice" .Values.clusterCore.topologySpreadConstraints }}
+      {{- if gt (len .Values.clusterCore.topologySpreadConstraints) 0 }}
       topologySpreadConstraints:
-        {{- toYaml . | nindent 8 }}
+        {{- toYaml .Values.clusterCore.topologySpreadConstraints | nindent 8 }}
+      {{- end }}
+      {{- else }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              controller.oam.dev/name: vela-cluster-core
+              {{- include "kubevela.selectorLabels" . | nindent 14 }}
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

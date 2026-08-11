@@ -625,14 +625,25 @@ var _ = It("MaterializeFromKubeconfigSetsNextRefreshFromJWTExp", func() {
 	}
 })
 
-var _ = It("MaterializeFromKubeconfigExpiredJWTForcesImmediateRefresh", func() {
+var _ = It("MaterializeFromKubeconfigExpiredJWTLeavesRefreshUnset", func() {
 	t := GinkgoT()
 	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWith(unsignedJWT(time.Now().Add(-time.Minute)))))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if m.NextRefresh.IsZero() || m.NextRefresh.After(time.Now().Add(time.Second)) {
-		t.Fatalf("expired JWT should force NextRefresh ~= now, got %v", m.NextRefresh)
+	if !m.NextRefresh.IsZero() {
+		t.Fatalf("expired JWT must leave NextRefresh unset (probe cadence), got %v", m.NextRefresh)
+	}
+})
+
+var _ = It("MaterializeFromKubeconfigJWTInsideLeadWindowLeavesRefreshUnset", func() {
+	t := GinkgoT()
+	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWith(unsignedJWT(time.Now().Add(30 * time.Second)))))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !m.NextRefresh.IsZero() {
+		t.Fatalf("JWT already inside the lead window must leave NextRefresh unset, got %v", m.NextRefresh)
 	}
 })
 

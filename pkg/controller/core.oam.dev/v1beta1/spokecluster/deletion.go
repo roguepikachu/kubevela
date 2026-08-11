@@ -60,7 +60,11 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 		return ctrl.Result{}, err
 	}
 
-	if owned && sc.Spec.DeletionPolicy != v1beta1.SpokeDeletionPolicyOrphan {
+	// Detached events and spokeDetachTotal only fire when we actually tried to detach:
+	// an owned Secret under detach (or the unset default). Orphan and never-owned
+	// deletions still release the finalizer, but they are not a detach.
+	attemptedDetach := owned && sc.Spec.DeletionPolicy != v1beta1.SpokeDeletionPolicyOrphan
+	if attemptedDetach {
 		if err := multicluster.DetachCluster(ctx, r.Client, sc.Name); err != nil {
 			if !isExpectedDetachFailure(err) {
 				// A ResourceTracker scrub failure, or any other unexpected error, must be
@@ -87,11 +91,15 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 	// later garbage-collection pass finds nothing to do.
 	controllerutil.RemoveFinalizer(sc, FinalizerName)
 	if err := r.Update(ctx, sc); err != nil {
-		spokeDetachTotal.WithLabelValues("error").Inc()
+		if attemptedDetach {
+			spokeDetachTotal.WithLabelValues("error").Inc()
+		}
 		return ctrl.Result{}, err
 	}
-	r.emit(sc, event.Normal(reasonDetached, "spoke cluster detached"))
-	spokeDetachTotal.WithLabelValues("success").Inc()
+	if attemptedDetach {
+		r.emit(sc, event.Normal(reasonDetached, "spoke cluster detached"))
+		spokeDetachTotal.WithLabelValues("success").Inc()
+	}
 	return ctrl.Result{}, nil
 }
 

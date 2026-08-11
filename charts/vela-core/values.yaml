@@ -181,14 +181,8 @@ clusterCore:
   replicaCount: 2
   ## @param clusterCore.affinity Affinity for vela-cluster-core pods. When empty, falls back to the top-level affinity value, then to preferred podAntiAffinity on kubernetes.io/hostname (same pattern as vela-core and cluster-gateway).
   affinity: {}
-  ## @param clusterCore.topologySpreadConstraints Topology spread for vela-cluster-core pods. Empty keeps chart defaults (soft spread on kubernetes.io/hostname). Set to [] to disable.
+  ## @param clusterCore.topologySpreadConstraints Topology spread for vela-cluster-core pods. Leave unset for the chart default (soft hostname spread including the release selector). Set to [] to disable, or provide a full list to override.
   topologySpreadConstraints:
-    - maxSkew: 1
-      topologyKey: kubernetes.io/hostname
-      whenUnsatisfiable: ScheduleAnyway
-      labelSelector:
-        matchLabels:
-          controller.oam.dev/name: vela-cluster-core
   ## @param clusterCore.podDisruptionBudget.enabled Create a PodDisruptionBudget when replicaCount > 1 so voluntary disruptions keep at least one webhook/controller pod.
   ## @param clusterCore.podDisruptionBudget.minAvailable Minimum available pods during voluntary disruptions
   podDisruptionBudget:
@@ -215,14 +209,14 @@ clusterCore:
     port: 9441
   ## @param clusterCore.metricsPort Metrics port for vela-cluster-core
   metricsPort: 8080
-  ## @param clusterCore.podSecurityContext Pod-level security context for vela-cluster-core. Defaults match the Kubernetes restricted Pod Security Standard; override to {} only when the runtime image cannot run as non-root.
+  ## @param clusterCore.podSecurityContext Pod-level security context for vela-cluster-core. Defaults match the Kubernetes restricted Pod Security Standard. Override BOTH clusterCore.podSecurityContext and clusterCore.securityContext to {} together when the runtime image cannot run as non-root. Clearing only one leaves the other restricted and the pod fails to start.
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 65532
     runAsGroup: 65532
     seccompProfile:
       type: RuntimeDefault
-  ## @param clusterCore.securityContext Container security context for vela-cluster-core. Defaults match restricted PSS (drop ALL, no privilege escalation, read-only root).
+  ## @param clusterCore.securityContext Container security context for vela-cluster-core. Defaults match restricted PSS (drop ALL, no privilege escalation, read-only root). Must be cleared together with podSecurityContext (see above).
   securityContext:
     allowPrivilegeEscalation: false
     capabilities:
