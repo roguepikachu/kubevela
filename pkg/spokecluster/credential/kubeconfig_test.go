@@ -18,7 +18,15 @@ package credential
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -571,5 +579,106 @@ var _ = It("KubeconfigProviderRejectsCrossNamespace", func() {
 	}
 	if !strings.Contains(err.Error(), "cross-namespace") {
 		t.Fatalf("error %q should mention cross-namespace", err)
+	}
+})
+
+func unsignedJWT(exp time.Time) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, _ := json.Marshal(map[string]int64{"exp": exp.Unix()})
+	return header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
+}
+
+func tokenKubeconfigWith(token string) string {
+	return `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority-data: Y2FkYXRh
+users:
+- name: spoke
+  user:
+    token: ` + token + `
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+}
+
+var _ = It("MaterializeFromKubeconfigSetsNextRefreshFromJWTExp", func() {
+	t := GinkgoT()
+	exp := time.Now().Add(10 * time.Minute).Truncate(time.Second)
+	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWith(unsignedJWT(exp))))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := exp.Add(-kubeconfigRefreshLead)
+	if m.NextRefresh.IsZero() {
+		t.Fatal("JWT token should schedule a refresh")
+	}
+	if delta := m.NextRefresh.Sub(want); delta > time.Second || delta < -time.Second {
+		t.Fatalf("NextRefresh = %v, want ~%v (delta %v)", m.NextRefresh, want, delta)
+	}
+})
+
+var _ = It("MaterializeFromKubeconfigExpiredJWTForcesImmediateRefresh", func() {
+	t := GinkgoT()
+	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWith(unsignedJWT(time.Now().Add(-time.Minute)))))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.NextRefresh.IsZero() || m.NextRefresh.After(time.Now().Add(time.Second)) {
+		t.Fatalf("expired JWT should force NextRefresh ~= now, got %v", m.NextRefresh)
+	}
+})
+
+var _ = It("MaterializeFromKubeconfigSetsNextRefreshFromClientCertNotAfter", func() {
+	t := GinkgoT()
+	notAfter := time.Now().Add(30 * time.Minute).Truncate(time.Second)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     notAfter,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create cert: %v", err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	kc := `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority-data: Y2FkYXRh
+users:
+- name: spoke
+  user:
+    client-certificate-data: ` + base64.StdEncoding.EncodeToString(certPEM) + `
+    client-key-data: ` + base64.StdEncoding.EncodeToString(keyPEM) + `
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+	m, err := materializeFromKubeconfig([]byte(kc))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := notAfter.Add(-kubeconfigRefreshLead)
+	if delta := m.NextRefresh.Sub(want); delta > time.Second || delta < -time.Second {
+		t.Fatalf("NextRefresh = %v, want ~%v (delta %v)", m.NextRefresh, want, delta)
 	}
 })

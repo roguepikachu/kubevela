@@ -1,0 +1,33 @@
+# Least-privilege Role to bind on the *spoke* for a connect-mode kubeconfig.
+#
+# Prefer credential.type: aws (or a future WI arm) over a long-lived
+# kubeconfig. If you must use kubeconfig, mint a short-lived projected
+# ServiceAccount token (or a client cert with a short NotAfter) and store
+# that in the hub Secret. The controller reads JWT exp / cert NotAfter and
+# rematerializes two minutes before expiry so a rotated Secret is picked up.
+#
+# The hub only needs to probe /healthz, GET /version, and list nodes.
+# Do not bind cluster-admin.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubevela-spoke-connect
+rules:
+  - nonResourceURLs: ["/healthz", "/livez", "/readyz", "/version"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubevela-spoke-connect
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubevela-spoke-connect
+subjects:
+  - kind: ServiceAccount
+    name: kubevela-spoke-connect
+    namespace: kube-system

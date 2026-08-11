@@ -68,10 +68,15 @@ limitations under the License.
 // NextRefresh is the contract between providers and the reconcile loop.
 //
 // A zero NextRefresh marks a static credential whose source can change with nothing
-// to signal it, which is every kubeconfig spoke. Nothing is scheduled, the reconcile
-// cadence is the probe interval alone, and the controller re-materializes on every
-// pass so a rotated source Secret is picked up. Zero therefore means "do not cache",
-// never "cache forever".
+// to signal it: an opaque kubeconfig token, or a client cert the provider could not
+// parse. Nothing is scheduled, the reconcile cadence is the probe interval alone,
+// and the controller re-materializes on every pass so a rotated source Secret is
+// picked up. Zero therefore means "do not cache", never "cache forever".
+//
+// A kubeconfig bearer JWT with exp, or a parseable client certificate, is not
+// static: the provider sets NextRefresh two minutes before that expiry so a
+// projected ServiceAccount token or short-lived cert is rematerialized (and a
+// rotated source Secret is re-read) before the previous credential dies.
 //
 // A non-zero NextRefresh requires the controller to re-materialize and rewrite the
 // gateway Secret no later than that time. Between then and the previous remint the

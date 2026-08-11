@@ -18,7 +18,13 @@ package credential
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
@@ -27,6 +33,13 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
+
+// kubeconfigRefreshLead is how long before a JWT exp or client-cert NotAfter the
+// controller rematerializes. Matching the AWS token lead keeps projected SA tokens
+// and short-lived certs from being served into their last two minutes, and lets
+// an ExternalSecret rotation land before the previous credential dies.
+const kubeconfigRefreshLead = 2 * time.Minute
+
 
 // DefaultKubeconfigSecretKey is the Secret data key used when the credential does not name one.
 const DefaultKubeconfigSecretKey = "kubeconfig"
@@ -135,5 +148,57 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 	default:
 		return nil, fmt.Errorf("kubeconfig user %q has no embedded token or client cert/key; exec and file-path credentials are not supported for connect", kubeCtx.AuthInfo)
 	}
+	if expiry := kubeconfigCredentialExpiry(m.Token, m.ClientCertData); !expiry.IsZero() {
+		m.NextRefresh = expiry.Add(-kubeconfigRefreshLead)
+		if !m.NextRefresh.After(time.Now()) {
+			// Already inside the lead window (or expired). Force the next pass to
+			// re-read the source Secret so a rotated projected token is picked up.
+			m.NextRefresh = time.Now()
+		}
+	}
 	return m, nil
+}
+
+// kubeconfigCredentialExpiry returns the soonest hard expiry encoded in the
+// credential: JWT exp on a bearer token, or NotAfter on a client certificate.
+// Opaque tokens and unparseable certs return zero so NextRefresh stays unset and
+// the controller re-reads the source Secret every pass (the historical default).
+func kubeconfigCredentialExpiry(token string, clientCertPEM []byte) time.Time {
+	if exp := jwtExpiry(token); !exp.IsZero() {
+		return exp
+	}
+	return clientCertNotAfter(clientCertPEM)
+}
+
+func jwtExpiry(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return time.Time{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return time.Time{}
+		}
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(claims.Exp, 0)
+}
+
+func clientCertNotAfter(pemBytes []byte) time.Time {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return time.Time{}
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}
+	}
+	return cert.NotAfter
 }
