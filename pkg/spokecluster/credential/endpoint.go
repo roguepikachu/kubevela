@@ -112,7 +112,7 @@ func denyHubOrMetadataHost(ctx context.Context, host string) error {
 	}
 	for _, suffix := range blockedHostSuffixes {
 		if lower == strings.TrimPrefix(suffix, ".") || strings.HasSuffix(lower, suffix) {
-			return fmt.Errorf("host %q is hub in-cluster DNS and cannot be used as a spoke API endpoint", host)
+			return fmt.Errorf("host %q is hub in-cluster DNS and is not permitted", host)
 		}
 	}
 
@@ -122,14 +122,14 @@ func denyHubOrMetadataHost(ctx context.Context, host string) error {
 	if i := strings.Index(host, "%"); i >= 0 {
 		ipHost = host[:i]
 		if ipHost == "" {
-			return fmt.Errorf("host %q has an IPv6 zone identifier and is not a valid spoke API endpoint", host)
+			return fmt.Errorf("host %q has an IPv6 zone identifier and is not permitted", host)
 		}
 	}
 	if ip := net.ParseIP(ipHost); ip != nil {
 		return denyBlockedIP(ip, host)
 	}
 	if strings.Contains(host, "%") {
-		return fmt.Errorf("host %q has an IPv6 zone identifier and is not a valid spoke API endpoint", host)
+		return fmt.Errorf("host %q has an IPv6 zone identifier and is not permitted", host)
 	}
 
 	ips, err := lookupIPs(ctx, lower)

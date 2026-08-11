@@ -5,14 +5,20 @@
 # Example only. Apply by hand when the CNI enforces NetworkPolicy.
 #
 # What it allows:
-#   Ingress  kubelet -> :9441 (healthz)
-#   Ingress  API server -> :9445 (SpokeCluster webhook). Source IPs vary, so
-#            the port is open as to-source.
+#   Ingress  kubelet -> :9441 (healthz). Open as to-source: kubelet comes from
+#            the node IP, which is cluster-specific. Pin to your node CIDR
+#            if you know it.
+#   Ingress  API server -> :9445 (SpokeCluster webhook). Open as to-source:
+#            control-plane IPs vary (k3d pod, EKS ENIs). Pin to the API
+#            server CIDR if you know it. An in-cluster pod can otherwise
+#            send AdmissionReviews to this port.
 #   Ingress  Prometheus -> :8080 /metrics
 #   Egress   kube-dns in kube-system
-#   Egress   hub API server on 443/6443
+#   Egress   TCP/443 and 6443 with no destination selector. That is the hub
+#            API server (in-cluster or managed control plane) and AWS
+#            STS/EKS. It also allows any other host on those ports. Tighten
+#            to known CIDRs if you do not need AWS or a public API server.
 #   Egress   cluster-gateway pods on 9443 (probes go through the gateway)
-#   Egress   TCP/443 for AWS STS / eks:DescribeCluster
 #
 # What it does not do:
 #   It does not lock cluster-gateway ingress to cluster-core. The aggregated

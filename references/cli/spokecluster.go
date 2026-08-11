@@ -502,10 +502,14 @@ func runSpokeClusterCreate(ctx context.Context, k8sClient client.Client, out io.
 		return spokeClusterAPIError(err, "failed to get spokecluster")
 	}
 
+	var createdSecret string
 	if cred.Type == v1beta1.CredentialTypeKubeconfig {
-		secretName, err := ensureKubeconfigSecret(ctx, k8sClient, out, opts)
+		secretName, created, err := ensureKubeconfigSecret(ctx, k8sClient, out, opts)
 		if err != nil {
 			return err
+		}
+		if created {
+			createdSecret = secretName
 		}
 		cred.Kubeconfig = &v1beta1.KubeconfigCredential{
 			SecretRef: v1beta1.SecretKeyRef{Name: secretName},
@@ -521,6 +525,11 @@ func runSpokeClusterCreate(ctx context.Context, k8sClient client.Client, out io.
 		},
 	}
 	if err := k8sClient.Create(ctx, sc); err != nil {
+		if createdSecret != "" {
+			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+				Name: createdSecret, Namespace: opts.Namespace,
+			}})
+		}
 		return spokeClusterAPIError(err, "failed to create spokecluster")
 	}
 	fmt.Fprintf(out, "Created SpokeCluster %s/%s. Watch status with: vela cluster spokes show %s -n %s\n",
@@ -567,7 +576,9 @@ func buildCreateCredential(opts spokeClusterCreateOpts) (v1beta1.CredentialSpec,
 }
 
 // ensureKubeconfigSecret creates a Secret from --kubeconfig, or checks --secret exists.
-func ensureKubeconfigSecret(ctx context.Context, k8sClient client.Client, out io.Writer, opts spokeClusterCreateOpts) (string, error) {
+// created is true only when this call wrote a new Secret, so the caller can
+// delete it if the SpokeCluster create is then rejected.
+func ensureKubeconfigSecret(ctx context.Context, k8sClient client.Client, out io.Writer, opts spokeClusterCreateOpts) (string, bool, error) {
 	secretName := opts.SecretName
 	if opts.KubeconfigPath != "" {
 		if secretName == "" {
@@ -575,19 +586,19 @@ func ensureKubeconfigSecret(ctx context.Context, k8sClient client.Client, out io
 		}
 		data, err := os.ReadFile(opts.KubeconfigPath)
 		if err != nil {
-			return "", errors.Wrap(err, "failed to read kubeconfig")
+			return "", false, errors.Wrap(err, "failed to read kubeconfig")
 		}
 		if len(data) == 0 {
-			return "", errors.New("kubeconfig file is empty")
+			return "", false, errors.New("kubeconfig file is empty")
 		}
 		var secret corev1.Secret
 		err = k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: secretName}, &secret)
 		if err == nil {
-			return "", errors.Errorf("Secret %s/%s already exists; pass --secret %s without --kubeconfig to reuse it",
+			return "", false, errors.Errorf("Secret %s/%s already exists; pass --secret %s without --kubeconfig to reuse it",
 				opts.Namespace, secretName, secretName)
 		}
 		if !apierrors.IsNotFound(err) {
-			return "", errors.Wrap(err, "failed to get secret")
+			return "", false, errors.Wrap(err, "failed to get secret")
 		}
 		secret = corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: opts.Namespace},
@@ -595,20 +606,20 @@ func ensureKubeconfigSecret(ctx context.Context, k8sClient client.Client, out io
 			Data:       map[string][]byte{defaultKubeconfigSecretKey: data},
 		}
 		if err := k8sClient.Create(ctx, &secret); err != nil {
-			return "", errors.Wrap(err, "failed to create kubeconfig secret")
+			return "", false, errors.Wrap(err, "failed to create kubeconfig secret")
 		}
 		fmt.Fprintf(out, "Created Secret %s/%s.\n", opts.Namespace, secretName)
-		return secretName, nil
+		return secretName, true, nil
 	}
 	var secret corev1.Secret
 	err := k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: secretName}, &secret)
 	if apierrors.IsNotFound(err) {
-		return "", errors.Errorf("Secret %s/%s not found", opts.Namespace, secretName)
+		return "", false, errors.Errorf("Secret %s/%s not found", opts.Namespace, secretName)
 	}
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get secret")
+		return "", false, errors.Wrap(err, "failed to get secret")
 	}
-	return secretName, nil
+	return secretName, false, nil
 }
 
 // newSpokeClusterDetachCommand deletes a SpokeCluster. The controller then

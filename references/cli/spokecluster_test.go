@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -566,6 +567,29 @@ var _ = Describe("vela cluster spokes create", func() {
 	It("rejects an unknown deletion policy", func() {
 		_, err := parseSpokeDeletionPolicy("wipe")
 		Expect(err).To(MatchError(ContainSubstring("invalid --deletion-policy")))
+	})
+
+	It("deletes a Secret it just wrote if SpokeCluster create fails", func() {
+		dir := GinkgoT().TempDir()
+		path := dir + "/spoke.kubeconfig"
+		Expect(os.WriteFile(path, []byte("kind: Config\n"), 0o600)).To(Succeed())
+
+		cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*v1beta1.SpokeCluster); ok {
+						return fmt.Errorf("admission denied")
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			}).Build()
+
+		err := runSpokeClusterCreate(ctx, cli, &bytes.Buffer{}, spokeClusterCreateOpts{
+			Name: "demo", Namespace: "vela-system", KubeconfigPath: path,
+		})
+		Expect(err).To(MatchError(ContainSubstring("admission denied")))
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo-kubeconfig"}, &corev1.Secret{})).
+			To(MatchError(ContainSubstring("not found")))
 	})
 })
 

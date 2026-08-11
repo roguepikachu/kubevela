@@ -236,6 +236,39 @@ func TestValidateSpokeEndpoint_tableDrivenPairs(t *testing.T) {
 	}
 }
 
+func TestValidateSpokeProxyURL_dnsRebinding(t *testing.T) {
+	orig := lookupIPs
+	t.Cleanup(func() { lookupIPs = orig })
+
+	lookupIPs = func(_ context.Context, host string) ([]net.IP, error) {
+		switch host {
+		case "imds.example":
+			return []net.IP{net.ParseIP("169.254.169.254")}, nil
+		case "loopback.example":
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		default:
+			return []net.IP{net.ParseIP("203.0.113.10")}, nil
+		}
+	}
+
+	for _, tc := range []struct {
+		proxy string
+		want  string
+	}{
+		{"http://imds.example:8080", "blocked"},
+		{"http://loopback.example:8080", "blocked"},
+	} {
+		err := ValidateSpokeProxyURL(tc.proxy)
+		if err == nil {
+			t.Errorf("ValidateSpokeProxyURL(%q) = nil, want error containing %q", tc.proxy, tc.want)
+			continue
+		}
+		if !strings.Contains(strings.ToLower(err.Error()), tc.want) {
+			t.Errorf("ValidateSpokeProxyURL(%q) = %v, want substring %q", tc.proxy, err, tc.want)
+		}
+	}
+}
+
 func TestValidateSpokeProxyURL_allow(t *testing.T) {
 	for _, proxy := range []string{
 		"",
@@ -265,6 +298,7 @@ func TestValidateSpokeProxyURL_deny(t *testing.T) {
 		{"http://[fd00:ec2::254]/", "blocked"},
 		{"http://168.63.129.16/", "blocked"},
 		{"http://kubernetes.default.svc", "hub-internal"},
+		{"http://squid.vela-system.svc.cluster.local:3128", "hub in-cluster"},
 		{"http://0.0.0.0:8080", "unspecified"},
 	}
 	for _, tc := range cases {
