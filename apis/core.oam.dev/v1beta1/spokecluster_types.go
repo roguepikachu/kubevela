@@ -149,18 +149,21 @@ type SpokeClusterSpec struct {
 	// IAM, DNS, and cluster creation when mode is provision).
 	//
 	// Phase 2 stub: defined so the schema is forward-compatible. No Phase 1
-	// controller reconciles it, and the admission webhook that will reject it in
-	// connect mode does not exist yet, so today it is accepted and ignored.
+	// controller reconciles it. The admission webhook rejects it in connect mode.
 	// +optional
 	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
 	// BlueprintRef references the ClusterBlueprint revision to dispatch to the
 	// cluster.
+	//
+	// Phase 2 stub. The admission webhook rejects it in connect mode.
 	// +optional
 	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
 
 	// RolloutStrategyRef references the ClusterRolloutStrategy that gates when a
 	// new blueprint revision is dispatched to the cluster.
+	//
+	// Phase 2 stub. The admission webhook rejects it in connect mode.
 	// +optional
 	RolloutStrategyRef *BlueprintReference `json:"rolloutStrategyRef,omitempty"`
 }

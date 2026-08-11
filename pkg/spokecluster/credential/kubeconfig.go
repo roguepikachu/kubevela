@@ -120,6 +120,9 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 	if err := ValidateSpokeEndpoint(cluster.Server); err != nil {
 		return nil, err
 	}
+	if err := ValidateSpokeProxyURL(cluster.ProxyURL); err != nil {
+		return nil, err
+	}
 
 	// insecure-skip-tls-verify would register a gateway Secret with no ca.crt.
 	// cluster-gateway treats a missing CA as skip-verify, so admitting that flag
@@ -136,6 +139,7 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		Endpoint:   cluster.Server,
 		CAData:     cluster.CertificateAuthorityData,
 		ServerName: cluster.TLSServerName,
+		ProxyURL:   cluster.ProxyURL,
 	}
 
 	switch {
