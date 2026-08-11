@@ -28,7 +28,10 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 - Auth must be an **embedded** `token`, or an embedded `client-certificate-data` plus `client-key-data`. Exec plugins (`aws eks get-token`, `gke-gcloud-auth-plugin`) and file-path credentials are rejected.
 - `tls-server-name`, if set, must equal the endpoint host. cluster-gateway always derives the verified ServerName from the endpoint, so a differing value is rejected at registration rather than producing a spoke that registers and then fails every handshake.
 - The cluster `server` must be `https` and must not target hub-internal DNS (`*.svc`, `*.cluster.local`, `kubernetes.default…`) or cloud metadata/link-local addresses (`169.254.0.0/16`, loopback, Azure `168.63.129.16`, AWS IMDS IPv6). RFC1918 endpoints (for example k3d Docker IPs) and public cloud API hostnames (for example `*.eks.amazonaws.com`) are allowed.
-- `insecure-skip-tls-verify: true` causes the CA to be dropped, which registers an unverified connection. Avoid.
+- `insecure-skip-tls-verify: true` is rejected. cluster-gateway treats a missing `ca.crt` as skip-verify, so connect requires inline `certificate-authority-data` and refuses to drop the trust anchor.
+- A kubeconfig with neither `certificate-authority-data` nor a usable CA path is likewise rejected (file-path CAs are already refused separately).
+- Prefer `credential.type: aws` (short-lived EKS tokens) over a static kubeconfig. When a kubeconfig is unavoidable, use a projected ServiceAccount token or a short-lived client cert. The provider reads JWT `exp` and client-cert `NotAfter` and sets `NextRefresh` two minutes earlier so a rotated source Secret is re-read before the credential dies. If the credential is already inside that lead window, `NextRefresh` is the hard expiry so a long probe interval cannot outlive the token. If it is already expired, `NextRefresh` stays unset and the next pass follows the probe interval instead of a 5s rematerialize loop. Opaque long-lived tokens still rematerialize every pass.
+- Bind only the Role in `09-spoke-least-privilege-rbac.yaml` on the spoke. Do not use cluster-admin kubeconfigs.
 
 ## Files
 
@@ -43,11 +46,12 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 | `06-spokecluster-orphan.yaml` | `deletionPolicy: orphan` |
 | `07-spokecluster-phase2-stubs.yaml` | Phase 2 fields that exist but are inert |
 | `08-invalid-examples.yaml` | Cases that should be rejected, with the expected error |
+| `09-spoke-least-privilege-rbac.yaml` | Spoke-side ServiceAccount, ClusterRole, and binding for connect probes (not cluster-admin) |
 | `99-gateway-secret-reference.yaml` | What the controller produces, for reading only |
 
 ## Applying them
 
-The feature gate must be on, or nothing reconciles and status stays empty. The SpokeCluster admission webhook is enabled by default whenever the gate is on (`clusterCore.webhook.enabled=true`); set it to `false` only if you intentionally want CRD-schema-only admission:
+The feature gate must be on, or nothing reconciles and status stays empty. The SpokeCluster admission webhook is enabled by default whenever the gate is on (`clusterCore.webhook.enabled=true`); set it to `false` only if you intentionally want CRD-schema-only admission. `clusterCore.replicaCount` defaults to `2` with preferred pod anti-affinity, soft topology spread, and a PodDisruptionBudget so the webhook and leader-elected controller survive a node drain; use `--set clusterCore.replicaCount=1` on single-node sandboxes if you need a lighter footprint:
 
 ```
 helm install vela-core charts/vela-core -n vela-system --create-namespace \

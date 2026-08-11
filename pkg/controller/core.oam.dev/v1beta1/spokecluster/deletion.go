@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/crossplane/crossplane-runtime/pkg/event"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,7 +60,11 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 		return ctrl.Result{}, err
 	}
 
-	if owned && sc.Spec.DeletionPolicy != v1beta1.SpokeDeletionPolicyOrphan {
+	// Detached events and spokeDetachTotal only fire when we actually tried to detach:
+	// an owned Secret under detach (or the unset default). Orphan and never-owned
+	// deletions still release the finalizer, but they are not a detach.
+	attemptedDetach := owned && sc.Spec.DeletionPolicy != v1beta1.SpokeDeletionPolicyOrphan
+	if attemptedDetach {
 		if err := multicluster.DetachCluster(ctx, r.Client, sc.Name); err != nil {
 			if !isExpectedDetachFailure(err) {
 				// A ResourceTracker scrub failure, or any other unexpected error, must be
@@ -72,8 +77,7 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 			// reports not found) or hit the reserved `local` name (structurally impossible
 			// for a SpokeCluster given admission validation, checked defensively). Falling
 			// back to a direct delete keeps deletion from wedging on a half-registered
-			// spoke. Operator-facing visibility beyond this log line, as an event and a
-			// metric, comes with the observability slice.
+			// spoke.
 			klog.InfoS("DetachCluster returned an expected error during SpokeCluster deletion, attempting direct secret cleanup",
 				"spokecluster", klog.KObj(sc), "err", err)
 			if delErr := r.deleteGatewaySecret(ctx, sc); delErr != nil {
@@ -87,7 +91,14 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, sc *v1beta1.SpokeClust
 	// later garbage-collection pass finds nothing to do.
 	controllerutil.RemoveFinalizer(sc, FinalizerName)
 	if err := r.Update(ctx, sc); err != nil {
+		if attemptedDetach {
+			spokeDetachTotal.WithLabelValues("error").Inc()
+		}
 		return ctrl.Result{}, err
+	}
+	if attemptedDetach {
+		r.emit(sc, event.Normal(reasonDetached, "spoke cluster detached"))
+		spokeDetachTotal.WithLabelValues("success").Inc()
 	}
 	return ctrl.Result{}, nil
 }

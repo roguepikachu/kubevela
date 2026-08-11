@@ -34,7 +34,7 @@ type fakeProvider struct {
 
 func (f fakeProvider) Type() v1beta1.CredentialType { return f.credType }
 
-func (f fakeProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1.SpokeCluster) (*Materialized, error) {
+func (f fakeProvider) Materialize(_ context.Context, _ client.Reader, _ *v1beta1.SpokeCluster) (*Materialized, error) {
 	return &Materialized{}, nil
 }
 

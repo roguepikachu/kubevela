@@ -49,7 +49,7 @@ func (p *AzureProvider) Type() v1beta1.CredentialType { return v1beta1.Credentia
 
 // Materialize is not implemented. The azure arm is accepted by the schema so the
 // API is forward-compatible, but no connectivity is resolved yet.
-func (p *AzureProvider) Materialize(_ context.Context, _ client.Client, _ *v1beta1.SpokeCluster) (*Materialized, error) {
+func (p *AzureProvider) Materialize(_ context.Context, _ client.Reader, _ *v1beta1.SpokeCluster) (*Materialized, error) {
 	// TODO: implement AKS connectivity (see the type doc above and aws.go).
 	return nil, fmt.Errorf("azure credential provider is not implemented yet")
 }

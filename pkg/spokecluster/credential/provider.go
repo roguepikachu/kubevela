@@ -68,10 +68,20 @@ limitations under the License.
 // NextRefresh is the contract between providers and the reconcile loop.
 //
 // A zero NextRefresh marks a static credential whose source can change with nothing
-// to signal it, which is every kubeconfig spoke. Nothing is scheduled, the reconcile
-// cadence is the probe interval alone, and the controller re-materializes on every
-// pass so a rotated source Secret is picked up. Zero therefore means "do not cache",
-// never "cache forever".
+// to signal it: an opaque kubeconfig token, or a client cert the provider could not
+// parse. Nothing is scheduled, the reconcile cadence is the probe interval alone,
+// and the controller re-materializes on every pass so a rotated source Secret is
+// picked up. Zero therefore means "do not cache", never "cache forever".
+//
+// A kubeconfig bearer JWT with exp, or a parseable client certificate, is not
+// static: the provider sets NextRefresh two minutes before that expiry so a
+// projected ServiceAccount token or short-lived cert is rematerialized (and a
+// rotated source Secret is re-read) before the previous credential dies. If
+// expiry is already inside that lead window but still in the future, NextRefresh
+// is the hard expiry itself, so a long probe interval cannot leave a dying
+// token in the gateway Secret. If expiry is already past, NextRefresh stays
+// zero: the credential is uncacheable and the next pass follows the probe
+// interval, rather than forcing a minRequeue busy loop.
 //
 // A non-zero NextRefresh requires the controller to re-materialize and rewrite the
 // gateway Secret no later than that time. Between then and the previous remint the
@@ -104,8 +114,9 @@ import (
 type Materialized struct {
 	// Endpoint is the spoke API server URL.
 	Endpoint string
-	// CAData is the PEM CA bundle; empty means the endpoint is trusted without
-	// verification.
+	// CAData is the PEM CA bundle cluster-gateway uses to verify the spoke API
+	// server. Kubeconfig materialization requires a non-empty bundle; an empty
+	// value is only safe for tests that build Materialized by hand.
 	CAData []byte
 	// ServerName overrides the hostname the endpoint's certificate is verified
 	// against (kubeconfig tls-server-name). Empty means verify against the
@@ -159,9 +170,11 @@ type Provider interface {
 	Type() v1beta1.CredentialType
 	// Materialize resolves connectivity for the given SpokeCluster. cli is a
 	// hub-side reader used for source Secrets; it must not mutate the gateway
-	// Secret. When the declared credential is invalid or unresolvable, Materialize
-	// returns a descriptive error rather than a partial result.
-	Materialize(ctx context.Context, cli client.Client, sc *v1beta1.SpokeCluster) (*Materialized, error)
+	// Secret. Prefer an uncached reader (mgr.GetAPIReader) so source Gets do not
+	// start a cluster-wide Secret informer. When the declared credential is
+	// invalid or unresolvable, Materialize returns a descriptive error rather
+	// than a partial result.
+	Materialize(ctx context.Context, cli client.Reader, sc *v1beta1.SpokeCluster) (*Materialized, error)
 }
 
 // Registry maps credential types to their providers.

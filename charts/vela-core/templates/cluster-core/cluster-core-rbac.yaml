@@ -38,14 +38,13 @@ rules:
   - apiGroups: ["core.oam.dev"]
     resources: ["spokeclusters/finalizers"]
     verbs: ["update"]
-  # Cluster-scoped Secret reads: a SpokeCluster may live in any namespace and its
-  # kubeconfig Secret must sit in that same namespace. The manager's informer
-  # cache needs list/watch to start. Cross-namespace secretRef is rejected by
-  # admission (and again by the provider). Writes are namespace-scoped (see the
-  # Role below).
+  # Direct Get of a same-namespace kubeconfig Secret (source credential).
+  # list/watch stay off the ClusterRole so the manager never starts a
+  # cluster-wide Secret informer; gateway-ns informer verbs live on the Role
+  # below, and source Gets use the uncached API reader.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get"]
   # multicluster.Initialize reads the cluster-gateway APIService by name to discover the
   # gateway service and Secret namespace.
   - apiGroups: ["apiregistration.k8s.io"]
@@ -91,11 +90,14 @@ metadata:
   labels:
     {{- include "kubevela.labels" . | nindent 4 }}
 rules:
-  # Gateway Secret upsert/delete on register/detach, and the optional legacy-secret upgrade
-  # pass. Confined to the release namespace, which is the resolved gateway Secret namespace.
+  # Gateway Secret informer (get/list/watch) plus upsert/delete on register/detach and
+  # the optional legacy-secret upgrade pass. Confined to the release namespace. The
+  # controller is started with --cluster-gateway-secret-namespace set to that same
+  # namespace so a failed cluster-gateway Initialize cannot point the informer at
+  # vela-system while this Role lives elsewhere.
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Leader election: LeaderElectionID vela-cluster-core, default lease lock, pod namespace.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

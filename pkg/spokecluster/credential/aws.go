@@ -68,7 +68,7 @@ func (p *AWSProvider) Type() v1beta1.CredentialType { return v1beta1.CredentialT
 // Materialize assumes the per-cluster role, describes the EKS cluster for its endpoint and CA, and
 // mints an EKS bearer token with a refresh deadline. cli is unused for the aws arm (no source
 // secret) but kept to satisfy the Provider interface.
-func (p *AWSProvider) Materialize(ctx context.Context, _ client.Client, sc *v1beta1.SpokeCluster) (*Materialized, error) {
+func (p *AWSProvider) Materialize(ctx context.Context, _ client.Reader, sc *v1beta1.SpokeCluster) (*Materialized, error) {
 	cred := sc.Spec.Credential.AWS
 	if cred == nil {
 		return nil, fmt.Errorf("credential.aws is required when type is aws")

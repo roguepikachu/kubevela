@@ -75,6 +75,14 @@ const (
 // SpokeCluster that happens to share a name across namespaces.
 const secretOwnerAnnotation = "spokecluster.core.oam.dev/owner"
 
+// secretDeletionPolicyAnnotation records the SpokeCluster's deletionPolicy at the time the
+// gateway Secret was last written. Cross-namespace spokes cannot use an OwnerReference
+// backstop (Kubernetes forbids cross-namespace owners), so a force-deleted SpokeCluster
+// would otherwise leak its Secret. The gateway-secret janitor uses this annotation to
+// decide whether a Secret whose owner SpokeCluster is gone should be detached (default)
+// or kept (orphan).
+const secretDeletionPolicyAnnotation = "spokecluster.core.oam.dev/deletion-policy"
+
 // verifyAdoptable refuses to touch a gateway Secret this SpokeCluster does not already
 // own. A Secret with no owner annotation is foreign, most likely a manually joined
 // cluster; adopting one is a Secret-migration concern, not this controller's. A Secret owned
@@ -94,13 +102,19 @@ func verifyAdoptable(sc *v1beta1.SpokeCluster, secret *corev1.Secret) error {
 	}
 }
 
-// markOwner stamps the gateway Secret with the SpokeCluster that wrote it, so a later
-// register call can tell this Secret apart from one it does not manage.
+// markOwner stamps the gateway Secret with the SpokeCluster that wrote it and the
+// deletionPolicy in force, so a later register call can tell this Secret apart from one it
+// does not manage and the janitor can GC force-deleted cross-namespace spokes correctly.
 func markOwner(sc *v1beta1.SpokeCluster, secret *corev1.Secret) {
 	if secret.Annotations == nil {
 		secret.Annotations = map[string]string{}
 	}
 	secret.Annotations[secretOwnerAnnotation] = sc.Namespace + "/" + sc.Name
+	policy := sc.Spec.DeletionPolicy
+	if policy == "" {
+		policy = v1beta1.SpokeDeletionPolicyDetach
+	}
+	secret.Annotations[secretDeletionPolicyAnnotation] = string(policy)
 }
 
 // ownsGatewaySecret reports whether the gateway Secret at sc's name, if any, is one this
@@ -186,6 +200,11 @@ type Reconciler struct {
 	// spoke's. Discovery must therefore go through this client, never through Client.
 	SpokeReader client.Client
 
+	// SecretReader is an uncached hub reader for source kubeconfig Secrets. The
+	// manager caches Secrets only in the gateway namespace (RBAC-01); tenant-ns
+	// Gets must bypass that cache so we never start a cluster-wide Secret informer.
+	SecretReader client.Reader
+
 	record recorder.Recorder
 
 	concurrentReconciles int
@@ -216,6 +235,16 @@ func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 	return apitypes.NamespacedName{Name: sc.Name, Namespace: multicluster.ClusterGatewaySecretNamespace}
 }
 
+// secretReader returns the uncached hub reader for source Secrets, falling back to the
+// embedded Client so unit tests that construct a Reconciler with only a fake client keep
+// working.
+func (r *Reconciler) secretReader() client.Reader {
+	if r.SecretReader != nil {
+		return r.SecretReader
+	}
+	return r.Client
+}
+
 // register upserts the cluster-gateway Secret from the materialized credential, in the
 // shape `vela cluster join` writes: name = cluster name, namespace = the gateway
 // namespace, type Opaque, data.endpoint, data["ca.crt"] when the CA is known, then either
@@ -236,8 +265,10 @@ func gatewaySecretKey(sc *v1beta1.SpokeCluster) apitypes.NamespacedName {
 //     kubeconfig tls-server-name that actually differs from the endpoint host is refused
 //     (see verifyServerNameCompatible) rather than silently registered and left to fail TLS
 //     verification on every connection.
-//   - An absent ca.crt means an insecure endpoint to cluster-gateway, not "verify against
-//     the system roots". That matches the Materialized contract for an empty CAData.
+//   - An absent ca.crt historically meant an insecure endpoint to cluster-gateway
+//     (not "verify against the system roots"). Kubeconfig materialization now
+//     rejects insecure-skip-tls-verify and missing certificate-authority-data, so
+//     a successfully materialized connect credential always carries ca.crt.
 //
 // A proxied spoke also loses data["proxy-url"], which the join path writes from the
 // kubeconfig, because Materialized carries no proxy. Accepted for Phase 1.
@@ -392,5 +423,6 @@ func (r *Reconciler) deleteGatewaySecret(ctx context.Context, sc *v1beta1.SpokeC
 	if verifyAdoptable(sc, secret) != nil {
 		return nil
 	}
-	return client.IgnoreNotFound(r.Delete(ctx, secret))
+	uid := secret.UID
+	return client.IgnoreNotFound(r.Delete(ctx, secret, client.Preconditions{UID: &uid}))
 }

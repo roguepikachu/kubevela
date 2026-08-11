@@ -18,7 +18,13 @@ package credential
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apitypes "k8s.io/apimachinery/pkg/types"
@@ -27,6 +33,12 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
+
+// kubeconfigRefreshLead is how long before a JWT exp or client-cert NotAfter the
+// controller rematerializes. Matching the AWS token lead keeps projected SA tokens
+// and short-lived certs from being served into their last two minutes, and lets
+// an ExternalSecret rotation land before the previous credential dies.
+const kubeconfigRefreshLead = 2 * time.Minute
 
 // DefaultKubeconfigSecretKey is the Secret data key used when the credential does not name one.
 const DefaultKubeconfigSecretKey = "kubeconfig"
@@ -43,7 +55,7 @@ func (p *KubeconfigProvider) Type() v1beta1.CredentialType { return v1beta1.Cred
 
 // Materialize reads the referenced Secret, parses the kubeconfig, and extracts the current
 // context's endpoint, CA, and auth (bearer token or client cert/key).
-func (p *KubeconfigProvider) Materialize(ctx context.Context, cli client.Client, sc *v1beta1.SpokeCluster) (*Materialized, error) {
+func (p *KubeconfigProvider) Materialize(ctx context.Context, cli client.Reader, sc *v1beta1.SpokeCluster) (*Materialized, error) {
 	if sc.Spec.Credential.Kubeconfig == nil {
 		return nil, fmt.Errorf("credential.kubeconfig is required when type is kubeconfig")
 	}
@@ -109,12 +121,21 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 		return nil, err
 	}
 
+	// insecure-skip-tls-verify would register a gateway Secret with no ca.crt.
+	// cluster-gateway treats a missing CA as skip-verify, so admitting that flag
+	// silently turns TLS off for the spoke hop. Refuse it; operators who need an
+	// exception must put a real CA in the kubeconfig instead.
+	if cluster.InsecureSkipTLSVerify {
+		return nil, fmt.Errorf("kubeconfig cluster %q sets insecure-skip-tls-verify; connect requires TLS verification with inline certificate-authority-data", kubeCtx.Cluster)
+	}
+	if len(cluster.CertificateAuthorityData) == 0 {
+		return nil, fmt.Errorf("kubeconfig cluster %q has no certificate-authority-data; connect requires an inline CA bundle so cluster-gateway can verify the spoke API server", kubeCtx.Cluster)
+	}
+
 	m := &Materialized{
 		Endpoint:   cluster.Server,
+		CAData:     cluster.CertificateAuthorityData,
 		ServerName: cluster.TLSServerName,
-	}
-	if !cluster.InsecureSkipTLSVerify {
-		m.CAData = cluster.CertificateAuthorityData
 	}
 
 	switch {
@@ -126,5 +147,66 @@ func materializeFromKubeconfig(raw []byte) (*Materialized, error) {
 	default:
 		return nil, fmt.Errorf("kubeconfig user %q has no embedded token or client cert/key; exec and file-path credentials are not supported for connect", kubeCtx.AuthInfo)
 	}
+	if expiry := kubeconfigCredentialExpiry(m.Token, m.ClientCertData); !expiry.IsZero() {
+		now := time.Now()
+		refreshAt := expiry.Add(-kubeconfigRefreshLead)
+		switch {
+		case refreshAt.After(now):
+			// Plenty of life left: rematerialize two minutes before expiry.
+			m.NextRefresh = refreshAt
+		case expiry.After(now):
+			// Inside the lead window but not dead yet. Schedule the hard
+			// expiry so a 10-minute probe interval cannot leave this token
+			// in the gateway Secret after it stops working. Setting
+			// NextRefresh to now would floor at minRequeue and busy-loop.
+			m.NextRefresh = expiry
+		}
+		// Already expired: leave NextRefresh zero. The credential is
+		// uncacheable and the next pass follows the probe interval.
+	}
 	return m, nil
+}
+
+// kubeconfigCredentialExpiry returns the soonest hard expiry encoded in the
+// credential: JWT exp on a bearer token, or NotAfter on a client certificate.
+// Opaque tokens and unparseable certs return zero so NextRefresh stays unset and
+// the controller re-reads the source Secret every pass (the historical default).
+func kubeconfigCredentialExpiry(token string, clientCertPEM []byte) time.Time {
+	if exp := jwtExpiry(token); !exp.IsZero() {
+		return exp
+	}
+	return clientCertNotAfter(clientCertPEM)
+}
+
+func jwtExpiry(token string) time.Time {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return time.Time{}
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return time.Time{}
+		}
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Exp <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(claims.Exp, 0)
+}
+
+func clientCertNotAfter(pemBytes []byte) time.Time {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return time.Time{}
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return time.Time{}
+	}
+	return cert.NotAfter
 }

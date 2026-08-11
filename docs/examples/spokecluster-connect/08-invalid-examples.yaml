@@ -157,14 +157,22 @@ spec:
 #
 #    d. a SpokeCluster whose name collides with a gateway Secret written by
 #       `vela cluster join` (no owner annotation)
+#         -> "already exists and is not managed by a SpokeCluster (likely a
+#            manually joined cluster); refusing to overwrite it"
 #
 #    e. kubeconfig whose server is http://..., or https://169.254.169.254/...,
 #       or https://kubernetes.default.svc (hub SSRF). Rejected at materialize/
 #       register with "spoke endpoint ... is not permitted" / "must use https".
 #       RFC1918 k3d IPs and *.eks.amazonaws.com remain allowed.
-#         -> "already exists and is not managed by a SpokeCluster (likely a
-#            manually joined cluster); refusing to overwrite it"
 #
-#    e. two SpokeClusters with the same name in different namespaces
+#    f. kubeconfig with insecure-skip-tls-verify: true (even with CA data present)
+#         -> "sets insecure-skip-tls-verify; connect requires TLS verification
+#            with inline certificate-authority-data"
+#
+#    g. kubeconfig with no certificate-authority-data
+#         -> "has no certificate-authority-data; connect requires an inline CA
+#            bundle so cluster-gateway can verify the spoke API server"
+#
+#    h. two SpokeClusters with the same name in different namespaces
 #         -> the second gets "is owned by a different SpokeCluster (ns/name);
 #            refusing to overwrite it"

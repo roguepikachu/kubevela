@@ -177,8 +177,17 @@ featureGates:
 ## resources (SpokeCluster, and later Cluster/ClusterBlueprint). It only runs when
 ## featureGates.enableClusterInfrastructure is true.
 clusterCore:
-  ## @param clusterCore.replicaCount Replicas for the vela-cluster-core deployment
-  replicaCount: 1
+  ## @param clusterCore.replicaCount Replicas for the vela-cluster-core deployment. Defaults to 2 so leader election and the SpokeCluster admission webhook survive a node drain; set to 1 only for constrained single-node installs (for example local k3d).
+  replicaCount: 2
+  ## @param clusterCore.affinity Affinity for vela-cluster-core pods. When empty, falls back to the top-level affinity value, then to preferred podAntiAffinity on kubernetes.io/hostname (same pattern as vela-core and cluster-gateway).
+  affinity: {}
+  ## @param clusterCore.topologySpreadConstraints Topology spread for vela-cluster-core pods. Leave unset for the chart default (soft hostname spread including the release selector). Set to [] to disable, or provide a full list to override.
+  topologySpreadConstraints:
+  ## @param clusterCore.podDisruptionBudget.enabled Create a PodDisruptionBudget when replicaCount > 1 so voluntary disruptions keep at least one webhook/controller pod.
+  ## @param clusterCore.podDisruptionBudget.minAvailable Minimum available pods during voluntary disruptions
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
   ## @param clusterCore.concurrentReconciles Concurrent reconciles for cluster-infrastructure controllers
   concurrentReconciles: 5
   ## @param clusterCore.credentialCacheTTLSeconds The longest a materialized spoke credential may be reused before vela-cluster-core re-derives it, in seconds. Capped at 900 (15 minutes), the EKS presigned-token window: a higher value fails the install rather than rendering, because no credential any provider issues today outlives it. A credential is reused only until its own refresh deadline in any case (the AWS arm reports 13 minutes against a 15 minute token), so this is a ceiling rather than the usual lifetime. Set to 0 to disable caching entirely and re-derive on every reconcile, which for AWS spokes costs an sts:AssumeRole and an eks:DescribeCluster per spoke per probe interval.
@@ -200,6 +209,22 @@ clusterCore:
     port: 9441
   ## @param clusterCore.metricsPort Metrics port for vela-cluster-core
   metricsPort: 8080
+  ## @param clusterCore.podSecurityContext Pod-level security context for vela-cluster-core. Defaults match the Kubernetes restricted Pod Security Standard. Override BOTH clusterCore.podSecurityContext and clusterCore.securityContext to {} together when the runtime image cannot run as non-root. Clearing only one leaves the other restricted and the pod fails to start.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  ## @param clusterCore.securityContext Container security context for vela-cluster-core. Defaults match restricted PSS (drop ALL, no privilege escalation, read-only root). Must be cleared together with podSecurityContext (see above).
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
   ## @param clusterCore.aws.serviceAccountRoleArn AWS role ARN for the vela-cluster-core pod's base IAM identity, applied as an eks.amazonaws.com/role-arn annotation on the vela-cluster-core service account. It only annotates that account; the pod runs as it either way. The pod holds this single base identity for its lifetime and calls sts:AssumeRole to mint short-lived credentials for each spoke's per-cluster role (one assume call per cluster, same pod, for both the podIdentity and irsa auth modes).
   aws:
     serviceAccountRoleArn: ""

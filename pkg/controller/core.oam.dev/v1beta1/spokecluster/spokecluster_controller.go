@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
@@ -138,7 +139,7 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 	// reports no deadline is never cached at all: see credentialCache.Put.
 	materialized, cached := r.credentials.Get(sc, probeInterval(sc))
 	if !cached {
-		materialized, err = provider.Materialize(ctx, r.Client, sc)
+		materialized, err = provider.Materialize(ctx, r.secretReader(), sc)
 		if err != nil {
 			setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonMaterializeFailed, err.Error())
 			status.Connection = v1beta1.ConnectionStateUnknown
@@ -241,9 +242,14 @@ func (r *Reconciler) discoverSpoke(ctx context.Context, sc *v1beta1.SpokeCluster
 // pass. Status is written first so a failure is still visible to an operator even though
 // the pass errors out.
 func (r *Reconciler) finish(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus, requeue time.Duration, reconcileErr error) (ctrl.Result, error) {
+	prev := sc.Status
 	if err := r.updateStatus(ctx, sc, status); err != nil {
 		return ctrl.Result{}, err
 	}
+	// Events and counters describe the status that was actually persisted. Emitting
+	// first would fire ProbeSucceeded (and increment the transition counter) on a
+	// conflict that then retries, so the next successful write looks like a no-op.
+	r.emitStatusEvents(sc, &prev, status)
 	if reconcileErr != nil {
 		return ctrl.Result{}, reconcileErr
 	}
@@ -389,6 +395,7 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args, credentialCacheTTL time.Duration
 	r := &Reconciler{
 		Client:               mgr.GetClient(),
 		SpokeReader:          spokeReader,
+		SecretReader:         mgr.GetAPIReader(),
 		Scheme:               mgr.GetScheme(),
 		Config:               mgr.GetConfig(),
 		Providers:            credential.DefaultRegistry(),
@@ -398,6 +405,9 @@ func Setup(mgr ctrl.Manager, args oamctrl.Args, credentialCacheTTL time.Duration
 		// a context of its own. A non-positive TTL yields a nil cache, which disables
 		// caching and restores per-pass materialization.
 		credentials: newCredentialCache(context.Background(), credentialCacheTTL),
+	}
+	if err := mgr.Add(manager.RunnableFunc(r.StartGatewaySecretJanitor)); err != nil {
+		return fmt.Errorf("unable to add gateway secret janitor: %w", err)
 	}
 	return r.SetupWithManager(mgr)
 }
