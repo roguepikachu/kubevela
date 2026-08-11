@@ -531,15 +531,16 @@ func runSpokeClusterCreate(ctx context.Context, k8sClient client.Client, out io.
 		}
 		var existing v1beta1.SpokeCluster
 		getErr := k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: opts.Name}, &existing)
-		if getErr == nil {
-			// Create reported failure but the object is there (timeout after persist).
-			// Keep the Secret so the SpokeCluster stays usable.
+		switch {
+		case getErr == nil && (!apierrors.IsAlreadyExists(err) || spokeUsesKubeconfigSecret(&existing, createdSecret)):
+			// Timeout after persist, or AlreadyExists from a retried Create of
+			// our own object: keep the Secret the SpokeCluster still references.
 			return createErr
-		}
-		if !apierrors.IsNotFound(getErr) {
+		case getErr != nil && !apierrors.IsNotFound(getErr):
 			return errors.Errorf("%v; could not confirm SpokeCluster %s/%s was absent, Secret %s/%s was left in place: %v",
 				createErr, opts.Namespace, opts.Name, opts.Namespace, createdSecret, getErr)
 		}
+		// Confirmed absent, or AlreadyExists for a different Secret (lost race).
 		delErr := k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
 			Name: createdSecret, Namespace: opts.Namespace,
 		}})
@@ -590,6 +591,14 @@ func buildCreateCredential(opts spokeClusterCreateOpts) (v1beta1.CredentialSpec,
 			ExternalID:  opts.AWSExternalID,
 		},
 	}, nil
+}
+
+// spokeUsesKubeconfigSecret reports whether sc's kubeconfig credential names secretName.
+func spokeUsesKubeconfigSecret(sc *v1beta1.SpokeCluster, secretName string) bool {
+	if sc == nil || sc.Spec.Credential.Kubeconfig == nil {
+		return false
+	}
+	return sc.Spec.Credential.Kubeconfig.SecretRef.Name == secretName
 }
 
 // ensureKubeconfigSecret creates a Secret from --kubeconfig, or checks --secret exists.

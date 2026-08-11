@@ -28,6 +28,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -564,6 +565,17 @@ var _ = Describe("vela cluster spokes create", func() {
 		Expect(err).To(MatchError(ContainSubstring("not found")))
 	})
 
+	It("spokeUsesKubeconfigSecret matches only the named kubeconfig Secret", func() {
+		sc := newSpokeCluster("demo", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
+		Expect(spokeUsesKubeconfigSecret(sc, "demo-kubeconfig")).To(BeFalse())
+		sc.Spec.Credential.Kubeconfig = &v1beta1.KubeconfigCredential{
+			SecretRef: v1beta1.SecretKeyRef{Name: "demo-kubeconfig"},
+		}
+		Expect(spokeUsesKubeconfigSecret(sc, "demo-kubeconfig")).To(BeTrue())
+		Expect(spokeUsesKubeconfigSecret(sc, "other-kubeconfig")).To(BeFalse())
+		Expect(spokeUsesKubeconfigSecret(nil, "demo-kubeconfig")).To(BeFalse())
+	})
+
 	It("rejects an unknown deletion policy", func() {
 		_, err := parseSpokeDeletionPolicy("wipe")
 		Expect(err).To(MatchError(ContainSubstring("invalid --deletion-policy")))
@@ -645,6 +657,72 @@ var _ = Describe("vela cluster spokes create", func() {
 		Expect(err).To(MatchError(ContainSubstring("admission denied")))
 		Expect(err).To(MatchError(ContainSubstring("leftover Secret")))
 		Expect(err).To(MatchError(ContainSubstring("delete forbidden")))
+	})
+
+	It("deletes our Secret when create is AlreadyExists for a different Secret", func() {
+		dir := GinkgoT().TempDir()
+		path := dir + "/spoke.kubeconfig"
+		Expect(os.WriteFile(path, []byte("kind: Config\n"), 0o600)).To(Succeed())
+
+		winner := newSpokeCluster("demo", "vela-system", v1beta1.SpokeClusterModeConnect, v1beta1.CredentialTypeKubeconfig)
+		winner.Spec.Credential.Kubeconfig = &v1beta1.KubeconfigCredential{
+			SecretRef: v1beta1.SecretKeyRef{Name: "winner-kubeconfig"},
+		}
+		spokeGets := 0
+		cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme()).WithObjects(winner).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*v1beta1.SpokeCluster); ok && key.Name == "demo" {
+						spokeGets++
+						if spokeGets == 1 {
+							return apierrors.NewNotFound(schema.GroupResource{Group: "core.oam.dev", Resource: "spokeclusters"}, key.Name)
+						}
+					}
+					return c.Get(ctx, key, obj, opts...)
+				},
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, isSecret := obj.(*corev1.Secret); !isSecret && obj.GetName() == "demo" {
+						return apierrors.NewAlreadyExists(schema.GroupResource{Group: "core.oam.dev", Resource: "spokeclusters"}, obj.GetName())
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+			}).Build()
+
+		err := runSpokeClusterCreate(ctx, cli, &bytes.Buffer{}, spokeClusterCreateOpts{
+			Name: "demo", Namespace: "vela-system", KubeconfigPath: path, SecretName: "loser-kubeconfig",
+		})
+		Expect(err).To(MatchError(ContainSubstring("already exists")))
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "loser-kubeconfig"}, &corev1.Secret{})).
+			To(MatchError(ContainSubstring("not found")))
+		var sc v1beta1.SpokeCluster
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo"}, &sc)).To(Succeed())
+		Expect(sc.Spec.Credential.Kubeconfig.SecretRef.Name).To(Equal("winner-kubeconfig"))
+	})
+
+	It("keeps the Secret when create is AlreadyExists after our own persist", func() {
+		dir := GinkgoT().TempDir()
+		path := dir + "/spoke.kubeconfig"
+		Expect(os.WriteFile(path, []byte("kind: Config\n"), 0o600)).To(Succeed())
+
+		cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if err := c.Create(ctx, obj, opts...); err != nil {
+						return err
+					}
+					if sc, ok := obj.(*v1beta1.SpokeCluster); ok {
+						return apierrors.NewAlreadyExists(schema.GroupResource{Group: "core.oam.dev", Resource: "spokeclusters"}, sc.Name)
+					}
+					return nil
+				},
+			}).Build()
+
+		err := runSpokeClusterCreate(ctx, cli, &bytes.Buffer{}, spokeClusterCreateOpts{
+			Name: "demo", Namespace: "vela-system", KubeconfigPath: path,
+		})
+		Expect(err).To(MatchError(ContainSubstring("already exists")))
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo-kubeconfig"}, &corev1.Secret{})).To(Succeed())
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo"}, &v1beta1.SpokeCluster{})).To(Succeed())
 	})
 })
 
