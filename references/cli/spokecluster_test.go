@@ -591,6 +591,61 @@ var _ = Describe("vela cluster spokes create", func() {
 		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo-kubeconfig"}, &corev1.Secret{})).
 			To(MatchError(ContainSubstring("not found")))
 	})
+
+	It("keeps the Secret when create errors but the SpokeCluster exists", func() {
+		dir := GinkgoT().TempDir()
+		path := dir + "/spoke.kubeconfig"
+		Expect(os.WriteFile(path, []byte("kind: Config\n"), 0o600)).To(Succeed())
+
+		cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if err := c.Create(ctx, obj, opts...); err != nil {
+						return err
+					}
+					if _, ok := obj.(*v1beta1.SpokeCluster); ok {
+						return fmt.Errorf("timeout after persist")
+					}
+					return nil
+				},
+			}).Build()
+
+		err := runSpokeClusterCreate(ctx, cli, &bytes.Buffer{}, spokeClusterCreateOpts{
+			Name: "demo", Namespace: "vela-system", KubeconfigPath: path,
+		})
+		Expect(err).To(MatchError(ContainSubstring("timeout after persist")))
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo-kubeconfig"}, &corev1.Secret{})).To(Succeed())
+		Expect(cli.Get(ctx, client.ObjectKey{Namespace: "vela-system", Name: "demo"}, &v1beta1.SpokeCluster{})).To(Succeed())
+	})
+
+	It("reports when leftover Secret cleanup fails", func() {
+		dir := GinkgoT().TempDir()
+		path := dir + "/spoke.kubeconfig"
+		Expect(os.WriteFile(path, []byte("kind: Config\n"), 0o600)).To(Succeed())
+
+		cli := fake.NewClientBuilder().WithScheme(spokeClusterScheme()).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if _, ok := obj.(*v1beta1.SpokeCluster); ok {
+						return fmt.Errorf("admission denied")
+					}
+					return c.Create(ctx, obj, opts...)
+				},
+				Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if _, ok := obj.(*corev1.Secret); ok {
+						return fmt.Errorf("delete forbidden")
+					}
+					return c.Delete(ctx, obj, opts...)
+				},
+			}).Build()
+
+		err := runSpokeClusterCreate(ctx, cli, &bytes.Buffer{}, spokeClusterCreateOpts{
+			Name: "demo", Namespace: "vela-system", KubeconfigPath: path,
+		})
+		Expect(err).To(MatchError(ContainSubstring("admission denied")))
+		Expect(err).To(MatchError(ContainSubstring("leftover Secret")))
+		Expect(err).To(MatchError(ContainSubstring("delete forbidden")))
+	})
 })
 
 var _ = Describe("vela cluster spokes detach", func() {

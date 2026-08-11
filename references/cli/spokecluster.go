@@ -525,12 +525,29 @@ func runSpokeClusterCreate(ctx context.Context, k8sClient client.Client, out io.
 		},
 	}
 	if err := k8sClient.Create(ctx, sc); err != nil {
-		if createdSecret != "" {
-			_ = k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-				Name: createdSecret, Namespace: opts.Namespace,
-			}})
+		createErr := spokeClusterAPIError(err, "failed to create spokecluster")
+		if createdSecret == "" {
+			return createErr
 		}
-		return spokeClusterAPIError(err, "failed to create spokecluster")
+		var existing v1beta1.SpokeCluster
+		getErr := k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: opts.Name}, &existing)
+		if getErr == nil {
+			// Create reported failure but the object is there (timeout after persist).
+			// Keep the Secret so the SpokeCluster stays usable.
+			return createErr
+		}
+		if !apierrors.IsNotFound(getErr) {
+			return errors.Errorf("%v; could not confirm SpokeCluster %s/%s was absent, Secret %s/%s was left in place: %v",
+				createErr, opts.Namespace, opts.Name, opts.Namespace, createdSecret, getErr)
+		}
+		delErr := k8sClient.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: createdSecret, Namespace: opts.Namespace,
+		}})
+		if delErr != nil && !apierrors.IsNotFound(delErr) {
+			return errors.Errorf("%v; leftover Secret %s/%s could not be deleted: %v",
+				createErr, opts.Namespace, createdSecret, delErr)
+		}
+		return createErr
 	}
 	fmt.Fprintf(out, "Created SpokeCluster %s/%s. Watch status with: vela cluster spokes show %s -n %s\n",
 		opts.Namespace, opts.Name, opts.Name, opts.Namespace)
