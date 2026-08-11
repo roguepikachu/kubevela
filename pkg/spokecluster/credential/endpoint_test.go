@@ -264,7 +264,7 @@ func TestValidateSpokeProxyURL_deny(t *testing.T) {
 		{"http://169.254.169.254/", "blocked"},
 		{"http://[fd00:ec2::254]/", "blocked"},
 		{"http://168.63.129.16/", "blocked"},
-		{"http://kubernetes.default.svc", "hub in-cluster"},
+		{"http://kubernetes.default.svc", "hub-internal"},
 		{"http://0.0.0.0:8080", "unspecified"},
 	}
 	for _, tc := range cases {
