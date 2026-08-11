@@ -1,0 +1,85 @@
+# NetworkPolicy for vela-cluster-core. Matches a default
+#   helm install vela-core charts/vela-core -n vela-system
+# with featureGates.enableClusterInfrastructure=true.
+#
+# Example only. Apply by hand when the CNI enforces NetworkPolicy.
+#
+# What it allows:
+#   Ingress  kubelet -> :9441 (healthz). Open as to-source: kubelet comes from
+#            the node IP, which is cluster-specific. Pin to your node CIDR
+#            if you know it.
+#   Ingress  API server -> :9445 (SpokeCluster webhook). Open as to-source:
+#            control-plane IPs vary (k3d pod, EKS ENIs). Pin to the API
+#            server CIDR if you know it. An in-cluster pod can otherwise
+#            send AdmissionReviews to this port.
+#   Ingress  Prometheus -> :8080 /metrics
+#   Egress   kube-dns in kube-system
+#   Egress   TCP/443 and 6443 with no destination selector. That is the hub
+#            API server (in-cluster or managed control plane) and AWS
+#            STS/EKS. It also allows any other host on those ports. Tighten
+#            to known CIDRs if you do not need AWS or a public API server.
+#   Egress   cluster-gateway pods on 9443 (probes go through the gateway)
+#
+# What it does not do:
+#   It does not lock cluster-gateway ingress to cluster-core. The aggregated
+#   APIService and vela-core also dial the gateway.
+#   It does not restrict gateway egress to spokes. The gateway must reach
+#   arbitrary spoke API servers.
+#
+# Enforcement needs a CNI that honors NetworkPolicy. k3d/flannel often does
+# not; the objects still apply and stay ready for Calico/Cilium/EKS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vela-core-cluster-core
+  namespace: vela-system
+spec:
+  podSelector:
+    matchLabels:
+      controller.oam.dev/name: vela-cluster-core
+      app.kubernetes.io/name: vela-core
+      app.kubernetes.io/instance: vela-core
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 9441
+    - ports:
+        - protocol: TCP
+          port: 9445
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vela-core-cluster-gateway
+              app.kubernetes.io/instance: vela-core-cluster-gateway
+      ports:
+        - protocol: TCP
+          port: 9443

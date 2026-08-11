@@ -122,9 +122,10 @@ spec:
         namespace: platform-secrets
 
 ---
-# 8. Registered stubs. azure/gcp are rejected by the webhook when enabled
-#    (unsupported type). With the webhook off they are ACCEPTED by admission and
-#    then fail at materialization with a clear not-implemented error.
+# 8. Registered stubs. azure/gcp stay on the CRD enum for forward compatibility
+#    but are rejected by the webhook (unsupported type). With the webhook off they
+#    are ACCEPTED by admission and then fail at materialization with a clear
+#    not-implemented error.
 apiVersion: core.oam.dev/v1beta1
 kind: SpokeCluster
 metadata:
@@ -140,7 +141,23 @@ spec:
       clusterName: aks-prod
 
 ---
-# 9. Runtime rejections, not admission ones. These pass the webhook and fail during
+# 9. Same stub rule for gcp.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: stub-gcp
+  namespace: vela-system
+spec:
+  credential:
+    type: gcp
+    gcp:
+      authMode: workloadIdentityFederation
+      projectID: my-gcp-project
+      location: us-central1
+      clusterName: gke-prod
+
+---
+# 10. Runtime rejections, not admission ones. These pass the webhook and fail during
 #    registration, which is the point: they are properties of the credential, not the spec.
 #
 #    a. kubeconfig with a file-path certificate-authority
@@ -176,3 +193,8 @@ spec:
 #    h. two SpokeClusters with the same name in different namespaces
 #         -> the second gets "is owned by a different SpokeCluster (ns/name);
 #            refusing to overwrite it"
+#
+#    i. kubeconfig whose proxy-url is http://169.254.169.254/, or
+#       http://127.0.0.1:8080, or http://kubernetes.default.svc
+#         -> "spoke proxy-url ... is not permitted". http and RFC1918
+#            (for example http://10.0.0.1:8080) remain allowed.

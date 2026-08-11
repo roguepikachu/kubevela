@@ -237,6 +237,9 @@ var _ = It("KubeconfigProviderToken", func() {
 	if !m.NextRefresh.IsZero() {
 		t.Fatal("static kubeconfig should not schedule a refresh")
 	}
+	if m.ProxyURL != "" {
+		t.Fatalf("proxy-url = %q, want empty", m.ProxyURL)
+	}
 })
 
 var _ = It("KubeconfigProviderClientCert", func() {
@@ -695,5 +698,50 @@ contexts:
 	want := notAfter.Add(-kubeconfigRefreshLead)
 	if delta := m.NextRefresh.Sub(want); delta > time.Second || delta < -time.Second {
 		t.Fatalf("NextRefresh = %v, want ~%v (delta %v)", m.NextRefresh, want, delta)
+	}
+})
+
+func tokenKubeconfigWithProxy(proxy string) string {
+	return `apiVersion: v1
+kind: Config
+current-context: spoke
+clusters:
+- name: spoke
+  cluster:
+    server: https://spoke.example.com:6443
+    certificate-authority-data: Y2FkYXRh
+    proxy-url: ` + proxy + `
+users:
+- name: spoke
+  user:
+    token: super-secret-token
+contexts:
+- name: spoke
+  context:
+    cluster: spoke
+    user: spoke
+`
+}
+
+var _ = It("MaterializeFromKubeconfigCopiesProxyURL", func() {
+	t := GinkgoT()
+	proxy := "http://10.0.0.1:8080"
+	m, err := materializeFromKubeconfig([]byte(tokenKubeconfigWithProxy(proxy)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if m.ProxyURL != proxy {
+		t.Fatalf("ProxyURL = %q, want %q", m.ProxyURL, proxy)
+	}
+})
+
+var _ = It("MaterializeFromKubeconfigRejectsBlockedProxyURL", func() {
+	t := GinkgoT()
+	_, err := materializeFromKubeconfig([]byte(tokenKubeconfigWithProxy("http://169.254.169.254/")))
+	if err == nil {
+		t.Fatal("expected proxy-url SSRF rejection")
+	}
+	if !strings.Contains(err.Error(), "proxy-url") {
+		t.Fatalf("error %q should mention proxy-url", err)
 	}
 })

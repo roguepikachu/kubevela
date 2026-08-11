@@ -8,7 +8,7 @@ They are easy to conflate and they have opposite ownership.
 
 | | Credential Secret | Gateway Secret |
 |---|---|---|
-| Who creates it | **You, by hand** | The controller |
+| Who creates it | You, or `vela cluster spokes create` | The controller |
 | Where | The SpokeCluster's own namespace (`secretRef.namespace` must match if set) | Always `vela-system` |
 | Name | Whatever you choose | Same as the SpokeCluster's name |
 | Contents | A kubeconfig under key `kubeconfig` | `endpoint`, `ca.crt`, and either `token` or `tls.crt`/`tls.key` |
@@ -44,9 +44,12 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 | `04-spokecluster-aws-irsa.yaml` | Same, IRSA variant |
 | `05-spokecluster-tenant-namespace.yaml` | `detach` outside `vela-system` |
 | `06-spokecluster-orphan.yaml` | `deletionPolicy: orphan` |
-| `07-spokecluster-phase2-stubs.yaml` | Phase 2 fields that exist but are inert |
+| `07-spokecluster-phase2-stubs.yaml` | `blueprintRef` / `rolloutStrategyRef` accepted and ignored; `infraProvisioning` is webhook-denied (see 08) |
 | `08-invalid-examples.yaml` | Cases that should be rejected, with the expected error |
+| `spokecluster-azure.yaml` | AKS shape. Do not apply: webhook rejects `type: azure` |
+| `spokecluster-gcp.yaml` | GKE shape. Do not apply: webhook rejects `type: gcp` |
 | `09-spoke-least-privilege-rbac.yaml` | Spoke-side ServiceAccount, ClusterRole, and binding for connect probes (not cluster-admin) |
+| `10-networkpolicy.yaml` | Hub NetworkPolicy example for cluster-core (webhook, metrics, egress via cluster-gateway). Apply by hand when the CNI enforces NetworkPolicy |
 | `99-gateway-secret-reference.yaml` | What the controller produces, for reading only |
 
 ## Applying them
@@ -67,3 +70,31 @@ helm install vela-core charts/vela-core -n vela-system --create-namespace \
 ```
 
 Note the gate does **not** control whether the CRD exists. Helm applies `crds/` unconditionally, so `kubectl get spokeclusters` works either way; with the gate off the objects simply never get a status.
+
+Apply `10-networkpolicy.yaml` when the CNI enforces NetworkPolicy. The policy opens the webhook port as to-source (API server IPs vary), restricts `/metrics` to Prometheus, and lets cluster-core egress to DNS, the API server, cluster-gateway, and HTTPS (AWS). It does not lock cluster-gateway ingress; the aggregated APIService and vela-core also dial it.
+
+## CLI
+
+Prefer `vela cluster spokes` over `vela cluster join` for new clusters.
+
+```
+vela cluster spokes create my-spoke --kubeconfig ./spoke.kubeconfig
+vela cluster spokes create prod-east --aws --aws-region us-west-2 \
+  --aws-role-arn arn:aws:iam::111122223333:role/spokecluster-prod-east
+vela cluster spokes list
+vela cluster spokes show my-spoke
+vela cluster spokes detach my-spoke
+```
+
+`create --kubeconfig` writes a Secret (`<name>-kubeconfig` by default, or `--secret`) and a SpokeCluster. `create --aws` writes no Secret; pass `--aws-region` and `--aws-role-arn` (optional `--aws-cluster-name`, `--aws-auth-mode`, `--aws-external-id`). `detach` deletes the SpokeCluster; the controller then removes the gateway Secret unless `deletionPolicy` is `orphan`. A kubeconfig source Secret is left in place. Use `--secret existing-name` when the kubeconfig Secret already exists.
+
+## Migrating from `vela cluster join`
+
+`vela cluster join` writes the gateway Secret itself. A SpokeCluster with the same name is refused: the controller will not adopt a Secret it did not create.
+
+To convert a joined cluster:
+
+1. `vela cluster detach <name>` (this drops the join registration)
+2. `vela cluster spokes create <name> --kubeconfig ./spoke.kubeconfig`
+
+Or keep the join registration and create a SpokeCluster under a different name. Existing join clusters keep working without any change.

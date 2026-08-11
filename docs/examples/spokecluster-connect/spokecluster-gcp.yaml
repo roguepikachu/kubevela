@@ -1,8 +1,9 @@
 # SpokeCluster connecting to a GKE cluster via GCP cloud-native identity.
 #
-# Phase 1 placeholder: the gcp arm is accepted by the schema, but no provider
-# materializes it yet, so this manifest does not connect a cluster today. It
-# documents the shape a future GKE provider will consume.
+# DO NOT APPLY. The gcp arm stays on the CRD so the schema is
+# forward-compatible. The Phase 1 admission webhook rejects type gcp
+# (unsupported credential type). This file documents the shape a future GKE
+# provider will consume. See 08-invalid-examples.yaml for the rejection fixture.
 apiVersion: core.oam.dev/v1beta1
 kind: SpokeCluster
 metadata:

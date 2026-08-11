@@ -75,6 +75,12 @@ var _ = Describe("Validate", func() {
 			sc.Spec.Credential.Kubeconfig.SecretRef.Namespace = sc.Namespace
 			return sc
 		}),
+		Entry("blueprintRef and rolloutStrategyRef are accepted and ignored", func() *v1beta1.SpokeCluster {
+			sc := validKubeconfigSpoke()
+			sc.Spec.BlueprintRef = &v1beta1.BlueprintReference{Name: "baseline-platform", Revision: "v1"}
+			sc.Spec.RolloutStrategyRef = &v1beta1.BlueprintReference{Name: "canary-10pct", Revision: "v2"}
+			return sc
+		}),
 	)
 
 	DescribeTable("rejects invalid spokes",
@@ -157,12 +163,6 @@ var _ = Describe("Validate", func() {
 				BlueprintRef: &v1beta1.BlueprintReference{Name: "infra-a"},
 			}
 		}, "spec.infraProvisioning"),
-		Entry("blueprintRef set", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
-			sc.Spec.BlueprintRef = &v1beta1.BlueprintReference{Name: "blueprint-a"}
-		}, "spec.blueprintRef"),
-		Entry("rolloutStrategyRef set", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
-			sc.Spec.RolloutStrategyRef = &v1beta1.BlueprintReference{Name: "rollout-a"}
-		}, "spec.rolloutStrategyRef"),
 	)
 })
 

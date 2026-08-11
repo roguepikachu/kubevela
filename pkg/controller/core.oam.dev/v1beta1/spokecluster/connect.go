@@ -63,6 +63,7 @@ const (
 	secretKeyToken    = "token"
 	secretKeyTLSCert  = "tls.crt"
 	secretKeyTLSKey   = "tls.key"
+	secretKeyProxyURL = "proxy-url"
 )
 
 // secretOwnerAnnotation records which SpokeCluster (namespace/name) last wrote a gateway
@@ -269,9 +270,9 @@ func (r *Reconciler) secretReader() client.Reader {
 //     (not "verify against the system roots"). Kubeconfig materialization now
 //     rejects insecure-skip-tls-verify and missing certificate-authority-data, so
 //     a successfully materialized connect credential always carries ca.crt.
-//
-// A proxied spoke also loses data["proxy-url"], which the join path writes from the
-// kubeconfig, because Materialized carries no proxy. Accepted for Phase 1.
+//   - Materialized.ProxyURL is written to data["proxy-url"] so a proxied
+//     kubeconfig matches what `vela cluster join` already records. Empty means
+//     the key is omitted (direct dial).
 //
 // register refuses to adopt a pre-existing Secret it does not recognize (see
 // verifyAdoptable): design.md reasoned that the admission webhook already
@@ -302,6 +303,9 @@ func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 	if err := credential.ValidateSpokeEndpoint(m.Endpoint); err != nil {
 		return err
 	}
+	if err := credential.ValidateSpokeProxyURL(m.ProxyURL); err != nil {
+		return err
+	}
 
 	secret.Name = key.Name
 	secret.Namespace = key.Namespace
@@ -320,6 +324,9 @@ func (r *Reconciler) register(ctx context.Context, sc *v1beta1.SpokeCluster, m *
 	default:
 		credType = clusterv1alpha1.CredentialTypeServiceAccountToken
 		data[secretKeyToken] = []byte(m.Token)
+	}
+	if m.ProxyURL != "" {
+		data[secretKeyProxyURL] = []byte(m.ProxyURL)
 	}
 	secret.Data = data
 	_ = k8s.AddLabel(secret, clustercommon.LabelKeyClusterCredentialType, string(credType))

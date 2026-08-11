@@ -33,7 +33,8 @@ limitations under the License.
 //     manually joined one are indistinguishable to read-through and topology
 //     dispatch.
 //   - Data keys: "endpoint" always; "ca.crt" when CAData is non-empty; "tls.crt"
-//     and "tls.key" when HasClientCert(); "token" otherwise.
+//     and "tls.key" when HasClientCert(); "token" otherwise; "proxy-url" when
+//     ProxyURL is set (same key `vela cluster join` writes).
 //   - Label: the existing cluster-gateway constant
 //     clustercommon.LabelKeyClusterCredentialType
 //     ("cluster.core.oam.dev/cluster-credential-type"), value "X509Certificate"
@@ -134,6 +135,10 @@ type Materialized struct {
 	// NextRefresh is when the credential must be reminted; zero means never. See
 	// the refresh semantics contract in the package doc.
 	NextRefresh time.Time
+	// ProxyURL is an optional HTTP(S) proxy cluster-gateway should use to reach
+	// the spoke (kubeconfig proxy-url). Empty means dial the endpoint directly.
+	// Written to the gateway Secret as data["proxy-url"] to match join.
+	ProxyURL string
 }
 
 // HasClientCert reports whether the materialized credential is a complete mTLS

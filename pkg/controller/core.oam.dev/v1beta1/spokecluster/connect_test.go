@@ -18,6 +18,7 @@ package spokecluster
 
 import (
 	"context"
+	"strings"
 
 	clustercommon "github.com/oam-dev/cluster-gateway/pkg/common"
 	. "github.com/onsi/ginkgo/v2"
@@ -156,7 +157,22 @@ var _ = It("RegisterSecretShape", func() {
 				"endpoint": "https://spoke.example.com",
 				"token":    "tok",
 			},
-			wantAbsent:   []string{"ca.crt"},
+			wantAbsent:   []string{"ca.crt", "proxy-url"},
+			wantCredType: "ServiceAccountToken",
+		},
+		"proxy-url is written when set": {
+			materialized: &credential.Materialized{
+				Endpoint: "https://spoke.example.com",
+				CAData:   []byte("ca-pem"),
+				Token:    "tok",
+				ProxyURL: "http://10.0.0.1:8080",
+			},
+			wantData: map[string]string{
+				"endpoint":  "https://spoke.example.com",
+				"ca.crt":    "ca-pem",
+				"token":     "tok",
+				"proxy-url": "http://10.0.0.1:8080",
+			},
 			wantCredType: "ServiceAccountToken",
 		},
 	}
@@ -470,6 +486,45 @@ var _ = It("RegisterAllowsServerNameMatchingEndpointHost", func() {
 	}
 	if err := r.register(context.Background(), sc, m); err != nil {
 		t.Fatalf("register refused a ServerName matching the endpoint host: %v", err)
+	}
+})
+
+var _ = It("RegisterRejectsBlockedProxyURL", func() {
+	t := GinkgoT()
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+
+	m := tokenCredential()
+	m.ProxyURL = "http://169.254.169.254/"
+	err := r.register(context.Background(), sc, m)
+	if err == nil {
+		t.Fatal("register accepted a blocked proxy-url, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "proxy-url") {
+		t.Fatalf("error %q should mention proxy-url", err)
+	}
+	if getErr := r.Get(context.Background(), gatewayKey(sc.Name), &corev1.Secret{}); !apierrors.IsNotFound(getErr) {
+		t.Errorf("gateway secret was written despite the refusal: %v", getErr)
+	}
+})
+
+var _ = It("RegisterDropsProxyURLWhenCleared", func() {
+	t := GinkgoT()
+	sc := spoke("spoke", v1beta1.SpokeDeletionPolicyDetach)
+	r := newTestReconciler(t, sc)
+	ctx := context.Background()
+
+	withProxy := tokenCredential()
+	withProxy.ProxyURL = "http://10.0.0.1:8080"
+	if err := r.register(ctx, sc, withProxy); err != nil {
+		t.Fatalf("register with proxy-url: %v", err)
+	}
+	if err := r.register(ctx, sc, tokenCredential()); err != nil {
+		t.Fatalf("register without proxy-url: %v", err)
+	}
+	secret := readGatewaySecret(t, r.Client, sc.Name)
+	if _, ok := secret.Data["proxy-url"]; ok {
+		t.Error("data[proxy-url] survived after the kubeconfig dropped it")
 	}
 })
 
