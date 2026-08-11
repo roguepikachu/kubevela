@@ -34,11 +34,19 @@ spec:
       {{- end }}
       serviceAccountName: {{ include "kubevela.clusterCoreServiceAccountName" . }}
       securityContext:
+      {{- if .Values.clusterCore.podSecurityContext }}
+      {{- toYaml .Values.clusterCore.podSecurityContext | nindent 8 }}
+      {{- else }}
       {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- end }}
       containers:
         - name: cluster-core
           securityContext:
+          {{- if .Values.clusterCore.securityContext }}
+          {{- toYaml .Values.clusterCore.securityContext | nindent 12 }}
+          {{- else }}
           {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- end }}
           image: {{ .Values.imageRegistry }}{{ .Values.image.repository }}:{{ .Values.image.tag }}
           imagePullPolicy: {{ quote .Values.image.pullPolicy }}
           command: ["cluster-manager"]
@@ -80,19 +88,23 @@ spec:
             periodSeconds: 5
           resources:
           {{- toYaml .Values.clusterCore.resources | nindent 12 }}
-          {{- if .Values.clusterCore.webhook.enabled }}
           volumeMounts:
+            - mountPath: /tmp
+              name: tmp
+            {{- if .Values.clusterCore.webhook.enabled }}
             - mountPath: {{ .Values.admissionWebhooks.certificate.mountPath }}
               name: tls-cert-vol
               readOnly: true
-          {{- end }}
-      {{- if .Values.clusterCore.webhook.enabled }}
+            {{- end }}
       volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.clusterCore.webhook.enabled }}
         - name: tls-cert-vol
           secret:
             defaultMode: 420
             secretName: {{ template "kubevela.fullname" . }}-cluster-core-admission
-      {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
       {{- toYaml . | nindent 8 }}

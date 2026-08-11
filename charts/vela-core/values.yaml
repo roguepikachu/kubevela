@@ -215,6 +215,22 @@ clusterCore:
     port: 9441
   ## @param clusterCore.metricsPort Metrics port for vela-cluster-core
   metricsPort: 8080
+  ## @param clusterCore.podSecurityContext Pod-level security context for vela-cluster-core. Defaults match the Kubernetes restricted Pod Security Standard; override to {} only when the runtime image cannot run as non-root.
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  ## @param clusterCore.securityContext Container security context for vela-cluster-core. Defaults match restricted PSS (drop ALL, no privilege escalation, read-only root).
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
   ## @param clusterCore.aws.serviceAccountRoleArn AWS role ARN for the vela-cluster-core pod's base IAM identity, applied as an eks.amazonaws.com/role-arn annotation on the vela-cluster-core service account. It only annotates that account; the pod runs as it either way. The pod holds this single base identity for its lifetime and calls sts:AssumeRole to mint short-lived credentials for each spoke's per-cluster role (one assume call per cluster, same pod, for both the podIdentity and irsa auth modes).
   aws:
     serviceAccountRoleArn: ""
