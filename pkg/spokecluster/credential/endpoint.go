@@ -41,6 +41,40 @@ func ValidateSpokeEndpoint(endpoint string) error {
 	return validateSpokeEndpoint(context.Background(), endpoint)
 }
 
+// ValidateSpokeProxyURL applies the same host/IP denylist as ValidateSpokeEndpoint
+// to a kubeconfig proxy-url. Empty is valid (no proxy). Unlike the spoke API
+// endpoint, http is allowed and RFC1918 destinations remain allowed, so a
+// corporate or in-VPC forward proxy can sit between cluster-gateway and the
+// spoke. Loopback, unspecified, link-local/IMDS, and hub in-cluster DNS are
+// still refused.
+func ValidateSpokeProxyURL(proxy string) error {
+	return validateSpokeProxyURL(context.Background(), proxy)
+}
+
+func validateSpokeProxyURL(ctx context.Context, proxy string) error {
+	if proxy == "" {
+		return nil
+	}
+	u, err := url.Parse(proxy)
+	if err != nil {
+		return fmt.Errorf("spoke proxy-url %q is not a valid URL: %w", proxy, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("spoke proxy-url %q must use http or https (got %q)", proxy, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("spoke proxy-url %q has no host", proxy)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("spoke proxy-url %q has no host", proxy)
+	}
+	if err := denyHubOrMetadataHost(ctx, host); err != nil {
+		return fmt.Errorf("spoke proxy-url %q is not permitted: %w", proxy, err)
+	}
+	return nil
+}
+
 func validateSpokeEndpoint(ctx context.Context, endpoint string) error {
 	if endpoint == "" {
 		return fmt.Errorf("spoke endpoint is empty")

@@ -103,7 +103,8 @@ spec:
                   BlueprintRef references the ClusterBlueprint revision to dispatch to the
                   cluster.
 
-                  Phase 2 stub. The admission webhook rejects it in connect mode.
+                  Phase 2 stub: accepted by admission and ignored. No Phase 1 controller
+                  dispatches it.
                 properties:
                   name:
                     description: Name of the referenced object.
@@ -308,7 +309,8 @@ spec:
                   RolloutStrategyRef references the ClusterRolloutStrategy that gates when a
                   new blueprint revision is dispatched to the cluster.
 
-                  Phase 2 stub. The admission webhook rejects it in connect mode.
+                  Phase 2 stub: accepted by admission and ignored. No Phase 1 controller
+                  reads it.
                 properties:
                   name:
                     description: Name of the referenced object.

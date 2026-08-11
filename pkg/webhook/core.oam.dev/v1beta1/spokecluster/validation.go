@@ -32,8 +32,9 @@ const defaultSecretKey = "kubeconfig"
 // Validate checks a SpokeCluster against the Phase 1 policy rules that the
 // structural schema cannot express: connect-only mode, the reserved cluster
 // name, the credential union's exactly-one-arm and per-provider required
-// fields, same-namespace kubeconfig secretRef, and rejection of the Phase 2
-// dispatch stubs. It has no client or context dependency so it can run
+// fields, same-namespace kubeconfig secretRef, and rejection of
+// infraProvisioning in connect mode. blueprintRef and rolloutStrategyRef are
+// accepted and ignored. It has no client or context dependency so it can run
 // identically in the webhook and in tests.
 func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	var errs field.ErrorList
@@ -50,19 +51,12 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 
 	errs = append(errs, validateCredential(sc.Namespace, sc.Spec.Credential)...)
 
-	// Phase 2 dispatch stubs must not be set in connect mode. They exist in the
-	// schema for forward compatibility, but no Phase 1 controller reconciles them.
+	// infraProvisioning belongs to mode: provision. blueprintRef and
+	// rolloutStrategyRef stay accepted and ignored so GitOps can land the
+	// Phase 2 shape early; no Phase 1 controller reads them.
 	if sc.Spec.InfraProvisioning != nil {
 		errs = append(errs, field.Forbidden(field.NewPath("spec", "infraProvisioning"),
 			"infraProvisioning is not supported in connect mode (Phase 2)"))
-	}
-	if sc.Spec.BlueprintRef != nil {
-		errs = append(errs, field.Forbidden(field.NewPath("spec", "blueprintRef"),
-			"blueprintRef is not supported in connect mode (Phase 2)"))
-	}
-	if sc.Spec.RolloutStrategyRef != nil {
-		errs = append(errs, field.Forbidden(field.NewPath("spec", "rolloutStrategyRef"),
-			"rolloutStrategyRef is not supported in connect mode (Phase 2)"))
 	}
 
 	return errs

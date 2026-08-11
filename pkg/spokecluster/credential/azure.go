@@ -47,8 +47,9 @@ func NewAzureProvider() *AzureProvider { return &AzureProvider{} }
 // Type returns the azure credential type.
 func (p *AzureProvider) Type() v1beta1.CredentialType { return v1beta1.CredentialTypeAzure }
 
-// Materialize is not implemented. The azure arm is accepted by the schema so the
-// API is forward-compatible, but no connectivity is resolved yet.
+// Materialize is not implemented. The azure arm stays on the schema so the API
+// is forward-compatible. The Phase 1 admission webhook rejects type azure, so
+// this method only runs if admission is bypassed.
 func (p *AzureProvider) Materialize(_ context.Context, _ client.Reader, _ *v1beta1.SpokeCluster) (*Materialized, error) {
 	// TODO: implement AKS connectivity (see the type doc above and aws.go).
 	return nil, fmt.Errorf("azure credential provider is not implemented yet")

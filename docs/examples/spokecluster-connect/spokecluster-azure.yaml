@@ -1,8 +1,9 @@
 # SpokeCluster connecting to an AKS cluster via Azure cloud-native identity.
 #
-# Phase 1 placeholder: the azure arm is accepted by the schema, but no provider
-# materializes it yet, so this manifest does not connect a cluster today. It
-# documents the shape a future AKS provider will consume.
+# DO NOT APPLY. The azure arm stays on the CRD so the schema is
+# forward-compatible. The Phase 1 admission webhook rejects type azure
+# (unsupported credential type). This file documents the shape a future AKS
+# provider will consume. See 08-invalid-examples.yaml for the rejection fixture.
 apiVersion: core.oam.dev/v1beta1
 kind: SpokeCluster
 metadata:

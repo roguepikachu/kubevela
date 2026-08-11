@@ -156,14 +156,16 @@ type SpokeClusterSpec struct {
 	// BlueprintRef references the ClusterBlueprint revision to dispatch to the
 	// cluster.
 	//
-	// Phase 2 stub. The admission webhook rejects it in connect mode.
+	// Phase 2 stub: accepted by admission and ignored. No Phase 1 controller
+	// dispatches it.
 	// +optional
 	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
 
 	// RolloutStrategyRef references the ClusterRolloutStrategy that gates when a
 	// new blueprint revision is dispatched to the cluster.
 	//
-	// Phase 2 stub. The admission webhook rejects it in connect mode.
+	// Phase 2 stub: accepted by admission and ignored. No Phase 1 controller
+	// reads it.
 	// +optional
 	RolloutStrategyRef *BlueprintReference `json:"rolloutStrategyRef,omitempty"`
 }

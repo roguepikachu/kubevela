@@ -44,8 +44,10 @@ The provider is stricter than `kubectl`. From `pkg/spokecluster/credential/kubec
 | `04-spokecluster-aws-irsa.yaml` | Same, IRSA variant |
 | `05-spokecluster-tenant-namespace.yaml` | `detach` outside `vela-system` |
 | `06-spokecluster-orphan.yaml` | `deletionPolicy: orphan` |
-| `07-spokecluster-phase2-stubs.yaml` | Phase 2 fields that exist but are inert |
+| `07-spokecluster-phase2-stubs.yaml` | `blueprintRef` / `rolloutStrategyRef` accepted and ignored; `infraProvisioning` is webhook-denied (see 08) |
 | `08-invalid-examples.yaml` | Cases that should be rejected, with the expected error |
+| `spokecluster-azure.yaml` | AKS shape. Do not apply: webhook rejects `type: azure` |
+| `spokecluster-gcp.yaml` | GKE shape. Do not apply: webhook rejects `type: gcp` |
 | `09-spoke-least-privilege-rbac.yaml` | Spoke-side ServiceAccount, ClusterRole, and binding for connect probes (not cluster-admin) |
 | `99-gateway-secret-reference.yaml` | What the controller produces, for reading only |
 

@@ -47,8 +47,9 @@ func NewGCPProvider() *GCPProvider { return &GCPProvider{} }
 // Type returns the gcp credential type.
 func (p *GCPProvider) Type() v1beta1.CredentialType { return v1beta1.CredentialTypeGCP }
 
-// Materialize is not implemented. The gcp arm is accepted by the schema so the
-// API is forward-compatible, but no connectivity is resolved yet.
+// Materialize is not implemented. The gcp arm stays on the schema so the API
+// is forward-compatible. The Phase 1 admission webhook rejects type gcp, so
+// this method only runs if admission is bypassed.
 func (p *GCPProvider) Materialize(_ context.Context, _ client.Reader, _ *v1beta1.SpokeCluster) (*Materialized, error) {
 	// TODO: implement GKE connectivity (see the type doc above and aws.go).
 	return nil, fmt.Errorf("gcp credential provider is not implemented yet")
