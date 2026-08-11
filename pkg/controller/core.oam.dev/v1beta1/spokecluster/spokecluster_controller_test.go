@@ -23,7 +23,9 @@ import (
 	"strings"
 	"time"
 
+	clustercommon "github.com/oam-dev/cluster-gateway/pkg/common"
 	. "github.com/onsi/ginkgo/v2"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -809,5 +811,138 @@ var _ = It("ReconcileEvictsTheCachedCredentialOnlyOn401", func() {
 				t.Errorf("connection = %q, want %q", latest.Status.Connection, v1beta1.ConnectionStateDisconnected)
 			}
 		})
+	}
+})
+
+var _ = It("StatusNeedsWriteIgnoresHeartbeatFields", func() {
+	t := GinkgoT()
+	base := v1beta1.SpokeClusterStatus{
+		ObservedGeneration: 1,
+		Connection:         v1beta1.ConnectionStateConnected,
+		LastProbeTime:      &metav1.Time{Time: time.Unix(100, 0)},
+		ClusterInfo: &v1beta1.SpokeClusterInfo{
+			KubernetesVersion: "v1.31.5+k3s1",
+			NodeCount:         1,
+			LatencyMillis:     4,
+			LastSyncedTime:    &metav1.Time{Time: time.Unix(100, 0)},
+		},
+	}
+	heartbeat := base.DeepCopy()
+	heartbeat.LastProbeTime = &metav1.Time{Time: time.Unix(130, 0)}
+	heartbeat.ClusterInfo.LatencyMillis = 9
+	heartbeat.ClusterInfo.LastSyncedTime = &metav1.Time{Time: time.Unix(130, 0)}
+	if statusNeedsWrite(base, *heartbeat) {
+		t.Fatal("heartbeat-only status change should not write")
+	}
+
+	versionBump := base.DeepCopy()
+	versionBump.ClusterInfo.KubernetesVersion = "v1.32.0"
+	if !statusNeedsWrite(base, *versionBump) {
+		t.Fatal("inventory change must write")
+	}
+
+	disconnected := base.DeepCopy()
+	disconnected.Connection = v1beta1.ConnectionStateDisconnected
+	if !statusNeedsWrite(base, *disconnected) {
+		t.Fatal("connection change must write")
+	}
+
+	empty := v1beta1.SpokeClusterStatus{}
+	if !statusNeedsWrite(empty, base) {
+		t.Fatal("first status populate must write")
+	}
+})
+
+var _ = It("ReconcileSkipsHeartbeatOnlyStatusWrite", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("spoke-heartbeat")
+	r := connectedReconciler(t, sc)
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	first := readSpoke(t, r, sc)
+	if first.Status.LastProbeTime == nil {
+		t.Fatal("first pass must record lastProbeTime")
+	}
+	firstProbe := *first.Status.LastProbeTime
+	firstRV := first.ResourceVersion
+
+	if _, err := reconcileOnce(t, r, sc); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	second := readSpoke(t, r, sc)
+	if !second.Status.LastProbeTime.Equal(&firstProbe) {
+		t.Errorf("lastProbeTime moved on a heartbeat-only pass: %v -> %v", firstProbe, second.Status.LastProbeTime)
+	}
+	if second.ResourceVersion != firstRV {
+		t.Errorf("resourceVersion moved on a heartbeat-only pass: %s -> %s", firstRV, second.ResourceVersion)
+	}
+})
+
+var _ = It("KubeconfigSecretIndexKeys", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("idx")
+	got := kubeconfigSecretIndexKeys(sc)
+	want := sc.Namespace + "/" + sc.Spec.Credential.Kubeconfig.SecretRef.Name
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("keys = %v, want [%s]", got, want)
+	}
+
+	sc.Spec.Credential.Kubeconfig.SecretRef.Namespace = ""
+	got = kubeconfigSecretIndexKeys(sc)
+	if len(got) != 1 || got[0] != sc.Namespace+"/"+sc.Spec.Credential.Kubeconfig.SecretRef.Name {
+		t.Fatalf("empty namespace should fall back to spoke ns, got %v", got)
+	}
+
+	sc.Spec.Credential.Type = v1beta1.CredentialTypeAWS
+	if keys := kubeconfigSecretIndexKeys(sc); keys != nil {
+		t.Fatalf("aws spoke should not index a kubeconfig secret, got %v", keys)
+	}
+})
+
+var _ = It("MapKubeconfigSecretEnqueuesOwner", func() {
+	t := GinkgoT()
+	sc := connectableSpoke("map-owner")
+	other := connectableSpoke("map-other")
+	r := newTestReconciler(t, sc, other)
+
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name:      sc.Spec.Credential.Kubeconfig.SecretRef.Name,
+		Namespace: sc.Namespace,
+	}}
+	reqs := r.mapKubeconfigSecret(context.Background(), secret)
+	if len(reqs) != 1 || reqs[0].Name != sc.Name || reqs[0].Namespace != sc.Namespace {
+		t.Fatalf("requests = %v, want only %s/%s", reqs, sc.Namespace, sc.Name)
+	}
+
+	// Empty secretRef.namespace is what GitOps usually writes; it must still match.
+	sc.Spec.Credential.Kubeconfig.SecretRef.Namespace = ""
+	if err := r.Update(context.Background(), sc); err != nil {
+		t.Fatalf("clear secretRef.namespace: %v", err)
+	}
+	reqs = r.mapKubeconfigSecret(context.Background(), secret)
+	if len(reqs) != 1 || reqs[0].Name != sc.Name {
+		t.Fatalf("empty secretRef.namespace: requests = %v, want %s", reqs, sc.Name)
+	}
+})
+
+var _ = It("SourceKubeconfigSecretPredicateIgnoresGatewaySecrets", func() {
+	t := GinkgoT()
+	src := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "src", Namespace: "vela-system"}}
+	if !sourceKubeconfigSecretPredicate.Create(event.CreateEvent{Object: src}) {
+		t.Fatal("source kubeconfig Secret should enqueue")
+	}
+
+	owned := src.DeepCopy()
+	owned.Annotations = map[string]string{secretOwnerAnnotation: "vela-system/spoke"}
+	if sourceKubeconfigSecretPredicate.Create(event.CreateEvent{Object: owned}) {
+		t.Fatal("owner-annotated gateway Secret should not enqueue")
+	}
+
+	labeled := src.DeepCopy()
+	labeled.Labels = map[string]string{clustercommon.LabelKeyClusterCredentialType: "ServiceAccountToken"}
+	if sourceKubeconfigSecretPredicate.Update(event.UpdateEvent{ObjectNew: labeled}) {
+		t.Fatal("credential-type labeled gateway Secret should not enqueue")
 	}
 })

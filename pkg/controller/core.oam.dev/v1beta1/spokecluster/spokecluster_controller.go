@@ -23,6 +23,8 @@ import (
 
 	recorder "github.com/crossplane/crossplane-runtime/pkg/event"
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
+	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -243,13 +246,15 @@ func (r *Reconciler) discoverSpoke(ctx context.Context, sc *v1beta1.SpokeCluster
 // the pass errors out.
 func (r *Reconciler) finish(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus, requeue time.Duration, reconcileErr error) (ctrl.Result, error) {
 	prev := sc.Status
-	if err := r.updateStatus(ctx, sc, status); err != nil {
-		return ctrl.Result{}, err
+	if statusNeedsWrite(prev, *status) {
+		if err := r.updateStatus(ctx, sc, status); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Events and counters describe the status that was actually persisted. Emitting
+		// first would fire ProbeSucceeded (and increment the transition counter) on a
+		// conflict that then retries, so the next successful write looks like a no-op.
+		r.emitStatusEvents(sc, &prev, status)
 	}
-	// Events and counters describe the status that was actually persisted. Emitting
-	// first would fire ProbeSucceeded (and increment the transition counter) on a
-	// conflict that then retries, so the next successful write looks like a no-op.
-	r.emitStatusEvents(sc, &prev, status)
 	if reconcileErr != nil {
 		return ctrl.Result{}, reconcileErr
 	}
@@ -271,6 +276,25 @@ func (r *Reconciler) updateStatus(ctx context.Context, sc *v1beta1.SpokeCluster,
 		latest.Status = *status
 		return r.Status().Update(ctx, latest)
 	})
+}
+
+// statusNeedsWrite reports whether next differs from prev in any operator-facing
+// field. lastProbeTime, lastSyncedTime, and latencyMillis move on every healthy
+// pass; writing them every probe interval is ~2 etcd writes per spoke per
+// interval for no state change. ignoreOwnStatusWrites already stops those
+// writes from requeueing. This skips the write itself.
+func statusNeedsWrite(prev, next v1beta1.SpokeClusterStatus) bool {
+	return !apiequality.Semantic.DeepEqual(statusForCompare(prev), statusForCompare(next))
+}
+
+func statusForCompare(in v1beta1.SpokeClusterStatus) *v1beta1.SpokeClusterStatus {
+	out := in.DeepCopy()
+	out.LastProbeTime = nil
+	if out.ClusterInfo != nil {
+		out.ClusterInfo.LastSyncedTime = nil
+		out.ClusterInfo.LatencyMillis = 0
+	}
+	return out
 }
 
 // setCondition records one condition. meta.SetStatusCondition leaves LastTransitionTime
@@ -348,6 +372,12 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			MaxConcurrentReconciles: r.concurrentReconciles,
 		}).
 		For(&v1beta1.SpokeCluster{}, builder.WithPredicates(ignoreOwnStatusWrites)).
+		// Source kubeconfig Secrets in the gateway namespace already sit in the
+		// RBAC-01 informer. A cluster-wide Secret watch would need ClusterRole
+		// list/watch, which that change removed on purpose. Tenant-namespace
+		// rotations still wait for the next probe (APIReader re-reads them).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.mapKubeconfigSecret),
+			builder.WithPredicates(sourceKubeconfigSecretPredicate)).
 		Complete(r)
 }
 
