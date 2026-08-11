@@ -21,11 +21,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -57,19 +59,20 @@ const dash = "-"
 const defaultSpokeClusterNamespace = "vela-system"
 
 // NewSpokeClusterCommandGroup creates the `vela cluster spokes` command group for
-// inspecting SpokeCluster resources reconciled by vela-cluster-core.
+// managing SpokeCluster resources reconciled by vela-cluster-core.
 func NewSpokeClusterCommandGroup(c *common.Args) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "spokes",
 		Aliases: []string{"spoke", "spokecluster", "spokeclusters"},
-		Short:   "Inspect SpokeCluster resources (Cluster Connect).",
-		Long: "Inspect SpokeCluster resources reconciled by vela-cluster-core. " +
-			"Requires the EnableClusterInfrastructure feature gate on vela-cluster-core.",
+		Short:   "Manage SpokeCluster resources (Cluster Connect).",
+		Long: "Create, inspect, and detach SpokeCluster resources reconciled by vela-cluster-core. " +
+			"Requires the EnableClusterInfrastructure feature gate on vela-cluster-core. " +
+			"Prefer this over `vela cluster join` for new clusters.",
 		// Override the parent `vela cluster` PersistentPreRunE, which resolves the
 		// cluster-gateway service and fails when it is absent. cobra runs only the
 		// nearest PersistentPreRunE, so this scopes the override to the spokes group:
-		// read-only SpokeCluster inspection reads the hub API server directly and must
-		// not depend on cluster-gateway. Requirement 8.
+		// SpokeCluster commands talk to the hub API server directly and must not
+		// depend on cluster-gateway. Requirement 8.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			return nil
 		},
@@ -77,6 +80,8 @@ func NewSpokeClusterCommandGroup(c *common.Args) *cobra.Command {
 	cmd.AddCommand(
 		newSpokeClusterListCommand(c),
 		newSpokeClusterShowCommand(c),
+		newSpokeClusterCreateCommand(c),
+		newSpokeClusterDetachCommand(c),
 	)
 	return cmd
 }
@@ -374,4 +379,290 @@ func orDash(s string) string {
 		return dash
 	}
 	return s
+}
+
+const defaultKubeconfigSecretKey = "kubeconfig"
+
+// spokeClusterCreateOpts is the input for runSpokeClusterCreate.
+type spokeClusterCreateOpts struct {
+	Name           string
+	Namespace      string
+	KubeconfigPath string
+	SecretName     string
+	DeletionPolicy v1beta1.SpokeDeletionPolicy
+	AWS            bool
+	AWSAuthMode    string
+	AWSClusterName string
+	AWSRegion      string
+	AWSRoleARN     string
+	AWSExternalID  string
+}
+
+// newSpokeClusterCreateCommand creates a SpokeCluster from a kubeconfig file,
+// an existing Secret, or AWS cloud-native identity.
+func newSpokeClusterCreateCommand(c *common.Args) *cobra.Command {
+	var kubeconfigPath, secretName, deletionPolicy, namespace string
+	var awsAuthMode, awsClusterName, awsRegion, awsRoleARN, awsExternalID string
+	var aws bool
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a SpokeCluster from a kubeconfig, an existing Secret, or AWS.",
+		Long: "Create a SpokeCluster in connect mode. With --kubeconfig, writes a Secret " +
+			"unless --secret names an existing one. With --aws, writes no Secret; the " +
+			"controller assumes --aws-role-arn and mints an EKS token.",
+		Example: "# Create from a kubeconfig file (writes Secret <name>-kubeconfig)\n" +
+			"> vela cluster spokes create my-spoke --kubeconfig ./spoke.kubeconfig\n" +
+			"# Point at an existing Secret in the same namespace\n" +
+			"> vela cluster spokes create my-spoke --secret my-kubeconfig\n" +
+			"# EKS via Pod Identity (no Secret). clusterName defaults to <name>.\n" +
+			"> vela cluster spokes create prod-east --aws --aws-region us-west-2 \\\n" +
+			"    --aws-role-arn arn:aws:iam::111122223333:role/spokecluster-prod-east",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			policy, err := parseSpokeDeletionPolicy(deletionPolicy)
+			if err != nil {
+				return err
+			}
+			k8sClient, err := c.GetClient()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			return runSpokeClusterCreate(ctx, k8sClient, cmd.OutOrStdout(), spokeClusterCreateOpts{
+				Name:           args[0],
+				Namespace:      namespace,
+				KubeconfigPath: kubeconfigPath,
+				SecretName:     secretName,
+				DeletionPolicy: policy,
+				AWS:            aws,
+				AWSAuthMode:    awsAuthMode,
+				AWSClusterName: awsClusterName,
+				AWSRegion:      awsRegion,
+				AWSRoleARN:     awsRoleARN,
+				AWSExternalID:  awsExternalID,
+			})
+		},
+	}
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", defaultSpokeClusterNamespace,
+		"Namespace for the SpokeCluster and its credential Secret.")
+	cmd.Flags().StringVar(&kubeconfigPath, "kubeconfig", "",
+		"Path to a kubeconfig file. Creates a Secret from it unless --secret names an existing one.")
+	cmd.Flags().StringVar(&secretName, "secret", "",
+		"Existing Secret name, or the name to write when --kubeconfig is also set. Defaults to <name>-kubeconfig.")
+	cmd.Flags().BoolVar(&aws, "aws", false,
+		"Create an AWS/EKS SpokeCluster. No Secret is written. Requires --aws-region and --aws-role-arn.")
+	cmd.Flags().StringVar(&awsRegion, "aws-region", "",
+		"EKS region. Required with --aws.")
+	cmd.Flags().StringVar(&awsRoleARN, "aws-role-arn", "",
+		"IAM role the hub assumes to reach the spoke. Required with --aws.")
+	cmd.Flags().StringVar(&awsClusterName, "aws-cluster-name", "",
+		"EKS cluster name. Defaults to the SpokeCluster name.")
+	cmd.Flags().StringVar(&awsAuthMode, "aws-auth-mode", string(v1beta1.AWSAuthModePodIdentity),
+		"AWS auth mode. One of: podIdentity, irsa.")
+	cmd.Flags().StringVar(&awsExternalID, "aws-external-id", "",
+		"Optional STS external ID for the role assumption.")
+	cmd.Flags().StringVar(&deletionPolicy, "deletion-policy", string(v1beta1.SpokeDeletionPolicyDetach),
+		"Fate of the gateway registration on delete. One of: detach, orphan.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second,
+		"Deadline for the API request.")
+	return cmd
+}
+
+func parseSpokeDeletionPolicy(s string) (v1beta1.SpokeDeletionPolicy, error) {
+	switch v1beta1.SpokeDeletionPolicy(s) {
+	case v1beta1.SpokeDeletionPolicyDetach, v1beta1.SpokeDeletionPolicyOrphan:
+		return v1beta1.SpokeDeletionPolicy(s), nil
+	default:
+		return "", errors.Errorf("invalid --deletion-policy %q (want detach or orphan)", s)
+	}
+}
+
+// runSpokeClusterCreate writes an optional kubeconfig Secret and a SpokeCluster.
+func runSpokeClusterCreate(ctx context.Context, k8sClient client.Client, out io.Writer, opts spokeClusterCreateOpts) error {
+	if opts.Namespace == "" {
+		opts.Namespace = defaultSpokeClusterNamespace
+	}
+	if opts.DeletionPolicy == "" {
+		opts.DeletionPolicy = v1beta1.SpokeDeletionPolicyDetach
+	}
+
+	cred, err := buildCreateCredential(opts)
+	if err != nil {
+		return err
+	}
+
+	var existing v1beta1.SpokeCluster
+	err = k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: opts.Name}, &existing)
+	if err == nil {
+		return errors.Errorf("SpokeCluster %s/%s already exists", opts.Namespace, opts.Name)
+	}
+	if !apierrors.IsNotFound(err) {
+		return spokeClusterAPIError(err, "failed to get spokecluster")
+	}
+
+	if cred.Type == v1beta1.CredentialTypeKubeconfig {
+		secretName, err := ensureKubeconfigSecret(ctx, k8sClient, out, opts)
+		if err != nil {
+			return err
+		}
+		cred.Kubeconfig = &v1beta1.KubeconfigCredential{
+			SecretRef: v1beta1.SecretKeyRef{Name: secretName},
+		}
+	}
+
+	sc := &v1beta1.SpokeCluster{
+		ObjectMeta: metav1.ObjectMeta{Name: opts.Name, Namespace: opts.Namespace},
+		Spec: v1beta1.SpokeClusterSpec{
+			Mode:           v1beta1.SpokeClusterModeConnect,
+			DeletionPolicy: opts.DeletionPolicy,
+			Credential:     cred,
+		},
+	}
+	if err := k8sClient.Create(ctx, sc); err != nil {
+		return spokeClusterAPIError(err, "failed to create spokecluster")
+	}
+	fmt.Fprintf(out, "Created SpokeCluster %s/%s. Watch status with: vela cluster spokes show %s -n %s\n",
+		opts.Namespace, opts.Name, opts.Name, opts.Namespace)
+	return nil
+}
+
+// buildCreateCredential picks the credential arm from create flags.
+func buildCreateCredential(opts spokeClusterCreateOpts) (v1beta1.CredentialSpec, error) {
+	kubeconfigMode := opts.KubeconfigPath != "" || opts.SecretName != ""
+	if opts.AWS && kubeconfigMode {
+		return v1beta1.CredentialSpec{}, errors.New("--aws cannot be used with --kubeconfig or --secret")
+	}
+	if !opts.AWS && !kubeconfigMode {
+		return v1beta1.CredentialSpec{}, errors.New("provide --kubeconfig, --secret, or --aws")
+	}
+	if !opts.AWS {
+		return v1beta1.CredentialSpec{Type: v1beta1.CredentialTypeKubeconfig}, nil
+	}
+	if opts.AWSRegion == "" || opts.AWSRoleARN == "" {
+		return v1beta1.CredentialSpec{}, errors.New("--aws requires --aws-region and --aws-role-arn")
+	}
+	authMode := v1beta1.AWSAuthMode(opts.AWSAuthMode)
+	if authMode == "" {
+		authMode = v1beta1.AWSAuthModePodIdentity
+	}
+	if authMode != v1beta1.AWSAuthModePodIdentity && authMode != v1beta1.AWSAuthModeIRSA {
+		return v1beta1.CredentialSpec{}, errors.Errorf("invalid --aws-auth-mode %q (want podIdentity or irsa)", opts.AWSAuthMode)
+	}
+	clusterName := opts.AWSClusterName
+	if clusterName == "" {
+		clusterName = opts.Name
+	}
+	return v1beta1.CredentialSpec{
+		Type: v1beta1.CredentialTypeAWS,
+		AWS: &v1beta1.AWSCredential{
+			AuthMode:    authMode,
+			ClusterName: clusterName,
+			Region:      opts.AWSRegion,
+			RoleARN:     opts.AWSRoleARN,
+			ExternalID:  opts.AWSExternalID,
+		},
+	}, nil
+}
+
+// ensureKubeconfigSecret creates a Secret from --kubeconfig, or checks --secret exists.
+func ensureKubeconfigSecret(ctx context.Context, k8sClient client.Client, out io.Writer, opts spokeClusterCreateOpts) (string, error) {
+	secretName := opts.SecretName
+	if opts.KubeconfigPath != "" {
+		if secretName == "" {
+			secretName = opts.Name + "-kubeconfig"
+		}
+		data, err := os.ReadFile(opts.KubeconfigPath)
+		if err != nil {
+			return "", errors.Wrap(err, "failed to read kubeconfig")
+		}
+		if len(data) == 0 {
+			return "", errors.New("kubeconfig file is empty")
+		}
+		var secret corev1.Secret
+		err = k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: secretName}, &secret)
+		if err == nil {
+			return "", errors.Errorf("Secret %s/%s already exists; pass --secret %s without --kubeconfig to reuse it",
+				opts.Namespace, secretName, secretName)
+		}
+		if !apierrors.IsNotFound(err) {
+			return "", errors.Wrap(err, "failed to get secret")
+		}
+		secret = corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: opts.Namespace},
+			Type:       corev1.SecretTypeOpaque,
+			Data:       map[string][]byte{defaultKubeconfigSecretKey: data},
+		}
+		if err := k8sClient.Create(ctx, &secret); err != nil {
+			return "", errors.Wrap(err, "failed to create kubeconfig secret")
+		}
+		fmt.Fprintf(out, "Created Secret %s/%s.\n", opts.Namespace, secretName)
+		return secretName, nil
+	}
+	var secret corev1.Secret
+	err := k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: opts.Namespace, Name: secretName}, &secret)
+	if apierrors.IsNotFound(err) {
+		return "", errors.Errorf("Secret %s/%s not found", opts.Namespace, secretName)
+	}
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get secret")
+	}
+	return secretName, nil
+}
+
+// newSpokeClusterDetachCommand deletes a SpokeCluster. The controller then
+// detaches or orphans the gateway registration per deletionPolicy.
+func newSpokeClusterDetachCommand(c *common.Args) *cobra.Command {
+	var namespace string
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use:   "detach <name>",
+		Short: "Delete a SpokeCluster (controller detaches or orphans the registration).",
+		Long: "Delete the SpokeCluster resource. The controller removes the gateway Secret " +
+			"when deletionPolicy is detach (the default), or leaves it when orphan. " +
+			"The source kubeconfig Secret is left in place.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			k8sClient, err := c.GetClient()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			return runSpokeClusterDetach(ctx, k8sClient, namespace, args[0], cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", defaultSpokeClusterNamespace,
+		"Namespace of the SpokeCluster.")
+	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Second,
+		"Deadline for the API request.")
+	return cmd
+}
+
+// runSpokeClusterDetach deletes one SpokeCluster. The source Secret is not deleted.
+func runSpokeClusterDetach(ctx context.Context, k8sClient client.Client, namespace, name string, out io.Writer) error {
+	if namespace == "" {
+		namespace = defaultSpokeClusterNamespace
+	}
+	var sc v1beta1.SpokeCluster
+	if err := k8sClient.Get(ctx, apitypes.NamespacedName{Namespace: namespace, Name: name}, &sc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return errors.Errorf("SpokeCluster %s/%s not found", namespace, name)
+		}
+		return spokeClusterAPIError(err, "failed to get spokecluster")
+	}
+	if err := k8sClient.Delete(ctx, &sc); err != nil {
+		return errors.Wrap(err, "failed to delete spokecluster")
+	}
+	policy := sc.Spec.DeletionPolicy
+	if policy == "" {
+		policy = v1beta1.SpokeDeletionPolicyDetach
+	}
+	msg := fmt.Sprintf("Deleted SpokeCluster %s/%s (deletionPolicy=%s).", namespace, name, policy)
+	if sc.Spec.Credential.Type == v1beta1.CredentialTypeKubeconfig {
+		msg += " Source Secret is left in place."
+	}
+	fmt.Fprintln(out, msg)
+	return nil
 }
