@@ -119,7 +119,12 @@ func (comp *Component) EvalStatus(templateContext map[string]interface{}) (*heal
 	if comp.SkipApplyWorkload {
 		return nil, nil
 	}
-	return comp.engine.Status(templateContext, comp.FullTemplate.AsStatusRequest(comp.Params))
+	req := comp.FullTemplate.AsStatusRequest(comp.Params)
+	if comp.CapabilityCategory == types.DefkitCategory && comp.FullTemplate != nil {
+		// Defkit schematic JSON embeds health/status; reuse Health field as carrier.
+		req.Health = comp.FullTemplate.TemplateStr
+	}
+	return comp.engine.Status(templateContext, req)
 }
 
 // Trait is ComponentTrait

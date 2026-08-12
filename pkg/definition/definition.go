@@ -495,6 +495,35 @@ func (def *Definition) FromCUEString(cueString string, _ *rest.Config) error {
 	return def.FromCUE(&inst, templateString)
 }
 
+// FromDefkitTemplate builds a Definition CR using schematic.defkit instead of CUE.
+// defType is component|trait|policy|workflow-step (same as Definition.SetType).
+func (def *Definition) FromDefkitTemplate(name, defType, templateJSON string) error {
+	if err := def.SetType(defType); err != nil {
+		return err
+	}
+	def.SetName(name)
+	spec := map[string]interface{}{
+		"schematic": map[string]interface{}{
+			"defkit": map[string]interface{}{
+				"template": templateJSON,
+			},
+		},
+	}
+	switch defType {
+	case componentDefType:
+		spec["workload"] = map[string]interface{}{
+			"definition": map[string]interface{}{
+				"apiVersion": "apps/v1",
+				"kind":       "Deployment",
+			},
+		}
+	case traitDefType:
+		spec["appliesToWorkloads"] = []interface{}{"*"}
+	}
+	def.Object["spec"] = spec
+	return nil
+}
+
 // SearchDefinition search the Definition in k8s by traversing all possible results across types or namespaces
 func SearchDefinition(c client.Client, definitionType, namespace string, additionalFilters ...filters.Filter) ([]unstructured.Unstructured, error) {
 	ctx := context.Background()

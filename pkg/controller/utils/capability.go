@@ -19,6 +19,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -43,6 +44,7 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
 	"github.com/oam-dev/kubevela/pkg/appfile"
+	"github.com/oam-dev/kubevela/pkg/defschematic/ir"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/schema"
 	"github.com/oam-dev/kubevela/pkg/utils/common"
@@ -918,6 +920,9 @@ func (def *CapabilityBaseDefinition) CreateOrUpdateConfigMap(ctx context.Context
 
 // getOpenAPISchema is the main function for GetDefinition API
 func getOpenAPISchema(ctx context.Context, capability types.Capability) ([]byte, error) {
+	if isDefkitTemplate(capability.CueTemplate) {
+		return openAPIFromDefkit(capability.CueTemplate)
+	}
 	s, err := schema.ParsePropertiesToSchema(ctx, capability.CueTemplate)
 	if err != nil {
 		return nil, err
@@ -928,4 +933,47 @@ func getOpenAPISchema(ctx context.Context, capability types.Capability) ([]byte,
 		return nil, err
 	}
 	return parameter, nil
+}
+
+func isDefkitTemplate(tmpl string) bool {
+	t := strings.TrimSpace(tmpl)
+	return strings.HasPrefix(t, "{") && strings.Contains(t, `"apiVersion"`) && strings.Contains(t, "defkit.oam.dev/")
+}
+
+func openAPIFromDefkit(tmpl string) ([]byte, error) {
+	def, err := ir.ParseJSON([]byte(tmpl))
+	if err != nil {
+		return nil, err
+	}
+	props := map[string]interface{}{}
+	required := []string{}
+	for _, p := range def.Params {
+		schemaType := "string"
+		switch p.Type {
+		case "int", "number":
+			schemaType = "number"
+		case "bool":
+			schemaType = "boolean"
+		case "object":
+			schemaType = "object"
+		case "array":
+			schemaType = "array"
+		}
+		prop := map[string]interface{}{"type": schemaType}
+		if p.Default != nil {
+			prop["default"] = p.Default
+		}
+		props[p.Name] = prop
+		if p.Required {
+			required = append(required, p.Name)
+		}
+	}
+	doc := map[string]interface{}{
+		"type":       "object",
+		"properties": props,
+	}
+	if len(required) > 0 {
+		doc["required"] = required
+	}
+	return json.Marshal(doc)
 }

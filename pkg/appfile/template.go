@@ -360,6 +360,11 @@ func loadSchematicToTemplate(tmpl *Template, status *common.Status, schematic *c
 	}
 
 	if schematic != nil {
+		if schematic.Defkit != nil {
+			tmpl.CapabilityCategory = types.DefkitCategory
+			tmpl.TemplateStr = schematic.Defkit.Template
+			return nil
+		}
 		if schematic.CUE != nil {
 			tmpl.CapabilityCategory = types.CUECategory
 			tmpl.TemplateStr = schematic.CUE.Template

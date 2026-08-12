@@ -42,6 +42,7 @@ import (
 	"github.com/oam-dev/kubevela/pkg/auth"
 	"github.com/oam-dev/kubevela/pkg/component"
 	"github.com/oam-dev/kubevela/pkg/cue/definition"
+	defscheval "github.com/oam-dev/kubevela/pkg/defschematic/eval"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
 	"github.com/oam-dev/kubevela/pkg/oam"
@@ -547,8 +548,22 @@ func (p *Parser) convertTemplate2Component(name, typ string, props *runtime.RawE
 		CapabilityCategory: templ.CapabilityCategory,
 		FullTemplate:       templ,
 		Params:             settings,
-		engine:             definition.NewWorkloadAbstractEngine(name),
+		engine:             newWorkloadEngine(templ.CapabilityCategory, name),
 	}, nil
+}
+
+func newWorkloadEngine(cat types.CapabilityCategory, name string) definition.AbstractEngine {
+	if cat == types.DefkitCategory {
+		return defscheval.NewWorkloadEngine(name)
+	}
+	return definition.NewWorkloadAbstractEngine(name)
+}
+
+func newTraitEngine(cat types.CapabilityCategory, name string) definition.AbstractEngine {
+	if cat == types.DefkitCategory {
+		return defscheval.NewTraitEngine(name)
+	}
+	return definition.NewTraitAbstractEngine(name)
 }
 
 // parseComponents resolve an Application Components and Traits to generate Component
@@ -741,7 +756,7 @@ func (p *Parser) convertTemplate2Trait(name string, properties map[string]interf
 		Template:           templ.TemplateStr,
 		CustomStatusFormat: templ.CustomStatus,
 		FullTemplate:       templ,
-		engine:             definition.NewTraitAbstractEngine(traitName),
+		engine:             newTraitEngine(templ.CapabilityCategory, traitName),
 	}, nil
 }
 

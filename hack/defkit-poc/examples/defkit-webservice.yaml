@@ -1,0 +1,15 @@
+apiVersion: core.oam.dev/v1beta1
+kind: ComponentDefinition
+metadata:
+    annotations:
+        definition.oam.dev/description: PoC webservice authored with defkit ToDefkit emit
+    name: defkit-webservice
+    namespace: vela-system
+spec:
+    schematic:
+        defkit:
+            template: '{"apiVersion":"defkit.oam.dev/v1alpha1","kind":"Component","name":"defkit-webservice","params":[{"name":"image","type":"string","required":true},{"name":"replicas","type":"int","default":1,"min":1,"max":10},{"name":"port","type":"int","default":80}],"template":{"output":{"apiVersion":"apps/v1","kind":"Deployment","fields":[{"path":"metadata.name","value":{"context":"name"}},{"path":"metadata.namespace","value":{"context":"namespace"}},{"path":"spec.replicas","value":{"param":"replicas"}},{"path":"spec.selector.matchLabels.app","value":{"context":"name"}},{"path":"spec.template.metadata.labels.app","value":{"context":"name"}},{"path":"spec.template.spec.containers[0].name","value":{"context":"name"}},{"path":"spec.template.spec.containers[0].image","value":{"param":"image"}},{"path":"spec.template.spec.containers[0].ports[0].containerPort","value":{"param":"port"}}]},"outputs":{"service":{"apiVersion":"v1","kind":"Service","fields":[{"path":"metadata.name","value":{"concat":[{"context":"name"},{"lit":"-svc"}]}},{"path":"metadata.namespace","value":{"context":"namespace"}},{"path":"spec.selector.app","value":{"context":"name"}},{"path":"spec.ports[0].port","value":{"param":"port"}},{"path":"spec.ports[0].targetPort","value":{"param":"port"}}]}}}}'
+    workload:
+        definition:
+            apiVersion: apps/v1
+            kind: Deployment

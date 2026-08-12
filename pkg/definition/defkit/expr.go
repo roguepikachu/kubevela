@@ -611,6 +611,23 @@ func ParamRef(field string) *Ref {
 	return ParameterField(field)
 }
 
+// InputRef references a workflow step input path (defkit schematic emit).
+type InputRef struct {
+	path string
+}
+
+func (i *InputRef) expr()  {}
+func (i *InputRef) value() {}
+
+// Path returns the input path.
+func (i *InputRef) Path() string { return i.path }
+
+// Input creates a reference to a workflow step input field.
+// Example: Input("message") → ir.Expr{Input: "message"}
+func Input(path string) *InputRef {
+	return &InputRef{path: path}
+}
+
 // --- ForEach Map Iteration ---
 
 // ForEachMapOp represents a for comprehension over a map.

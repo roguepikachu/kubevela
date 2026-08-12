@@ -50,12 +50,25 @@ type CUE struct {
 	Template string `json:"template"`
 }
 
+// Defkit defines the encapsulation in defkit schematic (JSON) format.
+// Defkit templates are evaluated by the Go declarative evaluator (pkg/defschematic/eval),
+// not by CUE. Template holds a JSON-encoded ir.Definition document.
+type Defkit struct {
+	// Template is the JSON defkit schematic document (apiVersion defkit.oam.dev/v1alpha1).
+	Template string `json:"template"`
+}
+
 // Schematic defines the encapsulation of this capability(workload/trait/scope),
 // the encapsulation can be defined in different ways, e.g. CUE/HCL(terraform)/KUBE(K8s Object)/HELM, etc...
 type Schematic struct {
 	CUE *CUE `json:"cue,omitempty"`
 
 	Terraform *Terraform `json:"terraform,omitempty"`
+
+	// Defkit is the defkit schematic format (Go-authored, natively evaluated).
+	// When set, the controller evaluates the template with the defschematic engine.
+	// +optional
+	Defkit *Defkit `json:"defkit,omitempty"`
 }
 
 // Terraform is the struct to describe cloud resources managed by Hashicorp Terraform

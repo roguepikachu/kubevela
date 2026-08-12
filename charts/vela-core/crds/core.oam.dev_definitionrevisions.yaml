@@ -149,6 +149,15 @@ spec:
                             required:
                             - template
                             type: object
+                          defkit:
+                            description: Defkit defines the encapsulation in defkit schematic (JSON) format
+                            properties:
+                              template:
+                                description: Template is the JSON defkit schematic document (apiVersion defkit.oam.dev/v1alpha1)
+                                type: string
+                            required:
+                            - template
+                            type: object
                           terraform:
                             description: Terraform is the struct to describe cloud
                               resources managed by Hashicorp Terraform
@@ -429,6 +438,15 @@ spec:
                                 description: |-
                                   Template defines the abstraction template data of the capability, it will replace the old CUE template in extension field.
                                   Template is a required field if CUE is defined in Capability Definition.
+                                type: string
+                            required:
+                            - template
+                            type: object
+                          defkit:
+                            description: Defkit defines the encapsulation in defkit schematic (JSON) format
+                            properties:
+                              template:
+                                description: Template is the JSON defkit schematic document (apiVersion defkit.oam.dev/v1alpha1)
                                 type: string
                             required:
                             - template
@@ -721,6 +739,15 @@ spec:
                             required:
                             - template
                             type: object
+                          defkit:
+                            description: Defkit defines the encapsulation in defkit schematic (JSON) format
+                            properties:
+                              template:
+                                description: Template is the JSON defkit schematic document (apiVersion defkit.oam.dev/v1alpha1)
+                                type: string
+                            required:
+                            - template
+                            type: object
                           terraform:
                             description: Terraform is the struct to describe cloud
                               resources managed by Hashicorp Terraform
@@ -960,6 +987,15 @@ spec:
                                 description: |-
                                   Template defines the abstraction template data of the capability, it will replace the old CUE template in extension field.
                                   Template is a required field if CUE is defined in Capability Definition.
+                                type: string
+                            required:
+                            - template
+                            type: object
+                          defkit:
+                            description: Defkit defines the encapsulation in defkit schematic (JSON) format
+                            properties:
+                              template:
+                                description: Template is the JSON defkit schematic document (apiVersion defkit.oam.dev/v1alpha1)
                                 type: string
                             required:
                             - template

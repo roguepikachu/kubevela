@@ -51,11 +51,18 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1alpha1"
 	"github.com/oam-dev/kubevela/apis/types"
 	velaprocess "github.com/oam-dev/kubevela/pkg/cue/process"
+	"github.com/oam-dev/kubevela/pkg/defschematic/ir"
 )
 
 // ValidateCUESchematicAppfile validates CUE schematic workloads in an Appfile
 func (p *Parser) ValidateCUESchematicAppfile(a *Appfile) error {
 	for _, wl := range a.ParsedComponents {
+		if wl.CapabilityCategory == types.DefkitCategory {
+			if err := validateDefkitComponent(wl); err != nil {
+				return err
+			}
+			continue
+		}
 		// because helm & kube schematic has no CUE template
 		// it only validates CUE schematic workload
 		if wl.CapabilityCategory != types.CUECategory || wl.Type == v1alpha1.RefObjectsComponentType {
@@ -710,4 +717,30 @@ func getMapKeys(m map[string]any) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+func validateDefkitComponent(wl *Component) error {
+	if wl.FullTemplate == nil || wl.FullTemplate.TemplateStr == "" {
+		return fmt.Errorf("defkit component %q has empty template", wl.Name)
+	}
+	def, err := ir.ParseJSON([]byte(wl.FullTemplate.TemplateStr))
+	if err != nil {
+		return errors.WithMessagef(err, "defkit component %q", wl.Name)
+	}
+	if _, err := ir.ValidateParams(def.Params, wl.Params); err != nil {
+		return errors.WithMessagef(err, "defkit component %q params", wl.Name)
+	}
+	for _, tr := range wl.Traits {
+		if tr.CapabilityCategory != types.DefkitCategory {
+			continue
+		}
+		td, err := ir.ParseJSON([]byte(tr.Template))
+		if err != nil {
+			return errors.WithMessagef(err, "defkit trait %q", tr.Name)
+		}
+		if _, err := ir.ValidateParams(td.Params, tr.Params); err != nil {
+			return errors.WithMessagef(err, "defkit trait %q params", tr.Name)
+		}
+	}
+	return nil
 }

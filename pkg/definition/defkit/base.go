@@ -18,6 +18,7 @@ package defkit
 
 import (
 	"github.com/oam-dev/kubevela/pkg/definition/defkit/placement"
+	"github.com/oam-dev/kubevela/pkg/defschematic/ir"
 )
 
 // baseDefinition contains fields and methods common to all X-Definition types.
@@ -54,6 +55,9 @@ type baseDefinition struct {
 	// Placement constraints for cluster-aware definition deployment
 	runOn    []placement.Condition
 	notRunOn []placement.Condition
+	// schematicHealth/Status are native defkit IR health (ToDefkit), not CUE strings.
+	schematicHealth *ir.HealthSpec
+	schematicStatus *ir.StatusSpec
 }
 
 // --- Builder methods (used by embedding types) ---
@@ -241,6 +245,26 @@ func (b *baseDefinition) GetPlacement() placement.PlacementSpec {
 // HasPlacement returns true if the definition has any placement constraints.
 func (b *baseDefinition) HasPlacement() bool {
 	return len(b.runOn) > 0 || len(b.notRunOn) > 0
+}
+
+// SetSchematicHealth sets native defkit IR health (Crossplane claim, etc.).
+func (b *baseDefinition) SetSchematicHealth(h *ir.HealthSpec) {
+	b.schematicHealth = h
+}
+
+// GetSchematicHealth returns native IR health, if set.
+func (b *baseDefinition) GetSchematicHealth() *ir.HealthSpec {
+	return b.schematicHealth
+}
+
+// SetSchematicStatus sets native defkit IR custom status messages.
+func (b *baseDefinition) SetSchematicStatus(s *ir.StatusSpec) {
+	b.schematicStatus = s
+}
+
+// GetSchematicStatus returns native IR status, if set.
+func (b *baseDefinition) GetSchematicStatus() *ir.StatusSpec {
+	return b.schematicStatus
 }
 
 // GetRawCUEWithName returns the raw CUE with the definition name rewritten

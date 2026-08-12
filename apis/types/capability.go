@@ -68,6 +68,9 @@ const (
 	TerraformCategory CapabilityCategory = "terraform"
 
 	CUECategory CapabilityCategory = "cue"
+
+	// DefkitCategory marks definitions using the defkit schematic (native Go evaluation).
+	DefkitCategory CapabilityCategory = "defkit"
 )
 
 // Parameter defines a parameter for cli from capability template

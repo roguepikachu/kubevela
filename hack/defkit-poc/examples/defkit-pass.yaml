@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: WorkflowStepDefinition
+metadata:
+    annotations:
+        definition.oam.dev/description: PoC workflow step body via ToDefkit
+    name: defkit-pass
+    namespace: vela-system
+spec:
+    schematic:
+        defkit:
+            template: '{"apiVersion":"defkit.oam.dev/v1alpha1","kind":"WorkflowStep","name":"defkit-pass","params":[{"name":"prefix","type":"string","default":"defkit"}],"workflow":{"outputs":{"echo":{"concat":[{"param":"prefix"},{"lit":":"},{"input":"message"}]}},"message":{"concat":[{"lit":"passed "},{"input":"message"}]}}}'

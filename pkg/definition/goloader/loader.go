@@ -108,6 +108,8 @@ func (p *DefinitionPlacement) IsEmpty() bool {
 type LoadResult struct {
 	// CUE is the generated CUE string
 	CUE string
+	// Defkit is the defkit schematic JSON (schematic.defkit.template) when DEFKIT_EMIT=defkit
+	Defkit string
 	// YAML is the generated YAML string (Kubernetes CR format)
 	YAML []byte
 	// Definition contains metadata about the definition
@@ -972,7 +974,8 @@ func LoadFromModuleWithRegistry(moduleRoot string) ([]LoadResult, error) {
 	results := make([]LoadResult, 0, len(registryOutput.Definitions))
 	for _, def := range registryOutput.Definitions {
 		result := LoadResult{
-			CUE: def.CUE,
+			CUE:    def.CUE,
+			Defkit: def.Defkit,
 			Definition: DefinitionInfo{
 				Name: def.Name,
 				Type: string(def.Type),

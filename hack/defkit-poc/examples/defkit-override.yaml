@@ -1,0 +1,11 @@
+apiVersion: core.oam.dev/v1beta1
+kind: PolicyDefinition
+metadata:
+    annotations:
+        definition.oam.dev/description: PoC override policy marker via ToDefkit
+    name: defkit-override
+    namespace: vela-system
+spec:
+    schematic:
+        defkit:
+            template: '{"apiVersion":"defkit.oam.dev/v1alpha1","kind":"Policy","name":"defkit-override","params":[{"name":"components","type":"string","default":""}],"policy":{"output":{"apiVersion":"v1","kind":"ConfigMap","fields":[{"path":"metadata.name","value":{"concat":[{"context":"name"},{"lit":"-defkit-policy"}]}},{"path":"metadata.namespace","value":{"context":"namespace"}},{"path":"data.components","value":{"param":"components"}},{"path":"data.engine","value":{"lit":"defkit"}}]}}}'

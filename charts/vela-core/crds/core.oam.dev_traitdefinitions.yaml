@@ -141,6 +141,15 @@ spec:
                     required:
                     - template
                     type: object
+                  defkit:
+                    description: Defkit defines the encapsulation in defkit schematic (JSON) format
+                    properties:
+                      template:
+                        description: Template is the JSON defkit schematic document (apiVersion defkit.oam.dev/v1alpha1)
+                        type: string
+                    required:
+                    - template
+                    type: object
                   terraform:
                     description: Terraform is the struct to describe cloud resources
                       managed by Hashicorp Terraform

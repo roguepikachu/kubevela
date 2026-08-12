@@ -21,6 +21,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/pkg/definition/defkit/placement"
+	"github.com/oam-dev/kubevela/pkg/defschematic/ir"
 )
 
 // ComponentDefinition represents a KubeVela ComponentDefinition.
@@ -135,6 +136,18 @@ func (c *ComponentDefinition) HealthPolicy(expr string) *ComponentDefinition {
 //	))
 func (c *ComponentDefinition) HealthPolicyExpr(expr HealthExpression) *ComponentDefinition {
 	c.setHealthPolicyExpr(expr)
+	return c
+}
+
+// SchematicHealth sets native defkit IR health evaluated without CUE.
+func (c *ComponentDefinition) SchematicHealth(h *ir.HealthSpec) *ComponentDefinition {
+	c.SetSchematicHealth(h)
+	return c
+}
+
+// SchematicStatus sets native defkit IR status messages evaluated without CUE.
+func (c *ComponentDefinition) SchematicStatus(s *ir.StatusSpec) *ComponentDefinition {
+	c.SetSchematicStatus(s)
 	return c
 }
 

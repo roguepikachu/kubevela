@@ -1,0 +1,33 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+    name: defkit-atmos-claims
+    namespace: default
+spec:
+    components:
+        - name: bucket
+          properties:
+            existingResources: false
+            governance:
+                createdBy: ayush
+                departmentCode: "1234"
+                quadrantName: alpha
+                starSystemName: sol
+                tenantName: acme
+            name: logs
+            region: us-west-2
+            tags:
+                team: platform
+          type: atmos-s3-v1
+        - name: filesystem
+          properties:
+            governance:
+                createdBy: ayush
+                departmentCode: "1234"
+                quadrantName: alpha
+                starSystemName: sol
+                tenantName: acme
+            name: shared
+            tags:
+                env: dev
+          type: atmos-efs-v1

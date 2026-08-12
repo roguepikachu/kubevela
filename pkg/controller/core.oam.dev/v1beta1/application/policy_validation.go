@@ -52,17 +52,19 @@ func ValidatePolicyDefinition(policy *v1beta1.PolicyDefinition) *PolicyValidatio
 		Warnings: []string{},
 	}
 
-	// Only validate if policy has a schematic
-	if policy.Spec.Schematic == nil || policy.Spec.Schematic.CUE == nil {
-		result.Errors = append(result.Errors, "policy must have a CUE schematic")
+	// Only validate if policy has a schematic (CUE or DIR)
+	if policy.Spec.Schematic == nil || (policy.Spec.Schematic.CUE == nil && policy.Spec.Schematic.Defkit == nil) {
+		result.Errors = append(result.Errors, "policy must have a CUE or DIR schematic")
 		return result
 	}
 
 	// Validate global policies have specific requirements
 	if policy.Spec.Global {
-		// No required parameters
-		if err := validateNoRequiredParameters(policy); err != nil {
-			result.Errors = append(result.Errors, err.Error())
+		// No required parameters (CUE-only AST check; DIR params validated at render)
+		if policy.Spec.Schematic.CUE != nil {
+			if err := validateNoRequiredParameters(policy); err != nil {
+				result.Errors = append(result.Errors, err.Error())
+			}
 		}
 
 		// Scope must be Application
@@ -88,11 +90,13 @@ func ValidatePolicyDefinition(policy *v1beta1.PolicyDefinition) *PolicyValidatio
 	// CUE syntax validation (output field structure is validated at render time).
 	// Upgrade legacy syntax before validating so definitions using deprecated constructs
 	// are accepted and auto-upgraded at render time.
-	cueTemplate, _ := upgrade.EnsureCueVersionCompatibility(policy.Spec.Schematic.CUE.Template, policy.Name, upgrade.PolicyKind, upgrade.TemplateAreaMain)
-	if err := webhookutils.ValidateCueTemplate(cueTemplate); err != nil {
-		result.Errors = append(result.Errors, err.Error())
-	} else if err := validateEnabledFieldType(cueTemplate); err != nil {
-		result.Errors = append(result.Errors, err.Error())
+	if policy.Spec.Schematic.CUE != nil {
+		cueTemplate, _ := upgrade.EnsureCueVersionCompatibility(policy.Spec.Schematic.CUE.Template, policy.Name, upgrade.PolicyKind, upgrade.TemplateAreaMain)
+		if err := webhookutils.ValidateCueTemplate(cueTemplate); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+		} else if err := validateEnabledFieldType(cueTemplate); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+		}
 	}
 
 	// Feature gate warnings — policy will be created but won't execute until the flag is enabled.

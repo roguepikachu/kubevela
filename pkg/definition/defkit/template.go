@@ -47,7 +47,32 @@ type Template struct {
 	rawParameterBlock string // Raw CUE for parameter: block
 	rawOutputsBlock   string // Raw CUE for outputs: block (for traits that generate K8s resources)
 	rawHeaderBlock    string // Raw CUE for let bindings and other pre-output declarations
+	claimNames        []*ClaimNameDecl
 }
+
+// ClaimNameDecl is a first-class claim naming helper (replaces SetRawHeaderBlock for Atmos-style names).
+type ClaimNameDecl struct {
+	Name   string
+	Parts  []Value
+	MaxLen int
+}
+
+// ClaimName registers a helper that concatenates parts and optionally truncates with md5.
+// Reference the result with Reference(name) or HelperRef in ToDefkit (Reference("claimName")).
+func (t *Template) ClaimName(name string, parts ...Value) *ClaimNameDecl {
+	d := &ClaimNameDecl{Name: name, Parts: parts, MaxLen: 63}
+	t.claimNames = append(t.claimNames, d)
+	return d
+}
+
+// Max sets the max rune length before md5 truncation (default 63).
+func (d *ClaimNameDecl) Max(n int) *ClaimNameDecl {
+	d.MaxLen = n
+	return d
+}
+
+// GetClaimNames returns claim name helpers.
+func (t *Template) GetClaimNames() []*ClaimNameDecl { return t.claimNames }
 
 // NewTemplate creates a new template context.
 func NewTemplate() *Template {

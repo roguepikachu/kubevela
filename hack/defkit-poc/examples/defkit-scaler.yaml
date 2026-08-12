@@ -1,0 +1,13 @@
+apiVersion: core.oam.dev/v1beta1
+kind: TraitDefinition
+metadata:
+    annotations:
+        definition.oam.dev/description: PoC scaler trait via ToDefkit
+    name: defkit-scaler
+    namespace: vela-system
+spec:
+    appliesToWorkloads:
+        - '*'
+    schematic:
+        defkit:
+            template: '{"apiVersion":"defkit.oam.dev/v1alpha1","kind":"Trait","name":"defkit-scaler","params":[{"name":"replicas","type":"int","required":true,"min":1,"max":20}],"template":{"patches":[{"target":"output","fields":[{"path":"spec.replicas","value":{"param":"replicas"}}]}]}}'

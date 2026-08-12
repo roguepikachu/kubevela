@@ -18,6 +18,7 @@ package defkit
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 
 	"github.com/oam-dev/kubevela/pkg/definition/defkit/placement"
@@ -172,7 +173,8 @@ type RegistryOutput struct {
 type DefinitionOutput struct {
 	Name      string           `json:"name"`
 	Type      DefinitionType   `json:"type"`
-	CUE       string           `json:"cue"`
+	CUE       string           `json:"cue,omitempty"`
+	Defkit    string           `json:"defkit,omitempty"`
 	Placement *PlacementOutput `json:"placement,omitempty"`
 }
 
@@ -191,10 +193,12 @@ type PlacementConditionOutput struct {
 
 // ToJSON serializes all registered definitions to JSON.
 // This is used by the generated main program to output definitions.
+// DEFKIT_EMIT=cue|defkit controls whether CUE or defkit schematic JSON is filled.
 func ToJSON() ([]byte, error) {
 	registryLock.Lock()
 	defer registryLock.Unlock()
 
+	mode := EmitModeFromEnv()
 	output := RegistryOutput{
 		Definitions: make([]DefinitionOutput, 0, len(registry)),
 	}
@@ -203,7 +207,17 @@ func ToJSON() ([]byte, error) {
 		defOutput := DefinitionOutput{
 			Name: def.DefName(),
 			Type: def.DefType(),
-			CUE:  def.ToCue(),
+		}
+
+		switch mode {
+		case EmitDefkit:
+			dk, err := defkitJSONFromDefinition(def)
+			if err != nil {
+				return nil, err
+			}
+			defOutput.Defkit = dk
+		default:
+			defOutput.CUE = def.ToCue()
 		}
 
 		// Include placement if the definition has any
@@ -236,4 +250,19 @@ func ToJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(output)
+}
+
+func defkitJSONFromDefinition(def Definition) (string, error) {
+	switch d := def.(type) {
+	case *ComponentDefinition:
+		return d.ToDefkitJSON()
+	case *TraitDefinition:
+		return d.ToDefkitJSON()
+	case *PolicyDefinition:
+		return d.ToDefkitJSON()
+	case *WorkflowStepDefinition:
+		return d.ToDefkitJSON()
+	default:
+		return "", fmt.Errorf("DEFKIT_EMIT=defkit: unsupported definition type %T", def)
+	}
 }

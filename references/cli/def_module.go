@@ -403,9 +403,15 @@ func applyModule(ctx context.Context, c common.Args, streams util.IOStreams, mod
 			continue
 		}
 
-		// Parse CUE to definition
+		// Parse definition from CUE or defkit schematic payload
 		def := pkgdef.Definition{}
-		if err := def.FromCUEString(result.CUE, config); err != nil {
+		var err error
+		if result.Defkit != "" {
+			err = def.FromDefkitTemplate(result.Definition.Name, result.Definition.Type, result.Defkit)
+		} else {
+			err = def.FromCUEString(result.CUE, config)
+		}
+		if err != nil {
 			stats.Failed++
 			failedDefs = append(failedDefs, fmt.Sprintf("%s: %v", result.Definition.Name, err))
 			continue

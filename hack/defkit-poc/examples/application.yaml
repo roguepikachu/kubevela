@@ -1,0 +1,37 @@
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+    name: defkit-poc-app
+    namespace: default
+spec:
+    components:
+        - name: frontend
+          properties:
+            image: nginx:1.27-alpine
+            port: 80
+            replicas: 1
+          traits:
+            - properties:
+                replicas: 2
+              type: defkit-scaler
+          type: defkit-webservice
+        - name: backend
+          properties:
+            image: nginx:1.27-alpine
+            port: 8080
+          type: defkit-webservice
+    policies:
+        - name: show-override
+          properties:
+            components: frontend,backend
+          type: defkit-override
+    workflow:
+        steps:
+            - name: apply-all
+              properties:
+                component: frontend
+              type: apply-component
+            - name: apply-backend
+              properties:
+                component: backend
+              type: apply-component

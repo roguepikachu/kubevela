@@ -38,9 +38,12 @@ type PolicyDefinition struct {
 
 // PolicyTemplate provides the building context for policy templates.
 // Policies typically just define parameters and let the vela runtime handle the logic.
+// For defkit schematic emit (ToDefkit), Output() can materialize a visible resource
+// (e.g. ConfigMap marker) evaluated by pkg/defschematic/eval.
 type PolicyTemplate struct {
 	// Policies usually don't have output resources, but may have computed values
 	computedFields map[string]Value
+	output         *Resource
 }
 
 // NewPolicy creates a new PolicyDefinition builder.
@@ -263,6 +266,17 @@ func NewPolicyTemplate() *PolicyTemplate {
 func (pt *PolicyTemplate) Set(name string, value Value) *PolicyTemplate {
 	pt.computedFields[name] = value
 	return pt
+}
+
+// Output sets a primary output resource for defkit schematic evaluation.
+func (pt *PolicyTemplate) Output(r *Resource) *PolicyTemplate {
+	pt.output = r
+	return pt
+}
+
+// GetOutput returns the policy output resource, if any.
+func (pt *PolicyTemplate) GetOutput() *Resource {
+	return pt.output
 }
 
 // GetComputedFields returns all computed fields.
