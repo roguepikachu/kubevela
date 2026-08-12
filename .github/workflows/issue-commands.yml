@@ -171,11 +171,13 @@ jobs:
                 head_sha: pr.head.sha,
               })
               console.log("runs for " + workflow_id + ": ", JSON.stringify(runs))
-              // Only consider the newest completed run per workflow; skip in-progress
-              // and treat "cannot be retried" as a soft failure so a stale/success run
-              // does not fail the whole issue-commands workflow.
+              // Only consider the newest completed run per workflow. Skip queued/
+              // in_progress/requested/waiting/pending so we do not call re-run APIs
+              // on unfinished runs (4xx, now swallowed) and still fall back to an
+              // older completed failed run. Soft-fail "cannot be retried" so a
+              // stale/success run does not fail the whole issue-commands workflow.
               const candidates = runs.workflow_runs
-                .filter((workflow_run) => workflow_run.status !== "in_progress")
+                .filter((workflow_run) => workflow_run.status === "completed")
                 .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
               const workflow_run = candidates[0]
               if (!workflow_run) {
