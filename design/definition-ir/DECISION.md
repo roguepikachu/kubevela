@@ -1,5 +1,9 @@
 # Decision Record: CUE-Independent Definition Authoring (Defkit 2.0)
 
+**Authors:** Ayush Kumar ([@roguepikachu](https://github.com/roguepikachu))  
+**Date:** 2026-08-13  
+**Status:** Accepted for PoC; recommended for gradual upstream investment
+
 ## Question
 
 > Should KubeVela move toward a CUE-independent definition authoring architecture, and if so, what should the target architecture be?

@@ -20,16 +20,16 @@ Base: `17f55a794` (`poc/definition-ir`). Evidence from unit tests in `pkg/defsch
 | Composition (multi-resource) | ✓ | ✓ | Pass | Live Deployment + Service per component |
 | CueX providers | ✓ | Fail | Fail | Explicit non-goal for PoC |
 | Health / customStatus | ✓ | ✓ | Pass | Native Crossplane Ready/Synced + StatusField messages (S3/EFS unit; k3d status patch) |
-| Plus / SpreadIf / ConditionalStruct | ✓ (CUE) | ✓ | Pass | Full atmos-s3-v1 / atmos-efs-v1 ToDefkit + eval |
-| ClaimName helper | n/a (RawCUE) | ✓ | Pass | md5 truncate; replaces EFS SetRawHeaderBlock |
-| Nested / ConditionalParams / Validators | ✓ | ✓ | Pass | Create/observe branches; kms/region/tenant rejects |
-| Fake claim CRDs (S3/EFS) | n/a | ✓ | Pass | `hack/defkit-poc/crds`; no live AWS |
+| Plus / SpreadIf / ConditionalStruct | ✓ (CUE) | ✓ | Pass | Rich claim-style Definitions via ToDefkit + eval |
+| ClaimName helper | n/a (RawCUE) | ✓ | Pass | md5 truncate for long DNS-1123 names |
+| Nested / ConditionalParams / Validators | ✓ | ✓ | Pass | Create/observe branches; validator rejects |
+| Fake claim CRDs (local proof) | n/a | ✓ | Pass | `hack/defkit-poc/crds` for offline claim kinds |
 | OpenAPI ConfigMap | ✓ | ✓ | Pass | `openAPIFromDefkit` in capability controller |
 | Mixed-mode CUE + defkit | ✓ | ✓ | Pass | Schematic branches; legacy CUE unchanged |
 | IR→CUE bridge | n/a | ✓ | Pass | Best-effort `cuebridge.ToCUE` smoke |
 | Revision CRD `schematic.defkit` | n/a | ✓ | Pass | Required; prune caused `workflowFailed` until CRDs applied |
 | VelaQL / config templates | ✓ | Fail | Fail | Out of scope |
-| Live AWS / Crossplane compositions | ✓ | Fail | Untested | Out of band for this PoC |
+| Live cloud claim (Crossplane-backed object store) | ✓ | ✓ | Pass | EKS proof 2026-08-13: claim Ready/Synced; cloud bucket observed |
 
 ## Evidence tags
 

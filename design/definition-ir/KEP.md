@@ -1,222 +1,427 @@
-# KEP: Defkit Schematic (`ToDefkit` / `schematic.defkit`) for CUE-Independent Runtime
+# KEP: Defkit Schematic Runtime (`ToDefkit` / `schematic.defkit`)
 
-**Status:** Experimental / PoC  
-**Authors:** KubeVela platform engineering (Defkit 2.0 PoC)  
+**Status:** Proven PoC / design proposal for upstreaming  
+**Authors:** Ayush Kumar ([@roguepikachu](https://github.com/roguepikachu))  
+**Created:** 2026-08-12  
+**Last updated:** 2026-08-13  
 **Base:** `17f55a794` (`origin/master`)  
-**Related:** [kep-defkit.md](../vela-cli/kep-defkit.md), [sdk_generating.md](../vela-cli/sdk_generating.md), [KEP-2.16 SourceDefinition](../vela-core/keps/2.16-source-definition/), [RESEARCH.md](./RESEARCH.md)
+**Branch / worktree:** `poc/definition-ir`  
+
+**Related:**
+- [kep-defkit.md](../vela-cli/kep-defkit.md) (Go authoring SDK; historically emits CUE)
+- [sdk_generating.md](../vela-cli/sdk_generating.md) (GEN_SDK: typed Application consumers)
+- [KEP-2.16 SourceDefinition](../vela-core/keps/2.16-source-definition/) (CEL for Application source expressions)
+- Companion notes in this directory: [RESEARCH.md](./RESEARCH.md), [DECISION.md](./DECISION.md), [COMPATIBILITY.md](./COMPATIBILITY.md), [VALIDATION.md](./VALIDATION.md)
+
+---
 
 ## Summary
 
-KubeVela today stores and evaluates X-Definitions as CUE (`spec.schematic.cue.template`), which couples user authoring, schema export, and controller runtime to the CUE/CueX dependency surface. **defkit** improved Go authoring but still emits CUE for runtime. This KEP proposes separating **authoring** from **execution** via **`schematic.defkit`** (defkit schematic IR) produced by **`ToDefkit()`**, evaluated by a native Go declarative engine, with CUE retained as a legacy/compatibility backend.
+KubeVela today stores and evaluates X-Definitions primarily as CUE templates (`spec.schematic.cue.template`). That design made Definitions powerful, but it also made CUE a hard dependency for authoring, schema export, upgrades, and controller execution at once.
+
+**defkit** already lets platform engineers author Definitions in Go with IDE support. Its original design still compiled that Go into CUE strings for the controller. This KEP proposes the missing half of that story:
+
+1. Keep the **existing defkit fluent API** as the only authoring surface.
+2. Add **`ToDefkit()` / `ToDefkitYAML()`**, which lower builders into a declarative IR document.
+3. Store that document as **`spec.schematic.defkit`** (`apiVersion: defkit.oam.dev/v1alpha1`).
+4. Evaluate it with a **native Go declarative engine** (`pkg/defschematic/eval`) under capability category `defkit`.
+5. Keep **`ToCue()`** as a first-class alternate emit so mixed-mode clusters remain safe.
+
+In short: authoring stays Go, runtime becomes data plus an allowlisted interpreter, and CUE remains available for compatibility rather than as the only path.
+
+A PoC on this branch has proven the path for Component, Trait, and Policy definitions; for richer template ops (conditionals, spreads, helpers, validators, native health/status); and for live clusters including a real cloud object-store claim reconciled by Crossplane.
+
+---
 
 ## Motivation
 
-1. **User DX:** Platform engineers who know Go/Kubernetes must learn CUE before writing Definitions ([Observed] defkit KEP motivation).
-2. **Maintenance:** CUE upgrades (e.g. `#6877` → v0.14.1) force broad template and CueX churn ([Observed]).
-3. **Runtime coupling:** CueX is schema + template + providers + constraints in one language ([Observed] `pkg/cue/definition/template.go`).
-4. **Prior attempts:** GEN_SDK solves Application *consumption*; defkit solves authoring but not runtime independence ([Observed]).
+### What hurts today
+
+Platform teams that already live in Go and Kubernetes still have to become CUE experts to ship X-Definitions. That cost shows up as:
+
+1. **Learning and review burden.** Reviews happen on generated or hand-written CUE, not on the Go that authors actually understand.
+2. **Upgrade coupling.** Bumping `cuelang.org/go` or CueX behavior forces Definition churn even when Application APIs did not change (for example the CUE v0.14 line of work).
+3. **Debuggability.** Failures surface as CUE unification or CueX provider errors far from the authoring intent.
+4. **Incomplete earlier solutions.**
+   - **GEN_SDK** improves Application *consumption* (typed clients). It does not remove CUE from Definition runtime.
+   - **defkit (1.x intent)** improves Definition *authoring*, but kep-defkit explicitly treated controller CUE as out of scope. Authors still ship CUE into the cluster.
+
+### Why this is the right seam
+
+KubeVela already separates “what the user wrote” from “how the controller evaluates it” in other places. KEP-2.16 moved Application source expressions toward CEL. This KEP applies the same idea to X-Definitions: **compile-time authoring** versus **declarative runtime data**.
+
+Cross-project patterns point the same way: CDK and Crossplane compositions compile or lower intent before the control plane runs; CEL is preferred over embedding a full language for policy-ish evaluation. None of that requires deleting CUE tomorrow. It does require a first-class non-CUE schematic branch.
+
+---
 
 ## Goals
 
-- Provide a declarative IR for Component/Trait/Policy/WorkflowStep definitions.
-- Evaluate representative definitions **without executing CUE templates**.
-- Keep Go authoring compile-time only (no arbitrary Go in the control plane).
-- Support mixed-mode clusters (legacy CUE + schematic.defkit).
-- Document migration, security, and compatibility honestly.
+1. Provide a versioned **defkit schematic IR** covering Component, Trait, Policy, and WorkflowStep shapes needed for representative Definitions.
+2. Evaluate those Definitions **without executing CUE templates** for the definition body.
+3. Keep Go execution **compile-time only** (CLI / module build / `goloader`). No user Go in the controller.
+4. Support **mixed-mode** clusters: legacy `schematic.cue` and new `schematic.defkit` side by side.
+5. Preserve the **single fluent API** (`defkit.NewComponent` / `NewTrait` / …). Do not invent a parallel authoring kit.
+6. Document migration, CRD requirements, security, and honesty about gaps (foreach, CueX providers, full workflow TaskRunner).
 
 ## Non-Goals
 
-- Full CueX provider parity in the PoC.
-- Replacing VelaQL / Terraform schematic / health CUE in the first milestone.
-- Multi-language authoring beyond Go.
-- Flag-day removal of CUE.
+1. Flag-day removal of CUE from KubeVela.
+2. Full CueX provider parity (`#do` HTTP, cloud provider helpers, and friends) in the first milestone.
+3. Replacing VelaQL, Terraform schematic, or every health policy in existence on day one.
+4. Multi-language authoring beyond Go.
+5. Imperative in-cluster plugins or arbitrary script execution as the Definition runtime.
+6. Rewriting every stock Definition in the ecosystem before the engine is production-ready.
+
+---
 
 ## Background
 
-See [RESEARCH.md](./RESEARCH.md). Short version:
+See [RESEARCH.md](./RESEARCH.md) for the longer inventory. The short version:
 
-- CUE is multi-role in KubeVela.
-- defkit = Go → CUE generation layer.
-- GEN_SDK = CUE → typed Application SDK.
-- KEP-2.16 already moved *source expressions* toward CEL, showing per-layer CUE reduction.
+| Layer | Role of CUE today |
+|-------|-------------------|
+| Storage | `schematic.cue.template` on X-Definitions |
+| Schema | Parameter constraints + OpenAPI export |
+| Templating | `output` / `outputs` / patches |
+| Runtime | CueX compile + providers during reconcile |
+| Workflow | Step templates and data passing |
 
-## Problem Statement
+defkit today is a **Go → CUE** compiler. GEN_SDK is a **CUE/Application → Go SDK** generator. Neither separates Definition authoring from Definition execution by itself.
 
-| Area | Problem |
-|------|---------|
-| UX | CUE learning curve; weak IDE vs Go |
-| Runtime | Awkward value passing; hard-to-debug merges |
-| Maintenance | Upgrade coupling to `cuelang.org/go` + CueX |
-| Versioning | Definition semantics tied to CUE language changes |
-| Ecosystem | Extensions assume CUE schematic only |
+This proposal names the missing artifact **defkit schematic**: a JSON document the controller can interpret without CueX for the definition body.
 
-## Design Alternatives Considered
+---
 
-Decision matrix in RESEARCH.md. Selected: **defkit fluent API → ToDefkit/schematic.defkit → native evaluator; ToCue alternate**. Rejected as sole strategies: stay-on-CUE, defkit-only, GEN_SDK, imperative Go plugins, wholesale Jsonnet/KCL swap.
+## Problem statement
 
-## Proposed Architecture
+| Area | Failure mode |
+|------|----------------|
+| UX | Authors think in Go; the cluster stores and fails in CUE |
+| Runtime | Value passing and merges are hard to explain without CUE mental models |
+| Maintenance | Definition semantics drift when the CUE toolchain drifts |
+| Versioning | “Definition version” and “CUE language version” are entangled |
+| Ecosystem | Almost every extension assumes `schematic.cue` is the only schematic |
+
+---
+
+## Design alternatives considered
+
+Decision matrix detail lives in [RESEARCH.md](./RESEARCH.md) and [DECISION.md](./DECISION.md).
+
+| Option | Outcome |
+|--------|---------|
+| Stay on CUE only; improve docs and tooling | Rejected as the sole long-term path |
+| Improve defkit CUE emit only | Necessary for compatibility; insufficient for runtime independence |
+| Parallel fluent API (“dirkit”) next to defkit | Rejected; dual APIs split the ecosystem. Spike code was deleted |
+| Replace CUE with Jsonnet / KCL / Dhall wholesale | Rejected; new language tax without solving authoring/runtime split |
+| Imperative Go plugins loaded by the controller | Rejected on security and operability grounds |
+| **defkit fluent → `ToDefkit` → `schematic.defkit` → native eval; `ToCue` alternate** | **Accepted** |
+
+---
+
+## Proposed architecture
 
 ```text
-Developer
-   |
-   v
-defkit fluent API (compile-time)
-   |
-   +-- ToCue() / ToYAML()      → schematic.cue
-   +-- ToDefkit() / ToDefkitYAML() → schematic.defkit
-                                      (apiVersion defkit.oam.dev/v1alpha1)
-   |
-   +--> OpenAPI (from Param decls)
-   +--> pkg/defschematic/eval (native declarative evaluator)
-   +--> pkg/defschematic/cuebridge (optional migration aid)
-   |
-   v
-KubeVela appfile / AbstractEngine (DefkitCategory)
+Developer (compile time)
+        |
+        v
+defkit fluent API
+  NewComponent / NewTrait / NewPolicy / NewWorkflowStep
+        |
+        +-- ToCue() / ToYAML()           --> schematic.cue        (compatibility)
+        |
+        +-- ToDefkit() / ToDefkitYAML()  --> schematic.defkit
+        |                                      apiVersion: defkit.oam.dev/v1alpha1
+        |                                      kind: Component | Trait | Policy | WorkflowStep
+        |
+        +-- Param decls --> OpenAPI ConfigMap (no CueX required)
+        |
+        v
+Cluster X-Definition CR
+        |
+        v
+appfile loadSchematicToTemplate
+  if schematic.defkit != nil -> CapabilityCategory = defkit
+        |
+        v
+pkg/defschematic/eval (AbstractEngine adapters)
+        |
+        v
+Unstructured Kubernetes resources (+ traits/patches)
 ```
+
+Optional: `pkg/defschematic/cuebridge` can best-effort render IR back toward CUE for migration tooling. It is not required on the hot path once the controller speaks `schematic.defkit`.
 
 ### Schematic API
 
 ```go
+// apis/core.oam.dev/common
 type Defkit struct {
-  Template string `json:"template"` // JSON ir.Definition
+    // Template holds a JSON-encoded ir.Definition document.
+    Template string `json:"template"`
 }
+
 type Schematic struct {
-  CUE *CUE `json:"cue,omitempty"`
-  Terraform *Terraform `json:"terraform,omitempty"`
-  Defkit *Defkit `json:"defkit,omitempty"`
+    CUE       *CUE       `json:"cue,omitempty"`
+    Terraform *Terraform `json:"terraform,omitempty"`
+    Defkit    *Defkit    `json:"defkit,omitempty"`
 }
 ```
+
+CRD OpenAPI for ComponentDefinition, TraitDefinition, PolicyDefinition, WorkflowStepDefinition, DefinitionRevision, and ApplicationRevision **must** include nested `schematic.defkit`. If revision CRDs omit it, Kubernetes prunes the field on store, and trait/component evaluation falls back into broken CUE paths (`field not found: output` was the PoC failure mode).
 
 ### Runtime selection
 
-`loadSchematicToTemplate` sets `CapabilityCategory=dir` when `schematic.defkit` is present. Parser selects `defschematic/eval.NewWorkloadEngine` / `NewTraitEngine` instead of CUE AbstractEngine.
+1. Parser / template load sees `schematic.defkit` and sets `DefkitCategory`.
+2. Workload and trait engines are constructed from `pkg/defschematic/eval` instead of CueX AbstractEngines.
+3. Parameter validation uses IR param decls (`ir.ValidateParams` / `ValidateParamsFull`) including defaults, enums, nested objects, conditional param blocks, and named validators.
+4. Health and custom status can be carried as native IR (`Health` / `Status` specs) and evaluated against `context.output` without a CUE health policy string.
 
 ### Declarative semantics
 
-Builders **record** ops (field sets, patches, expressions). The evaluator interprets an allowlisted Expr set (`lit`, `param`, `context`, `input`, `template`, `concat`, `object`, `list`). No user Go executes in-cluster.
+Builders **record** operations. They do not close over runtime cluster state. The evaluator interprets an allowlisted IR:
 
-## Detailed API Design
+**Expressions:** literals, param paths (including dotted nested paths), context / input refs, concat / plus, object / list, helper refs, status field refs.
 
-### Current CUE (sketch)
+**Conditions:** isset, eq / ne, comparisons, and / or / not, path exists, matches, length checks.
 
-```cue
-parameter: {
-  image: string
-  replicas: *1 | int
-}
-output: {
-  apiVersion: "apps/v1"
-  kind: "Deployment"
-  spec: replicas: parameter.replicas
-  // ...
-}
-```
+**Field ops:** set, set-if, spread-if (merge map into path), conditional struct (nested field groups).
 
-### Existing defkit
+**Helpers:** named precomputations such as claim-style name construction with length limits (for example truncate-and-hash when exceeding DNS-1123 length budgets).
 
-```go
-defkit.NewComponent("webservice").
-  Params(image, replicas).
-  Template(func(tpl *defkit.Template) { tpl.Output(...) })
-// → ToCue() → CUE string → controller CueX
-```
+**No user Go** runs in-cluster. Expanding power means expanding the allowlist and tests, not shipping binaries as Definitions.
 
-### Proposed defkit ToDefkit path
+---
+
+## Detailed design
+
+### Authoring (unchanged fluency)
+
+Authors continue to write:
 
 ```go
-defkit.NewComponent("defkit-webservice").
-  Params(defkit.Required(defkit.StringParam("image")), ...).
-  Output(defkit.Resource("apps/v1", "Deployment",
-    defkit.Set("spec.replicas", defkit.ParamRef("replicas")),
-  ))
-// → JSON defkit schematic → native eval
+func DefkitWebservice() *defkit.ComponentDefinition {
+    image := defkit.String("image").Required()
+    replicas := defkit.Int("replicas").Default(1)
+
+    return defkit.NewComponent("defkit-webservice").
+        Description("PoC webservice via ToDefkit").
+        Workload("apps/v1", "Deployment").
+        Params(image, replicas).
+        Template(func(tpl *defkit.Template) {
+            vela := defkit.VelaCtx()
+            deploy := defkit.NewResource("apps/v1", "Deployment").
+                Set("metadata.name", vela.Name()).
+                Set("spec.replicas", replicas).
+                Set("spec.template.spec.containers[0].image", image)
+            tpl.Output(deploy)
+            // secondary resources via Outputs...
+        })
+}
 ```
 
-Concrete examples: `pkg/dir/pocdefs`, manifests under `hack/dir-poc/examples/`.
+Emit for cluster:
 
-## Runtime Model
+```go
+yaml, err := DefkitWebservice().ToDefkitYAML()
+```
 
-1. Validate/default params (`ir.ValidateParams`).
-2. Build env `{Params, Context, Inputs}`.
-3. Render `output` / `outputs` via field setters.
-4. Traits apply `patches` onto existing unstructured objects.
-5. Wrap results as `model.Instance` via JSON→cue compile **only as process.Context adapter** (documented glue; definition body is not CUE).
+Emit for CUE-only environments:
 
-Workflow steps: native `EvalWorkflowStep` for PoC logic; cluster TaskRunner wiring remains future work (Partial).
+```go
+cue := DefkitWebservice().ToCue()
+```
 
-## Compatibility
+Module registration can choose emit mode via `DEFKIT_EMIT=cue|defkit`. `goloader` applies `schematic.defkit` when the defkit payload is present (`FromDefkitTemplate`).
 
-Mixed mode: CUE definitions unchanged. defkit schematic definitions use new schematic field and CRD schema additions.
+### IR document (conceptual)
 
-## Migration Strategy
+```json
+{
+  "apiVersion": "defkit.oam.dev/v1alpha1",
+  "kind": "Component",
+  "name": "defkit-webservice",
+  "params": [ { "name": "image", "type": "string", "required": true } ],
+  "template": {
+    "output": {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "fields": [
+        { "path": "spec.replicas", "value": { "param": "replicas" } }
+      ]
+    },
+    "outputs": { }
+  },
+  "health": { "type": "crossplaneClaim" },
+  "status": {
+    "healthyMessage": { "plus": [ { "lit": "ready: " }, { "statusField": "metadata.name" } ] }
+  }
+}
+```
 
-1. Author new defs with defkit `ToDefkitYAML()`; ship `schematic.defkit`.
-2. Optionally emit CUE via cuebridge for environments not yet upgraded.
-3. Evolve defkit `ToDefkit()` as convergence path.
-4. Grow evaluator ops (foreach, providers) capability-by-capability.
-5. Keep CUE backend for years; deprecate only after coverage metrics warrant.
+Packages: `pkg/defschematic/ir` (types + validation), `pkg/defschematic/eval` (engine), `pkg/definition/defkit/defkitgen.go` (lowering).
 
-## Backward Compatibility
+### Evaluation pipeline
 
-Existing Applications and CUE Definitions continue to work. OpenAPI ConfigMaps for defkit schematic params generated without CueX (`openAPIFromDefkit`).
+1. Parse JSON IR from `schematic.defkit.template`.
+2. Validate and default parameters; apply active conditional param branches and validators.
+3. Bind helpers into the evaluation environment.
+4. Render `template.output` and `template.outputs` onto `unstructured.Unstructured`.
+5. For traits, apply patch field sets onto the component result.
+6. For status requests, evaluate native health/status against live `context.output` (for example Ready and Synced conditions on claim-shaped workloads, plus message templates).
+7. Adapter note (PoC): rendered JSON may still be wrapped through existing `process.Context` helpers that historically spoke CUE `Instance`. That is glue for the Application controller, not “the definition ran as CUE.”
 
-## Performance
+### Workflow steps
 
-PoC smoke: defkit schematic unit render is sub-second for sample defs ([Measured] `go test ./pkg/defschematic/eval`). Full comparative controller benchmarks: Not yet validated.
+Native `EvalWorkflowStep` exists and is unit-tested for simple step I/O. Wiring a CueX-free TaskRunner on the live workflow engine is **future work**. Cluster proofs used stock `apply-component` steps successfully with defkit Components/Traits/Policies.
 
-## Security
+---
+
+## Compatibility and migration
+
+### Mixed mode
+
+| Definition schematic | Controller behavior |
+|----------------------|---------------------|
+| `schematic.cue` only | Unchanged CueX path |
+| `schematic.defkit` present | DefkitCategory + native eval |
+| Both present | Prefer explicit product policy; PoC treats defkit as selected when set |
+
+Existing Applications keep working. OpenAPI ConfigMaps for defkit params are generated without CueX (`openAPIFromDefkit` in the capability controller path).
+
+### Migration steps for adopters
+
+1. Upgrade CRDs so revision objects retain `schematic.defkit`.
+2. Author or port Definitions with defkit; emit `ToDefkitYAML()`.
+3. Roll a controller build that understands `DefkitCategory`.
+4. Deploy Definitions and Applications in a canary namespace/cluster.
+5. Keep `ToCue()` available for clusters not yet upgraded (at least two major releases recommended).
+6. Grow IR ops against real Definition corpora; track coverage in the compatibility matrix.
+
+### Rollout requirement (hard)
+
+ApplicationRevision and DefinitionRevision schemas must nest `schematic.defkit`. This is not optional polish. PoC measured empty schematics after prune, followed by trait evaluation failures.
+
+---
+
+## Security considerations
 
 | Threat | Mitigation |
 |--------|------------|
-| Arbitrary Go in controller | Forbidden; defkit schematic is data |
-| Unbounded I/O | No provider ops in PoC Expr allowlist |
-| Malicious defkit schematic | Same trust as publishing ComponentDefinitions today |
-| Supply chain | Go modules at build time only |
+| Arbitrary code in Definitions | IR is data; interpreter allowlist only |
+| Unexpected network / cloud I/O from templates | No CueX-style provider ops in PoC Expr set |
+| Malicious Definition publish | Same trust boundary as today: who can create ComponentDefinitions |
+| Supply chain | Go modules resolve at **build** of the Definition package and of the controller, not by downloading code during reconcile |
+| Resource abuse | Standard Kubernetes admission / quota; evaluator should keep bounded work (future: explicit op budgets) |
 
-## Testing
+---
 
-- Unit: `pkg/dir/eval` (component, trait, policy, workflow, validation, golden)
-- Manifest gen: `go run ./hack/dir-poc/gen_manifests.go`
-- Live: see VALIDATION.md
+## Performance
 
-## PoC Results
+PoC unit renders for sample Definitions complete in well under a second on developer hardware (`go test ./pkg/defschematic/eval`).  
 
-See [COMPATIBILITY.md](./COMPATIBILITY.md) and [VALIDATION.md](./VALIDATION.md).
+Controller-level comparative benchmarks versus CueX (p50/p99 reconcile, binary size, memory) are **not yet validated** and remain a gate for production investment.
 
-Live k3d (`dir-poc`, 2026-08-12) with image `vela-core:dir-poc`:
+---
 
-- Application `dir-poc-app` → **`running`**, workflow **`succeeded`**, Ready `True`.
-- defkit schematic component `defkit-webservice` created Deployments + Services for `frontend` and `backend`.
-- defkit schematic trait `defkit-scaler` patched frontend `spec.replicas` to **2** (component default was 1).
-- defkit schematic policy `defkit-override` created ConfigMap `show-override-defkit-policy` with `data.engine=defkit`.
-- ApplicationRevision and DefinitionRevision retained `schematic.defkit` after CRD patches ([Measured]).
-- Unit: `go test ./pkg/dir/...` Pass, including engine component→trait path.
+## Testing strategy
 
-Earlier failure mode ([Observed]): missing `schematic.defkit` on ApplicationRevision OpenAPI caused empty component schematic in the compressed revision; workflow then failed with `field not found: output` when evaluating `dir-scaler`. Re-applying CRDs and recreating the Application fixed it.
+| Layer | What |
+|-------|------|
+| Unit IR / eval | Component, trait patch, policy, workflow step, param validation, golden outputs |
+| Lowering | `ToDefkit` on representative fluent Definitions; `ToCue` still works as alternate |
+| Manifest gen | `go run ./hack/defkit-poc/gen_manifests.go` |
+| Local cluster | k3d with local image; webservice + scaler + policy Application to `running` |
+| Richer Definitions | Conditional structs, map spreads, claim-name helpers, validators, native health messages |
+| Live cloud (optional proof) | Crossplane-backed object-store claim Application; confirm Ready/Synced and that the cloud resource exists |
 
-## Limitations
+Evidence files: [VALIDATION.md](./VALIDATION.md), [COMPATIBILITY.md](./COMPATIBILITY.md).
 
-- No foreach / CueX / health parity (status stub only).
-- Trait/component Instance glue still uses CUE `Encode` of rendered JSON for `process.Context`.
-- Workflow step not registered as CueX-free TaskRunner (cluster used `apply-component`).
-- `.vscode/scripts/k3d-*.sh` absent on `origin/master` (use Dockerfile + Obsidian runbook).
-- CRDs for ApplicationRevision/DefinitionRevision **must** include nested `schematic.defkit` or revisions prune defkit schematic templates.
+---
 
-## Open Questions
+## PoC results (evidence)
 
-1. Done in PoC: single defkit API; ToDefkit emit; dirkit deleted
-2. Persist large IR in OCI vs inline CR JSON?
-3. Adopt CEL for Expr subset (align with KEP-2.16)?
+**Identity:** base `17f55a794`, branch `poc/definition-ir`, packages under `pkg/defschematic` and `pkg/definition/defkit`.
 
-## Future Work
+### What passed
 
-- Native workflow TaskRunner
-- Provider op surface
-- DynamoDB / Postgres / OpenSearch ports (same IR patterns as S3/EFS)
-- defkit convergence
-- Benchmarks vs CueX
-- Live AWS Crossplane compositions (out of band for PoC)
+1. **Authoring convergence.** One fluent API; `ToDefkitYAML()` produces cluster manifests; `ToCue()` remains viable.
+2. **Core kinds on cluster (k3d).** Application with defkit Component + Trait + Policy reached `running` with workflow `succeeded`. Deployments, Services, and a policy ConfigMap matched intent (including trait replica patch).
+3. **Revision fidelity.** After CRD patches, ApplicationRevision / DefinitionRevision retained `schematic.defkit`.
+4. **Richer IR.** Plus / concat naming, spread-if into maps (including bracketed map keys), conditional nested structs, conditional params, validators, and claim-name helpers evaluate correctly in unit tests.
+5. **Native health/status.** Crossplane-style Ready+Synced health and dynamic status messages work end-to-end (no permanent “status eval not implemented” stub for Definitions that declare IR health).
+6. **Live cloud proof (2026-08-13).** Controller image built from this branch was rolled onto a shared EKS cluster (Flux HelmReleases for the operator suspended for the experiment). A ComponentDefinition emitted as `schematic.defkit` rendered an object-store claim. The claim became Synced/Ready, Application healthy, and the corresponding cloud bucket was observed via AWS APIs (region and tags matched the rendered claim).
+
+### Known gaps (still honest)
+
+1. Foreach / iteration ops are not in the IR.
+2. CueX providers are intentionally absent.
+3. Workflow steps are not registered as a fully CueX-free TaskRunner on the cluster workflow engine.
+4. Some `process.Context` adapter code still touches CUE `Instance` types for glue.
+5. Broad stock-Definition coverage and reconcile benchmarks are unfinished.
+
+### Historical naming note
+
+An early spike used names DIR / dirkit / `schematic.dir`. That parallel API was abandoned. The locked names are **defkit schematic**, **`ToDefkit`**, and **`schematic.defkit`**.
+
+---
+
+## Open questions
+
+1. Should large IR documents live inline in the CR, or be referenced from OCI / ConfigMap for size limits?
+2. Should a subset of Expr/Condition move to CEL for alignment with KEP-2.16, or stay a closed Go AST for predictability?
+3. When both `schematic.cue` and `schematic.defkit` are set, is the precedence rule “defkit wins,” “cue wins,” or “reject as invalid”?
+4. What is the compatibility window for `ToCue()` once defkit schematic is GA?
+
+---
+
+## Future work
+
+1. CueX-free workflow TaskRunner integration.
+2. Controlled provider op surface (explicit, allowlisted, auditable).
+3. Foreach and richer patch strategies with differential tests against stock Definitions.
+4. Coverage expansion across the public Definition corpus.
+5. Reconcile latency and memory benchmarks versus CueX.
+6. Upstream CRD / API review for `schematic.defkit` stabilization (`v1alpha1` → eventual GA).
+
+---
 
 ## Recommendation
 
-See [DECISION.md](./DECISION.md).
+**Accept Defkit 2.0 as the target architecture for CUE-independent Definition runtime**, implemented as:
+
+`defkit fluent API → ToDefkit / schematic.defkit → pkg/defschematic/eval`, with `ToCue` retained for compatibility.
+
+Do **not** pursue flag-day CUE deletion, a second authoring SDK, or in-cluster Go plugins.
+
+Treat nested `schematic.defkit` on revision CRDs as a **release blocker** for any cluster rollout.
+
+Invest next in workflow TaskRunner wiring, IR coverage against real Definitions, and controller benchmarks before declaring GA.
+
+See [DECISION.md](./DECISION.md) for the short decision record that matches this recommendation.
+
+---
+
+## Appendix A: Package map (PoC)
+
+| Path | Role |
+|------|------|
+| `apis/core.oam.dev/common` | `Schematic.Defkit` API types + generated deepcopy |
+| `charts/vela-core/crds/*` | OpenAPI including nested `schematic.defkit` |
+| `pkg/definition/defkit` | Fluent API + `ToDefkit` lowering + `ClaimName` helper |
+| `pkg/defschematic/ir` | IR types and param validation |
+| `pkg/defschematic/eval` | Native engines (component/trait/policy/workflow/status) |
+| `pkg/defschematic/cuebridge` | Optional IR→CUE aid |
+| `pkg/defschematic/pocdefs` | Example Definitions used in tests and manifest gen |
+| `pkg/appfile`, `pkg/controller/utils` | Category selection, OpenAPI, status wiring |
+| `hack/defkit-poc/` | Manifest generator and cluster examples |
+
+## Appendix B: Example cluster apply (local)
+
+```bash
+go test ./pkg/defschematic/... ./pkg/definition/defkit/... -count=1
+go run ./hack/defkit-poc/gen_manifests.go ./hack/defkit-poc/examples
+# build controller image; apply CRDs; apply examples; watch Application status
+```
+
+Reproduce details and measured outputs: [README.md](./README.md), [VALIDATION.md](./VALIDATION.md).
