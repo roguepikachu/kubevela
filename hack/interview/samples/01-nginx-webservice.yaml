@@ -1,0 +1,15 @@
+# A single healthy web service. This is the easiest one to trace end to end.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: nginx-demo
+  namespace: default
+spec:
+  components:
+    - name: nginx
+      type: webservice
+      properties:
+        image: nginx:1.27-alpine
+        ports:
+          - port: 80
+            expose: true

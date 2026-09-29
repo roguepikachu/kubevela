@@ -34,7 +34,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -180,13 +179,9 @@ func (h *ValidatingHandler) checkDefinitionPermission(ctx context.Context, req a
 		// User has permission in system namespace
 		// Verify the definition actually exists in vela-system
 		if exists, err := h.definitionExistsInNamespace(ctx, resource, definitionType, oam.SystemDefinitionNamespace); err != nil {
-			klog.Errorf("Failed to check if %s %q exists in vela-system: %v", resource, definitionType, err)
 			// On error checking existence, propagate the error so caller can distinguish system failures from permission denials
 			return false, err
-		} else if !exists {
-			klog.V(4).Infof("%s %q does not exist in vela-system, checking app namespace", resource, definitionType)
-			// Definition doesn't exist in vela-system, fall through to check app namespace
-		} else {
+		} else if exists {
 			// Definition exists in vela-system and user has permission
 			return true, nil
 		}
@@ -218,11 +213,9 @@ func (h *ValidatingHandler) checkDefinitionPermission(ctx context.Context, req a
 			// But we need to verify the definition actually exists in the app namespace
 			// to prevent users with wildcard permissions from using definitions that only exist in vela-system
 			if exists, err := h.definitionExistsInNamespace(ctx, resource, definitionType, appNamespace); err != nil {
-				klog.V(4).Infof("Failed to check if %s %q exists in namespace %q: %v", resource, definitionType, appNamespace, err)
 				// On error checking existence, propagate the error
 				return false, err
 			} else if !exists {
-				klog.V(4).Infof("%s %q does not exist in namespace %q, denying access", resource, definitionType, appNamespace)
 				return false, nil
 			}
 			// Definition exists and user has permission
@@ -361,7 +354,6 @@ func (h *ValidatingHandler) processDefinitionPermissionCheck(
 	var errs field.ErrorList
 
 	if err != nil {
-		klog.Errorf("Failed to check %s permission for user %s: %v", definitionKind, req.UserInfo.Username, err)
 		for _, fieldPath := range fieldPaths {
 			errs = append(errs, field.Forbidden(fieldPath,
 				fmt.Sprintf("unable to verify permissions for %s %q: %v", definitionKind, definitionType, err)))
@@ -370,8 +362,6 @@ func (h *ValidatingHandler) processDefinitionPermissionCheck(
 	}
 
 	if !allowed {
-		klog.Infof("User %q does not have permission to access %s %q in namespace %q or %q",
-			req.UserInfo.Username, definitionKind, definitionType, appNamespace, oam.SystemDefinitionNamespace)
 		for _, fieldPath := range fieldPaths {
 			errs = append(errs, field.Forbidden(fieldPath,
 				fmt.Sprintf("user %q cannot get %s %q in namespace %q or %q",
@@ -399,7 +389,6 @@ func (h *ValidatingHandler) validateDefinitions(
 	// Get the definition info for the given type
 	defInfo, ok := v1beta1.DefinitionTypeMap[definitionType]
 	if !ok {
-		klog.Errorf("Unknown definition type: %v", definitionType)
 		return errs
 	}
 
@@ -542,9 +531,6 @@ func (h *ValidatingHandler) ValidateTraitConflicts(ctx context.Context, app *v1b
 		for i, trait := range comp.Traits {
 			def, err := getTraitDefinition(trait.Type)
 			if err != nil {
-				// Fail closed so unresolved definitions cannot bypass conflict checks, but
-				// log so operators can distinguish transient API/cache failures from policy rejects.
-				klog.Errorf("Failed to resolve TraitDefinition %q for conflict validation: %v", trait.Type, err)
 				errs = append(errs, field.InternalError(
 					field.NewPath("spec", "components").Index(compIdx).Child("traits").Index(i).Child("type"),
 					err))

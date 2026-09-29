@@ -26,7 +26,6 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/features"
-	"github.com/oam-dev/kubevela/pkg/logging"
 	addonvalidation "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/application/addon"
 )
 
@@ -39,15 +38,12 @@ func (h *ValidatingHandler) ValidateAddonComponents(
 	ctx context.Context,
 	app *v1beta1.Application,
 ) field.ErrorList {
-	logger := logging.WithContext(ctx).WithStep("validate-addon-components")
 	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableAddonComponent) {
-		logger.Debug("Skipping addon component validation", "reason", "feature-gate-disabled")
 		return nil
 	}
 	if !slices.ContainsFunc(app.Spec.Components, func(component common.ApplicationComponent) bool {
 		return component.Type == addonvalidation.ComponentType
 	}) {
-		logger.Debug("Skipping addon component validation", "reason", "no-addon-component")
 		return nil
 	}
 	validator := h.addonValidator

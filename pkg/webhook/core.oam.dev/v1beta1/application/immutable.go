@@ -26,7 +26,6 @@ import (
 	wfTypesv1alpha1 "github.com/kubevela/pkg/apis/oam/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"k8s.io/klog/v2"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
@@ -68,7 +67,6 @@ func (h *ValidatingHandler) validateComponentImmutableFields(ctx context.Context
 
 		tmpl, err := appfile.LoadTemplate(ctx, h.Client, newComp.Type, types.TypeComponentDefinition, newApp.Annotations)
 		if err != nil {
-			klog.V(4).Infof("immutable check: skipping component %q (type %q): %v", newComp.Name, newComp.Type, err)
 			continue
 		}
 		fp := field.NewPath("spec", "components").Index(i).Child("properties")
@@ -88,7 +86,6 @@ func (h *ValidatingHandler) validateTraitImmutableFields(ctx context.Context, ap
 		oldTrait := oldTraits[j]
 		tmpl, err := appfile.LoadTemplate(ctx, h.Client, newTrait.Type, types.TypeTrait, app.Annotations)
 		if err != nil {
-			klog.V(4).Infof("immutable check: skipping trait %q on component[%d]: %v", newTrait.Type, compIdx, err)
 			continue
 		}
 		fp := field.NewPath("spec", "components").Index(compIdx).Child("traits").Index(j).Child("properties")
@@ -112,7 +109,6 @@ func (h *ValidatingHandler) validatePolicyImmutableFields(ctx context.Context, n
 		}
 		tmpl, err := appfile.LoadTemplate(ctx, h.Client, newPolicy.Type, types.TypePolicy, newApp.Annotations)
 		if err != nil {
-			klog.V(4).Infof("immutable check: skipping policy %q (type %q): %v", newPolicy.Name, newPolicy.Type, err)
 			continue
 		}
 		fp := field.NewPath("spec", "policies").Index(i).Child("properties")
@@ -137,7 +133,6 @@ func (h *ValidatingHandler) validateWorkflowStepImmutableFields(ctx context.Cont
 		}
 		tmpl, err := appfile.LoadTemplate(ctx, h.Client, newStep.Type, types.TypeWorkflowStep, newApp.Annotations)
 		if err != nil {
-			klog.V(4).Infof("immutable check: skipping workflow step %q (type %q): %v", newStep.Name, newStep.Type, err)
 			continue
 		}
 		fp := field.NewPath("spec", "workflow", "steps").Index(i).Child("properties")

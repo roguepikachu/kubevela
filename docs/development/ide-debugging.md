@@ -35,7 +35,6 @@ make def-install     # installs default ComponentDefinitions/TraitDefinitions
                "program": "${workspaceFolder}/cmd/core",
                "args": [
                    "-v=3",
-                   "--dev-logs=true",
                    "--log-file-path=${workspaceFolder}/vela.log",
                    "--application-re-sync-period=1m"
                ]
@@ -47,7 +46,6 @@ make def-install     # installs default ComponentDefinitions/TraitDefinitions
                "mode": "debug",
                "program": "${workspaceFolder}/cmd/core",
                "args": [
-                   "--dev-logs=true",
                    "--log-debug=true",
                    "--metrics-addr=:8080",
                    "--enable-leader-election=false",
@@ -102,7 +100,7 @@ on each rule in the
    - **Package path**: `github.com/oam-dev/kubevela/cmd/core`
    - **Working directory**: the repository root
    - **Program arguments**: same flags as the VS Code config above, e.g.
-     `-v=3 --dev-logs=true --log-file-path=./vela.log --application-re-sync-period=1m`
+     `-v=3 --log-file-path=./vela.log --application-re-sync-period=1m`
    - **Environment variables**: for the webhook variant, add
      `KUBECONFIG=<path to your kubeconfig>` and `POD_NAMESPACE=vela-system`
 4. Save it under a descriptive name (e.g. "Run KubeVela Core" /

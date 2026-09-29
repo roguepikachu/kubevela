@@ -18,7 +18,6 @@ package utils
 
 import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -61,8 +60,6 @@ func LiveClient(mgr ctrl.Manager) client.Client {
 		Mapper: mgr.GetRESTMapper(),
 	})
 	if err != nil {
-		klog.ErrorS(err, "no uncached client for admission; definition chains will be resolved from the cache "+
-			"and may briefly not see a parent written alongside its child")
 		return nil
 	}
 	return cli

@@ -83,7 +83,11 @@ generate_certificates() {
     # Try to detect k3d cluster
     K3D_CLUSTER=$(kubectl config current-context | grep -o 'k3d-[^@]*' | sed 's/k3d-//' || echo "")
 
-    if [ -n "$K3D_CLUSTER" ]; then
+    if [ -n "${WEBHOOK_HOST:-}" ]; then
+        # Explicit override, for setups the detection below gets wrong
+        echo "Using WEBHOOK_HOST override: ${WEBHOOK_HOST}"
+        HOST_IP="${WEBHOOK_HOST}"
+    elif [ -n "$K3D_CLUSTER" ]; then
         echo "Detected k3d cluster: $K3D_CLUSTER"
 
         # Check if k3d is using host network

@@ -1,0 +1,13 @@
+# Rejected at admission by the validating webhook: the component type does not
+# exist. The controller never sees this object.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: broken
+  namespace: default
+spec:
+  components:
+    - name: web
+      type: webservicee
+      properties:
+        image: nginx:1.27-alpine

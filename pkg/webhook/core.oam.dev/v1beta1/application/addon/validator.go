@@ -19,14 +19,12 @@ package addon
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
-	"github.com/oam-dev/kubevela/pkg/logging"
 )
 
 // ComponentType is the ComponentDefinition name used by the addon-as-component
@@ -72,9 +70,6 @@ func (v *Validator) ValidateComponents(ctx context.Context, app *v1beta1.Applica
 		check = defaultCompatChecker
 	}
 
-	startTime := time.Now()
-	logger := logging.WithContext(ctx).WithStep("validate-addon-components")
-	logger.Info("Addon component compatibility validation started")
 	addonComponentCount := 0
 	var errs field.ErrorList
 	for i, component := range app.Spec.Components {
@@ -86,14 +81,6 @@ func (v *Validator) ValidateComponents(ctx context.Context, app *v1beta1.Applica
 		properties := componentProperties{}
 		if component.Properties != nil && len(component.Properties.Raw) > 0 {
 			if err := json.Unmarshal(component.Properties.Raw, &properties); err != nil {
-				// Reject rather than skip. This is not the deliberate fail-open
-				// in compat.go, which passes an Application through when the
-				// registry cannot answer: here the Application itself is
-				// malformed (a non-string addon, a numeric version), the render
-				// will fail later anyway, and admitting it silently is the one
-				// outcome that leaves the author with no idea why.
-				logger.Error(err, "Rejecting malformed addon component properties",
-					"component", component.Name)
 				errs = append(errs, field.Invalid(
 					field.NewPath("spec", "components").Index(i).Child("properties"),
 					string(component.Properties.Raw),
@@ -103,8 +90,6 @@ func (v *Validator) ValidateComponents(ctx context.Context, app *v1beta1.Applica
 			}
 		}
 		if properties.SkipVersionValidation {
-			logger.Debug("Skipping addon compatibility validation",
-				"component", component.Name, "reason", "version-validation-disabled")
 			continue
 		}
 
@@ -121,10 +106,5 @@ func (v *Validator) ValidateComponents(ctx context.Context, app *v1beta1.Applica
 		}
 	}
 
-	logger.WithSuccess(len(errs) == 0, startTime).Info(
-		"Addon component compatibility validation completed",
-		"addonComponentCount", addonComponentCount,
-		"errorCount", len(errs),
-	)
 	return errs
 }

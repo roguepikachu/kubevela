@@ -18,12 +18,10 @@ package app
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	velaclient "github.com/kubevela/pkg/controller/client"
@@ -35,7 +33,6 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-	"k8s.io/klog/v2/textlogger"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -120,9 +117,10 @@ func run(ctx context.Context, coreOptions *options.CoreOptions) error {
 	// Setup logging
 	klog.V(2).InfoS("Setting up logging configuration",
 		"debug", coreOptions.Observability.LogDebug,
-		"devLogs", coreOptions.Observability.DevLogs,
 		"logFilePath", coreOptions.Observability.LogFilePath)
-	setupLogging(coreOptions.Observability)
+	if err := setupLogging(coreOptions.Observability); err != nil {
+		return err
+	}
 
 	// Configure Kubernetes client
 	klog.InfoS("Configuring Kubernetes client",
@@ -261,29 +259,22 @@ func syncConfigurations(ctx context.Context, coreOptions *options.CoreOptions) {
 	}
 }
 
-// setupLogging configures klog based on parsed observability settings
-func setupLogging(observabilityConfig *config.ObservabilityConfig) {
-	// Configure klog verbosity
+// setupLogging installs the process logger from the observability settings.
+// --log-debug is kept as a shorthand for --log-level=debug.
+func setupLogging(observabilityConfig *config.ObservabilityConfig) error {
+	level := observabilityConfig.LogLevel
 	if observabilityConfig.LogDebug {
-		_ = flag.Set("v", strconv.Itoa(int(commonconfig.LogDebug)))
+		level = "debug"
 	}
-
-	// Configure log file output
+	var out io.Writer = os.Stderr
 	if observabilityConfig.LogFilePath != "" {
-		_ = flag.Set("logtostderr", "false")
-		_ = flag.Set("log_file", observabilityConfig.LogFilePath)
-		_ = flag.Set("log_file_max_size", strconv.FormatUint(observabilityConfig.LogFileMaxSize, 10))
+		f, err := os.OpenFile(observabilityConfig.LogFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("open log file: %w", err)
+		}
+		out = f
 	}
-
-	// Set logger (use --dev-logs=true for local development)
-	if observabilityConfig.DevLogs {
-		logOutput := logging.NewColorWriter(os.Stdout)
-		klog.LogToStderr(false)
-		klog.SetOutput(logOutput)
-		ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig(textlogger.Output(logOutput))))
-	} else {
-		ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig()))
-	}
+	return logging.Setup(logging.Options{Level: level, Format: observabilityConfig.LogFormat, Output: out})
 }
 
 // ConfigProvider is a function type that provides a Kubernetes REST config

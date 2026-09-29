@@ -26,7 +26,8 @@ type ObservabilityConfig struct {
 	LogFilePath    string
 	LogFileMaxSize uint64
 	LogDebug       bool
-	DevLogs        bool
+	LogLevel       string
+	LogFormat      string
 }
 
 // NewObservabilityConfig creates a new ObservabilityConfig with defaults.
@@ -36,7 +37,8 @@ func NewObservabilityConfig() *ObservabilityConfig {
 		LogFilePath:    "",
 		LogFileMaxSize: 1024,
 		LogDebug:       false,
-		DevLogs:        false,
+		LogLevel:       "info",
+		LogFormat:      "json",
 	}
 }
 
@@ -47,9 +49,11 @@ func (c *ObservabilityConfig) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.LogFilePath, "log-file-path", c.LogFilePath,
 		"The file to write logs to.")
 	fs.Uint64Var(&c.LogFileMaxSize, "log-file-max-size", c.LogFileMaxSize,
-		"Defines the maximum size a log file can grow to, Unit is megabytes.")
+		"Deprecated: ignored. The logger appends to --log-file-path without rotating it; rotate the file externally.")
 	fs.BoolVar(&c.LogDebug, "log-debug", c.LogDebug,
-		"Enable debug logs for development purpose")
-	fs.BoolVar(&c.DevLogs, "dev-logs", c.DevLogs,
-		"Enable ANSI color formatting for console logs (ignored when log-file-path is set)")
+		"Enable debug logs for development purpose (same as --log-level=debug)")
+	fs.StringVar(&c.LogLevel, "log-level", c.LogLevel,
+		"Minimum log level: debug, info, warn or error.")
+	fs.StringVar(&c.LogFormat, "log-format", c.LogFormat,
+		"Log output format: json or text.")
 }
