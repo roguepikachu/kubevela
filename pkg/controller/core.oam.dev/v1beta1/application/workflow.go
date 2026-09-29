@@ -22,7 +22,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/klog/v2"
 
 	monitorContext "github.com/kubevela/pkg/monitor/context"
 
@@ -70,29 +69,19 @@ func (r *Reconciler) handleWorkflowRestartAnnotation(ctx context.Context, app *v
 		statusFieldNeedsUpdate = app.Status.WorkflowRestartScheduledAt == nil ||
 			!app.Status.WorkflowRestartScheduledAt.Time.Equal(scheduledTime)
 	} else {
-		klog.Warningf("Invalid workflow restart annotation value for Application %s/%s: %q. Expected 'true', RFC3339 timestamp, or duration (e.g., '5m', '1h')",
-			app.Namespace, app.Name, restartValue)
 		return
 	}
 
 	if statusFieldNeedsUpdate {
 		app.Status.WorkflowRestartScheduledAt = &metav1.Time{Time: scheduledTime}
-		if err := r.Status().Update(ctx, app); err != nil {
-			klog.Errorf("Failed to update workflow restart status for Application %s/%s: %v. Will retry on next reconcile.",
-				app.Namespace, app.Name, err)
-			// Don't fail reconciliation - will retry naturally on next reconcile
-		}
+		_ = r.Status().Update(ctx, app)
 	}
 
 	// For timestamps, delete the annotation (one-time behavior)
 	// For durations, keep the annotation (recurring behavior)
 	if !isDuration {
 		delete(app.Annotations, oam.AnnotationWorkflowRestart)
-		if err := r.Client.Update(ctx, app); err != nil {
-			klog.Errorf("Failed to remove workflow restart annotation for Application %s/%s: %v. Will retry on next reconcile.",
-				app.Namespace, app.Name, err)
-			// Don't fail reconciliation - will retry naturally on next reconcile
-		}
+		_ = r.Client.Update(ctx, app)
 	}
 }
 
@@ -126,7 +115,6 @@ func (r *Reconciler) checkWorkflowRestart(ctx monitorContext.Context, app *v1bet
 		// Clear the status field and proceed with restart
 		app.Status.WorkflowRestartScheduledAt = nil
 		if err := r.Status().Update(ctx, app); err != nil {
-			ctx.Error(err, "failed to clear workflow restart scheduled time")
 			return
 		}
 		if app.Status.Workflow != nil {
@@ -193,8 +181,6 @@ func (r *Reconciler) checkWorkflowRestart(ctx monitorContext.Context, app *v1bet
 	// the next Render() with a clearer error than could be produced here.
 	if !publishVersionPinned {
 		if vfFp, err := computeValuesFromContentFingerprint(ctx, app); err != nil {
-			klog.V(2).InfoS("failed to compute valuesFrom fingerprint; falling back to spec-only workflow gate",
-				"err", err, "appName", app.Name, "namespace", app.Namespace)
 			if currentRev != "" && strings.HasPrefix(currentRev, desiredRev+valuesFromSuffixSeparator) {
 				desiredRev = currentRev
 			}

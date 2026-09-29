@@ -25,8 +25,6 @@ import (
 	"strings"
 	"sync"
 
-	"k8s.io/klog/v2"
-
 	"github.com/oam-dev/kubevela/pkg/sources"
 
 	pkgmulticluster "github.com/kubevela/pkg/multicluster"
@@ -397,9 +395,6 @@ func (h *AppHandler) autoUpdatingSourceChanged(_ context.Context, in sourceRefre
 		return false
 	}
 	if !in.trackable {
-		klog.V(2).InfoS("source auto-update is unavailable for this component",
-			"component", in.component, "cluster", in.cluster,
-			"reason", "its workload is managed by a trait, so there is nowhere to record the source baseline")
 		return false
 	}
 	if !in.settled {

@@ -36,7 +36,6 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -73,7 +72,6 @@ func (h *AppHandler) ApplyApplicationScopeTransforms(ctx monitorContext.Context,
 	app.Status.AppliedApplicationPolicies = nil
 
 	if !utilfeature.DefaultMutableFeatureGate.Enabled(features.EnableApplicationScopedPolicies) {
-		ctx.Info("Application-scoped policies disabled by feature gate")
 		return ctx, nil
 	}
 
@@ -91,24 +89,18 @@ func (h *AppHandler) ApplyApplicationScopeTransforms(ctx monitorContext.Context,
 			Namespace: app.Namespace,
 		}, previousAppRev)
 		if err != nil {
-			ctx.Info("Failed to fetch previous ApplicationRevision, will treat as new Application",
-				"revisionName", app.Status.LatestRevision.Name,
-				"error", err)
 			previousAppRev = nil
 		}
 	}
 
-	cachedResults, cacheHit, cacheMissReason, err := applicationPolicyCache.GetWithReason(app)
+	cachedResults, cacheHit, _, err := applicationPolicyCache.GetWithReason(app)
 	var renderedResults []RenderedPolicyResult
 
 	if err != nil {
-		ctx.Info("Cache error, will render policies", "error", err)
 		cacheHit = false
-		cacheMissReason = "error"
 	}
 
 	if cacheHit {
-		klog.V(4).InfoS("Cache HIT - using cached policy results", "count", len(cachedResults))
 		renderedResults = cachedResults
 
 		// Restore handler maps so PrepareCurrentAppRevision can include PolicyDefinitions
@@ -152,15 +144,12 @@ func (h *AppHandler) ApplyApplicationScopeTransforms(ctx monitorContext.Context,
 		} else {
 			h.isNewRevision = true // first reconcile
 		}
-		klog.V(4).InfoS("Cache MISS - rendering all policies", "reason", cacheMissReason, "isNewRevision", h.isNewRevision)
 		var renderErr error
 		renderedResults, renderErr = h.renderAllPolicies(ctx, app, previousAppRev)
 		if renderErr != nil {
 			return ctx, renderErr
 		}
-		if err := applicationPolicyCache.Set(app, renderedResults); err != nil {
-			klog.V(4).InfoS("Failed to cache policy results", "error", err)
-		}
+		_ = applicationPolicyCache.Set(app, renderedResults)
 		// Dry-run capture: if a dryRunCapture was placed in the context, stash results.
 		if cap, ok := ctx.GetContext().Value(dryRunCaptureKey).(*dryRunCapture); ok && cap != nil {
 			cap.results = renderedResults
@@ -202,9 +191,6 @@ func (h *AppHandler) ApplyApplicationScopeTransforms(ctx monitorContext.Context,
 				if len(latestRev.Spec.Application.Spec.Policies) > 0 {
 					app.Spec.Policies = latestRev.Spec.Application.Spec.Policies
 				}
-				ctx.Info("Restored spec from ApplicationRevision (autoRevision disabled)", "revision", revName)
-			} else if err != nil {
-				ctx.Error(err, "Failed to load ApplicationRevision, using rendered spec", "revision", revName)
 			}
 		}
 	}
@@ -215,11 +201,6 @@ func (h *AppHandler) ApplyApplicationScopeTransforms(ctx monitorContext.Context,
 	if len(renderedResults) > 0 {
 		h.writePolicyObservabilityConfigMap(ctx, app, renderedResults, renderedSpec, renderedMetadata, autoRevision, cacheHit)
 	}
-
-	ctx.Info("Policy transforms completed",
-		"total", len(renderedResults),
-		"enabled", countAppliedPolicies(app.Status.AppliedApplicationPolicies),
-		"autoRevision", autoRevision)
 
 	return ctx, nil
 }
@@ -320,9 +301,7 @@ func (h *AppHandler) writePolicyObservabilityConfigMap(ctx monitorContext.Contex
 	}
 
 	if len(configMapData) > 0 {
-		if err := createOrUpdateDiffsConfigMap(ctx, h.Client, app, configMapData); err != nil {
-			ctx.Info("Failed to store policy ConfigMap", "error", err)
-		} else {
+		if err := createOrUpdateDiffsConfigMap(ctx, h.Client, app, configMapData); err == nil {
 			app.Status.ApplicationPoliciesConfigMap = policyConfigMapName(app.Namespace, app.Name)
 		}
 	}
@@ -949,10 +928,6 @@ func (h *AppHandler) renderPoliciesForNewRevision(ctx monitorContext.Context, ap
 				Namespace: metadata.Namespace,
 			}, policyDef)
 			if err != nil {
-				ctx.Info("Failed to load global PolicyDefinition from index",
-					"policy", metadata.Name,
-					"namespace", metadata.Namespace,
-					"error", err)
 				continue
 			}
 
@@ -1129,7 +1104,6 @@ func (h *AppHandler) renderPoliciesInSequence(ctx monitorContext.Context, app *v
 	})
 
 	for _, p := range policiesToRender {
-		ctx.Info("Rendering policy", "policy", p.policyRef.Name, "priority", p.priority, "source", p.source)
 
 		// Resolve version metadata before rendering so it can be injected into the CUE context.
 		// Use versionKey (namespaced) for map operations; fall back to policyRef.Name for explicit policies.
@@ -1169,7 +1143,6 @@ func (h *AppHandler) renderPoliciesInSequence(ctx monitorContext.Context, app *v
 			if p.source == PolicySourceExplicit {
 				return nil, errors.Wrapf(err, "failed to render explicit policy %q", p.policyRef.Name)
 			}
-			ctx.Info("Failed to render global policy, skipping", "policy", p.policyRef.Name, "error", err)
 			result.PolicyName = p.policyRef.Name
 			result.PolicyNamespace = p.policyDef.Namespace
 			result.Enabled = false

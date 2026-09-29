@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 	"k8s.io/utils/strings/slices"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -61,7 +60,6 @@ func (h *MutatingHandler) handleIdentity(_ context.Context, req admission.Reques
 	if metav1.HasAnnotation(app.ObjectMeta, oam.AnnotationApplicationServiceAccountName) {
 		return false, errors.New("service-account annotation is not permitted when authentication enabled")
 	}
-	klog.Infof("[ApplicationMutatingHandler] Setting UserInfo into Application, UserInfo: %v, Application: %s/%s", req.UserInfo, app.GetNamespace(), app.GetName())
 	auth.SetUserInfoInAnnotation(&app.ObjectMeta, req.UserInfo)
 	return true, nil
 }
@@ -89,7 +87,6 @@ func (h *MutatingHandler) handleSharding(_ context.Context, _ admission.Request,
 		oid, scheduled := sharding.GetScheduledShardID(oldApp)
 		_, newScheduled := sharding.GetScheduledShardID(newApp)
 		if scheduled && !newScheduled {
-			klog.Infof("inherit old shard-id %s for app %s/%s", oid, newApp.Namespace, newApp.Name)
 			sharding.SetScheduledShardID(newApp, oid)
 			return true, nil
 		}
@@ -100,6 +97,7 @@ func (h *MutatingHandler) handleSharding(_ context.Context, _ admission.Request,
 
 // Handle mutate application
 func (h *MutatingHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
+	// TODO(logging): this handler has no logging.
 	oldApp, newApp := &v1beta1.Application{}, &v1beta1.Application{}
 	if err := h.Decoder.Decode(req, newApp); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)
@@ -138,7 +136,6 @@ func RegisterMutatingHandler(mgr manager.Manager) {
 		Decoder: admission.NewDecoder(mgr.GetScheme()),
 	}
 	if userInfo := utils.GetUserInfoFromConfig(mgr.GetConfig()); userInfo != nil {
-		klog.Infof("[ApplicationMutatingHandler] add skip user %s", userInfo.Username)
 		handler.skipUsers = []string{userInfo.Username}
 	}
 	server.Register("/mutating-core-oam-dev-v1beta1-applications", &webhook.Admission{Handler: handler})

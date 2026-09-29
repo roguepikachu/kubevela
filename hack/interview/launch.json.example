@@ -1,0 +1,32 @@
+{
+    // Copy to .vscode/launch.json (the .vscode directory is gitignored).
+    // GoLand: create a "Go Build" run configuration with
+    //   Run kind:          Package
+    //   Package path:      github.com/oam-dev/kubevela/cmd/core
+    //   Working directory: the repository root
+    //   Program arguments: the "args" below, space separated
+    //   Environment:       POD_NAMESPACE=vela-system
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "KubeVela core (webhook enabled)",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/core",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "POD_NAMESPACE": "vela-system"
+            },
+            "args": [
+                "--use-webhook=true",
+                "--webhook-port=9445",
+                "--webhook-cert-dir=${workspaceFolder}/k8s-webhook-server/serving-certs",
+                "--enable-leader-election=false",
+                "--metrics-addr=:8080",
+                "--health-addr=:9440",
+                "--application-re-sync-period=2m"
+            ]
+        }
+    ]
+}

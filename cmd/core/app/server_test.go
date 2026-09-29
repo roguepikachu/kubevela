@@ -17,7 +17,6 @@ limitations under the License.
 package app
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -232,29 +231,9 @@ var _ = Describe("Server Tests", func() {
 			})
 		})
 
-		Context("dev logging", func() {
-			It("should configure dev logging with color output", func() {
-				obsConfig := &config.ObservabilityConfig{
-					DevLogs: true,
-				}
-
-				// Capture output to verify color writer is used
-				var buf bytes.Buffer
-				klog.SetOutput(&buf)
-				defer klog.SetOutput(os.Stderr)
-
-				setupLogging(obsConfig)
-
-				// The function should complete without error
-				Expect(func() { setupLogging(obsConfig) }).NotTo(Panic())
-			})
-		})
-
 		Context("standard logging", func() {
-			It("should configure standard logging when DevLogs is false", func() {
-				obsConfig := &config.ObservabilityConfig{
-					DevLogs: false,
-				}
+			It("should configure standard logging", func() {
+				obsConfig := &config.ObservabilityConfig{}
 
 				setupLogging(obsConfig)
 				Expect(func() { setupLogging(obsConfig) }).NotTo(Panic())

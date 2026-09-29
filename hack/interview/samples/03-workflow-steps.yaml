@@ -1,0 +1,33 @@
+# An explicit workflow: deploy the backend, pause for 30s, then deploy the
+# worker. The workflow is still running during the pause, so a single change
+# takes several reconciles.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: pipeline
+  namespace: default
+spec:
+  components:
+    - name: backend
+      type: webservice
+      properties:
+        image: nginx:1.27-alpine
+    - name: worker
+      type: worker
+      properties:
+        image: busybox:1.36
+        cmd: ["sh", "-c", "while true; do echo working; sleep 10; done"]
+  workflow:
+    steps:
+      - name: deploy-backend
+        type: apply-component
+        properties:
+          component: backend
+      - name: wait-a-bit
+        type: suspend
+        properties:
+          duration: 30s
+      - name: deploy-worker
+        type: apply-component
+        properties:
+          component: worker

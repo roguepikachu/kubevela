@@ -1,0 +1,13 @@
+# Admitted and applied, but the image does not exist, so the app never becomes
+# healthy. The controller keeps re-reconciling it.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: bad-image
+  namespace: default
+spec:
+  components:
+    - name: web
+      type: webservice
+      properties:
+        image: nginx:does-not-exist-1.0

@@ -21,7 +21,6 @@ import (
 	"sort"
 	"sync"
 
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
@@ -85,9 +84,7 @@ func (idx *PolicyScopeIndex) ensureInitialized(ctx context.Context) {
 	}
 
 	if idx.client != nil {
-		klog.V(4).InfoS("Lazy-initializing PolicyScopeIndex")
 		if err := idx.initializeLocked(ctx, idx.client); err != nil {
-			klog.ErrorS(err, "Failed to lazy-initialize PolicyScopeIndex")
 			// Do not mark as initialized — allow retry on next reconcile.
 			return
 		}
@@ -99,7 +96,6 @@ func (idx *PolicyScopeIndex) ensureInitialized(ctx context.Context) {
 // Initialize populates the index by listing all PolicyDefinitions from the cluster
 // This should be called at controller startup
 func (idx *PolicyScopeIndex) Initialize(ctx context.Context, cli client.Client) error {
-	klog.InfoS("Initializing PolicyScopeIndex")
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
@@ -118,7 +114,6 @@ func (idx *PolicyScopeIndex) initializeLocked(ctx context.Context, cli client.Cl
 	// List all PolicyDefinitions across all namespaces
 	policyList := &v1beta1.PolicyDefinitionList{}
 	if err := cli.List(ctx, policyList); err != nil {
-		klog.ErrorS(err, "Failed to list PolicyDefinitions for index initialization")
 		return err
 	}
 
@@ -129,10 +124,6 @@ func (idx *PolicyScopeIndex) initializeLocked(ctx context.Context, cli client.Cl
 		policy := &policyList.Items[i]
 		idx.addPolicyLocked(policy)
 	}
-
-	klog.InfoS("PolicyScopeIndex initialized",
-		"totalPolicies", len(policyList.Items),
-		"namespaces", len(idx.byNamespace))
 
 	return nil
 }
@@ -235,11 +226,6 @@ func (idx *PolicyScopeIndex) AddOrUpdate(policy *v1beta1.PolicyDefinition) {
 
 	idx.addPolicyLocked(policy)
 
-	klog.V(4).InfoS("PolicyScopeIndex updated",
-		"policy", policy.Name,
-		"namespace", policy.Namespace,
-		"scope", policy.Spec.Scope,
-		"global", policy.Spec.Global)
 }
 
 // Delete removes a policy from the index
@@ -259,9 +245,6 @@ func (idx *PolicyScopeIndex) Delete(policyName, namespace string) {
 	// Rebuild global policies list for this namespace
 	idx.rebuildGlobalPoliciesForNamespaceLocked(namespace)
 
-	klog.V(4).InfoS("PolicyScopeIndex deleted",
-		"policy", policyName,
-		"namespace", namespace)
 }
 
 // InvalidateNamespace invalidates all policies in a namespace and rebuilds the index
@@ -273,7 +256,6 @@ func (idx *PolicyScopeIndex) InvalidateNamespace(namespace string) {
 	delete(idx.byNamespace, namespace)
 	delete(idx.globalApplicationPolicies, namespace)
 
-	klog.V(4).InfoS("PolicyScopeIndex namespace invalidated", "namespace", namespace)
 }
 
 // Size returns the total number of indexed policies

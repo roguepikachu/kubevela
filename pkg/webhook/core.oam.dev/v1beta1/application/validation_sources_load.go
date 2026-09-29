@@ -30,7 +30,6 @@ import (
 	upstreamcuex "github.com/kubevela/pkg/cue/cuex"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/klog/v2"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	velacue "github.com/oam-dev/kubevela/pkg/cue"
@@ -141,7 +140,6 @@ func (h *ValidatingHandler) loadTargetParameter(ctx context.Context, appNamespac
 	val, err := velacuex.SourceCompiler.Get().CompileStringWithOptions(
 		ctx, tmpl+velacue.BaseTemplate, upstreamcuex.DisableResolveProviderFunctions{})
 	if err != nil || val.Err() != nil {
-		klog.V(4).Infof("skip target parameter type check for %s %q: template did not compile statically", kind, defName)
 		return nil
 	}
 	param := val.LookupPath(cue.ParsePath("parameter"))

@@ -33,7 +33,6 @@ running to debugging specific pieces of it:
 | [`ide-multi-cluster-debugging.md`](./ide-multi-cluster-debugging.md) | A master/slave k3d cluster pair plus Cluster Gateway, with the controller running from your IDE | You're debugging multi-cluster scheduling/dispatch code, e.g. the `topology` policy |
 | [`webhook-debugging.md`](./webhook-debugging.md) | Running and debugging the admission webhook (validating/mutating handlers) locally | You're touching `ComponentDefinition`/`Application` validation or defaulting logic |
 | [`testing.md`](./testing.md) | The unit and e2e `make` targets | You're running or adding to the test suites |
-| [`logging.md`](./logging.md) | Verbosity and log-format flags | You need more detail out of a running controller |
 
 ## Repository layout (development-relevant paths)
 

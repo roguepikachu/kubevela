@@ -27,7 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	pkgaddon "github.com/oam-dev/kubevela/pkg/addon"
-	"github.com/oam-dev/kubevela/pkg/logging"
 )
 
 // defaultCompatChecker is the production compatibility check. It resolves the addon
@@ -36,9 +35,6 @@ import (
 // on a concrete compatibility mismatch. cli and restConfig come from the manager
 // registering the webhook, not a process-wide singleton.
 func defaultCompatChecker(ctx context.Context, cli client.Client, restConfig *rest.Config, addonName, version, registry string) *field.Error {
-	logger := logging.WithContext(ctx).
-		WithStep("validate-addon-compatibility").
-		WithValues("addon", addonName, "version", version, "registry", registry)
 
 	var registries []string
 	if registry != "" {
@@ -47,11 +43,9 @@ func defaultCompatChecker(ctx context.Context, cli client.Client, restConfig *re
 
 	pkgs, err := pkgaddon.FindAddonPackagesDetailFromRegistry(ctx, cli, []string{addonName}, registries)
 	if err != nil {
-		logger.Info("Skipping addon compatibility validation", "reason", "registry-resolution-failed", "error", err)
 		return nil
 	}
 	if len(pkgs) == 0 {
-		logger.Info("Skipping addon compatibility validation", "reason", "addon-not-found")
 		return nil
 	}
 
@@ -63,7 +57,6 @@ func defaultCompatChecker(ctx context.Context, cli client.Client, restConfig *re
 	if version != "" && version != pkgs[0].InstallPackage.Version {
 		exact, err := pkgaddon.GetAddonInstallPackageFromRegistry(ctx, cli, pkgs[0].RegistryName, addonName, version)
 		if err != nil {
-			logger.Info("Skipping addon compatibility validation", "reason", "version-resolution-failed", "error", err)
 			return nil
 		}
 		require = exact.SystemRequirements
@@ -75,11 +68,7 @@ func defaultCompatChecker(ctx context.Context, cli client.Client, restConfig *re
 	var dc *discovery.DiscoveryClient
 	if restConfig != nil {
 		d, err := discovery.NewDiscoveryClientForConfig(restConfig)
-		if err != nil {
-			// Fail open on the kubernetes-version portion: without a discovery client
-			// ValidateSystemRequirements still checks the vela versions.
-			logger.Info("Skipping addon Kubernetes compatibility validation", "reason", "discovery-client-failed", "error", err)
-		} else {
+		if err == nil {
 			dc = d
 		}
 	}
@@ -92,7 +81,6 @@ func defaultCompatChecker(ctx context.Context, cli client.Client, restConfig *re
 		// a reason to deny; denying on the latter would let an API blip block
 		// applies, and this webhook runs with failurePolicy: Fail.
 		if !errors.Is(err, pkgaddon.ErrVersionMismatch) {
-			logger.Info("Skipping addon compatibility validation", "reason", "requirement-lookup-failed", "error", err)
 			return nil
 		}
 		return field.Invalid(field.NewPath("spec", "components"), addonName,

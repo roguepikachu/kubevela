@@ -18,7 +18,6 @@ package assemble
 
 import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/klog/v2"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/apis/types"
@@ -70,7 +69,6 @@ func assembleWorkload(compName string, wl *unstructured.Unstructured, labels map
 	}
 	setWorkloadLabels(wl, labels)
 
-	klog.InfoS("Successfully assemble a workload", "workload", klog.KObj(wl), "APIVersion", wl.GetAPIVersion(), "Kind", wl.GetKind())
 	return wl
 }
 

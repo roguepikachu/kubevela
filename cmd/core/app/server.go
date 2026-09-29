@@ -59,7 +59,6 @@ import (
 	oamv1beta1 "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1/application"
 	"github.com/oam-dev/kubevela/pkg/features"
-	"github.com/oam-dev/kubevela/pkg/logging"
 	"github.com/oam-dev/kubevela/pkg/monitor/watcher"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
 	"github.com/oam-dev/kubevela/pkg/oam"
@@ -120,7 +119,6 @@ func run(ctx context.Context, coreOptions *options.CoreOptions) error {
 	// Setup logging
 	klog.V(2).InfoS("Setting up logging configuration",
 		"debug", coreOptions.Observability.LogDebug,
-		"devLogs", coreOptions.Observability.DevLogs,
 		"logFilePath", coreOptions.Observability.LogFilePath)
 	setupLogging(coreOptions.Observability)
 
@@ -275,15 +273,8 @@ func setupLogging(observabilityConfig *config.ObservabilityConfig) {
 		_ = flag.Set("log_file_max_size", strconv.FormatUint(observabilityConfig.LogFileMaxSize, 10))
 	}
 
-	// Set logger (use --dev-logs=true for local development)
-	if observabilityConfig.DevLogs {
-		logOutput := logging.NewColorWriter(os.Stdout)
-		klog.LogToStderr(false)
-		klog.SetOutput(logOutput)
-		ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig(textlogger.Output(logOutput))))
-	} else {
-		ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig()))
-	}
+	// TODO(logging): wire up the application logger here.
+	ctrl.SetLogger(textlogger.NewLogger(textlogger.NewConfig()))
 }
 
 // ConfigProvider is a function type that provides a Kubernetes REST config

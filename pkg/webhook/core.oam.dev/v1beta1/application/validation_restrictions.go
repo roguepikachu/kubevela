@@ -25,14 +25,12 @@ import (
 	apitypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	velacache "github.com/oam-dev/kubevela/pkg/cache"
 	"github.com/oam-dev/kubevela/pkg/definition/nsrestrict"
 	"github.com/oam-dev/kubevela/pkg/features"
-	"github.com/oam-dev/kubevela/pkg/oam"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/workflow/step"
 )
@@ -176,9 +174,6 @@ func (c *restrictionCheck) checkDefinition(defType string, newDef func() client.
 			// ValidateComponents reports a missing definition, and better.
 			return nil
 		}
-		// Anything else leaves the restrictions unread, and an unread restriction
-		// is not an absent one. Refuse, as a retryable failure.
-		klog.Errorf("Failed to load %s %q to check its restrictions: %v", nsrestrict.KindOf(def), name, err)
 		c.unevaluable(paths, fmt.Errorf("cannot read %s %q to check its restrictions: %w",
 			nsrestrict.KindOf(def), name, err))
 		return nil
@@ -196,10 +191,6 @@ func (c *restrictionCheck) checkDefinition(defType string, newDef func() client.
 	}
 
 	if err := nsrestrict.Check(def, c.app.Namespace, labels); err != nil {
-		// The operator gets the patterns, through the log. The Application's author
-		// gets only that the definition is restricted.
-		klog.Infof("Denied %s %q to Application %q in namespace %q: allowed for %s",
-			nsrestrict.KindOf(def), name, c.app.Name, c.app.Namespace, nsrestrict.Describe(def))
 		c.forbid(paths, err.Error())
 		return nil
 	}
@@ -233,8 +224,6 @@ func (c *restrictionCheck) checkQuota(def client.Object, kind, name string, path
 	// limit holding, which is the safe direction and costs nobody an outage.
 	annotations, _ := c.namespaceAnnotations()
 	if nsrestrict.QuotaExempt(annotations) {
-		klog.Infof("Namespace %q is annotated %s=true, so the quota on %s %q is not applied to Application %q",
-			c.app.Namespace, oam.AnnotationQuotaExempt, nsrestrict.KindOf(def), name, c.app.Name)
 		return
 	}
 
@@ -242,7 +231,6 @@ func (c *restrictionCheck) checkQuota(def client.Object, kind, name string, path
 	existing, countErr := countUsage(c.ctx, reader, indexed, c.app.Namespace, kind, name,
 		c.app.Name) // excluding itself, or an edit fails its own quota
 	if countErr != nil {
-		klog.Errorf("Failed to count uses of %q in namespace %q for its quota: %v", name, c.app.Namespace, countErr)
 		c.unevaluable(paths, fmt.Errorf(
 			"cannot evaluate the quota on %s %q: counting its use in namespace %q: %w",
 			nsrestrict.KindOf(def), name, c.app.Namespace, countErr))
@@ -260,11 +248,6 @@ func (c *restrictionCheck) checkQuota(def client.Object, kind, name string, path
 	// own use is admitted and flagged, or the only way back under a new limit
 	// would be deleting whole Applications.
 	if refuse && c.oldApp != nil && incoming <= usageInApp(c.oldApp, kind, name) {
-		// The operator hears about it either way: a namespace being drained is
-		// worth seeing. The author only does if the quota asked for warnings at
-		// all, since a limit on its own means silence until something is refused.
-		klog.Infof("Namespace %q is over the quota on %s %q at %d of %d, and this change to Application %q does not add to it",
-			c.app.Namespace, nsrestrict.KindOf(def), name, total, *quota.Limit, c.app.Name)
 		if quota.Warn != nil {
 			c.warnings = append(c.warnings, fmt.Sprintf(
 				"%s %q: namespace %q is over its quota at %d of the %d allowed, and this change does not add to it.",
@@ -275,11 +258,6 @@ func (c *restrictionCheck) checkQuota(def client.Object, kind, name string, path
 
 	switch {
 	case refuse:
-		// The author gets the namespace and the type, which is what they can act
-		// on. The counts go to the operator, as the restriction patterns do.
-		// ExceedsQuota refuses only against a ceiling, so Limit is set.
-		klog.Infof("Denied %s %q to Application %q: namespace %q allows %d and this would make %d",
-			nsrestrict.KindOf(def), name, c.app.Name, c.app.Namespace, *quota.Limit, total)
 		c.forbid(paths, fmt.Sprintf("this would exceed the quota for %s type %q in namespace %q",
 			kind, name, c.app.Namespace))
 	case warn:
@@ -312,7 +290,6 @@ func (c *restrictionCheck) loadNamespace() error {
 	c.nsLoaded = true
 	ns := &corev1.Namespace{}
 	if err := c.h.namespaceReader().Get(c.ctx, apitypes.NamespacedName{Name: c.app.Namespace}, ns); err != nil {
-		klog.Errorf("Failed to read namespace %q to check a definition's restrictions: %v", c.app.Namespace, err)
 		c.nsErr = err
 		return err
 	}

@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -32,7 +31,6 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/definition/cachekey"
 	"github.com/oam-dev/kubevela/pkg/definition/nsrestrict"
-	"github.com/oam-dev/kubevela/pkg/logging"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	webhookutils "github.com/oam-dev/kubevela/pkg/webhook/utils"
 )
@@ -50,29 +48,18 @@ var _ admission.Handler = &ValidatingHandler{}
 
 // Handle validates a SourceDefinition on create and update.
 func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	startTime := time.Now()
-	ctx = logging.WithRequestID(ctx, string(req.UID))
-	logger := logging.NewHandlerLogger(ctx, req, "SourceDefinitionValidator")
-
-	logger.WithStep("start").Info("Starting admission validation for SourceDefinition resource", "operation", req.Operation, "resourceVersion", req.Kind.Version)
 
 	if req.Resource.String() != sourceDefGVR.String() {
 		err := fmt.Errorf("expect resource to be %s", sourceDefGVR)
-		logger.WithStep("resource-check").WithError(err).Error(err, "Admission request targets unexpected resource type - rejecting request",
-			"expected", sourceDefGVR.String(),
-			"actual", req.Resource.String(),
-			"operation", req.Operation)
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
 	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
-		logger.WithStep("skip-validation").Info("Skipping SourceDefinition validation - operation does not require validation", "operation", req.Operation, "reason", "only CREATE and UPDATE operations are validated")
 		return admission.ValidationResponse(true, "")
 	}
 
 	obj := &v1beta1.SourceDefinition{}
 	if err := h.Decoder.Decode(req, obj); err != nil {
-		logger.WithStep("decode").WithError(err).Error(err, "Unable to decode admission request payload into SourceDefinition object - malformed request")
 		return admission.Errored(http.StatusBadRequest, fmt.Errorf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
@@ -89,7 +76,6 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	// still introduce a malformed one. Validate before the metadata-only shortcut
 	// below, or that glob is stored and silently matches no namespace.
 	if err := nsrestrict.ValidateObject(obj); err != nil {
-		logger.WithStep("validate-namespace-restrictions").WithError(err).Error(err, "SourceDefinition namespace restriction is not a valid list of namespace names or globs")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
@@ -97,39 +83,33 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 		old := &v1beta1.SourceDefinition{}
 		if err := h.Decoder.DecodeRaw(req.OldObject, old); err == nil &&
 			apiequality.Semantic.DeepEqual(old.Spec, obj.Spec) {
-			logger.WithStep("skip-validation").Info("Skipping SourceDefinition validation - spec is unchanged", "reason", "metadata-only update")
 			return admission.ValidationResponse(true, "")
 		}
 	}
 
 	if obj.Spec.Schematic == nil || obj.Spec.Schematic.CUE == nil {
 		err := fmt.Errorf("SourceDefinition must declare spec.schematic.cue")
-		logger.WithStep("validate-schematic").WithError(err).Error(err, "SourceDefinition has no CUE schematic - resolution logic is required")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 	cueTemplate := obj.Spec.Schematic.CUE.Template
 
-	logger.WithStep("validate-cue").Info("Validating CUE template syntax and semantics for SourceDefinition schematic")
 	// Without executing the providers: a source exists to fetch something, and
 	// admission has no parameters to hand them. Compiled against SourceCompiler,
 	// so a template importing a package a source may not use is refused here
 	// rather than at its first resolve.
 	if err := webhookutils.ValidateSourceTemplate(ctx, cueTemplate); err != nil {
-		logger.WithStep("validate-cue").WithError(err).Error(err, "CUE template contains syntax errors or invalid constructs - template compilation failed")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
 	// A SourceDefinition without a storage key has no deterministic cache
 	// identity; reject it here rather than synthesising one at resolution time.
 	if err := ValidateSourceStorage(cueTemplate); err != nil {
-		logger.WithStep("validate-storage").WithError(err).Error(err, "SourceDefinition storage block is invalid - a cache key is required")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
 	// Without a schema: block, both the admission path check and the runtime
 	// output check are skipped, leaving source reads unvalidated in either layer.
 	if err := ValidateSourceSchema(cueTemplate); err != nil {
-		logger.WithStep("validate-schema").WithError(err).Error(err, "SourceDefinition schema block is invalid - a schema is required to validate source reads")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
@@ -139,7 +119,6 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	// are used in preference to the current ones, so changing inference does not
 	// invalidate definitions already committed and re-applied by GitOps.
 	if err := cachekey.Verify(obj.Name, cueTemplate, obj.GetAnnotations()[cachekey.RulesAnnotation]); err != nil {
-		logger.WithStep("validate-cache-key").WithError(err).Error(err, "SourceDefinition cache key does not match the context its template reads")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
@@ -147,14 +126,12 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	// then silently ignored when an Application binds the source.
 	consumable, err := ParseConsumableFrom(cueTemplate)
 	if err != nil {
-		logger.WithStep("validate-consumable-from").WithError(err).Error(err, "SourceDefinition consumableFrom is invalid")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
 	// A definition that can never resolve where it says it may be consumed is
 	// wrong on its own terms, and says so now rather than when someone binds it.
 	if err := ValidateSurfaceCompatibility(cueTemplate, consumable); err != nil {
-		logger.WithStep("validate-surface-compatibility").WithError(err).Error(err, "SourceDefinition cannot resolve on the surfaces it declares")
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
@@ -164,7 +141,6 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 	// validate it at admission; sources do the same.
 	if obj.Spec.Version != "" {
 		if err := webhookutils.ValidateSemanticVersion(obj.Spec.Version); err != nil {
-			logger.WithStep("validate-version").WithError(err).Error(err, "SourceDefinition version does not follow semantic versioning format (x.y.z)", "version", obj.Spec.Version)
 			return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 		}
 	}
@@ -174,18 +150,15 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 		defRevName := fmt.Sprintf("%s-v%s", obj.Name, revisionName)
 		if err := webhookutils.ValidateDefinitionRevision(ctx, h.Client, obj,
 			client.ObjectKey{Namespace: obj.Namespace, Name: defRevName}); err != nil {
-			logger.WithStep("validate-revision").WithError(err).Error(err, "SourceDefinition revision conflicts with an existing revision or has an invalid format", "revisionName", revisionName)
 			return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 		}
 	}
 
 	// Both name the revision, and they can disagree.
 	if err := webhookutils.ValidateMultipleDefVersionsNotPresent(obj.Spec.Version, revisionName, obj.Kind); err != nil {
-		logger.WithStep("validate-version-conflict").WithError(err).Error(err, "SourceDefinition sets both spec.version and the revision annotation", "specVersion", obj.Spec.Version, "revisionName", revisionName)
 		return admission.Denied(fmt.Sprintf("%s (requestUID=%s)", err.Error(), req.UID))
 	}
 
-	logger.WithStep("complete").WithSuccess(true, startTime).Info("SourceDefinition admission validation completed successfully - resource is valid and will be admitted", "definitionName", obj.Name, "operation", req.Operation)
 	return admission.ValidationResponse(true, "")
 }
 

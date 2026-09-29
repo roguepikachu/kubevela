@@ -23,7 +23,6 @@ import (
 	"net/http"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -57,7 +56,6 @@ func (h *MutatingHandler) Handle(_ context.Context, req admission.Request) admis
 	}
 	// mutate the object
 	if err := h.Mutate(obj); err != nil {
-		klog.ErrorS(err, "failed to mutate the componentDefinition", "name", obj.Name)
 		return admission.Errored(http.StatusBadRequest, err)
 	}
 
@@ -67,16 +65,11 @@ func (h *MutatingHandler) Handle(_ context.Context, req admission.Request) admis
 	}
 
 	resp := admission.PatchResponseFromRaw(req.AdmissionRequest.Object.Raw, marshalled)
-	if len(resp.Patches) > 0 {
-		klog.InfoS("admit ComponentDefinition",
-			"namespace", obj.Namespace, "name", obj.Name, "patches", util.JSONMarshal(resp.Patches))
-	}
 	return resp
 }
 
 // Mutate sets all the default value for the ComponentDefinition
 func (h *MutatingHandler) Mutate(obj *v1beta1.ComponentDefinition) error {
-	klog.InfoS("mutate", "name", obj.Name)
 
 	// If the Type field is not empty, it means that ComponentDefinition refers to an existing WorkloadDefinition
 	if obj.Spec.Workload.Type != types.AutoDetectWorkloadDefinition && (obj.Spec.Workload.Type != "" && obj.Spec.Workload.Definition == (common.WorkloadGVK{})) {

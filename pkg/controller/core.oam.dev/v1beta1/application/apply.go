@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	monitorContext "github.com/kubevela/pkg/monitor/context"
@@ -271,10 +270,7 @@ func (h *AppHandler) collectTraitHealthStatus(comp *appfile.Component, tr *appfi
 	if err != nil {
 		return common.ApplicationTraitStatus{}, nil, errors.WithMessagef(err, "app=%s, comp=%s, trait=%s, evaluate status message error", appName, comp.Name, tr.Name)
 	}
-	statusResult, err := tr.EvalStatus(templateContext)
-	if err != nil {
-		klog.Warningf("app=%s, comp=%s, trait=%s, evaluate trait status error (best-effort): %v", appName, comp.Name, tr.Name, err)
-	}
+	statusResult, _ := tr.EvalStatus(templateContext)
 	if statusResult != nil {
 		traitStatus.Healthy = statusResult.Healthy
 		traitStatus.Message = statusResult.Message
@@ -313,10 +309,7 @@ func (h *AppHandler) collectWorkloadHealthStatus(ctx context.Context, comp *appf
 		if err != nil {
 			return false, nil, nil, errors.WithMessagef(err, "app=%s, comp=%s, get template context error", appName, comp.Name)
 		}
-		statusResult, err := comp.EvalStatus(templateContext)
-		if err != nil {
-			klog.Warningf("app=%s, comp=%s, evaluate workload status error (best-effort): %v", appName, comp.Name, err)
-		}
+		statusResult, _ := comp.EvalStatus(templateContext)
 		if statusResult != nil {
 			status.Healthy = statusResult.Healthy
 			if statusResult.Message != "" {
@@ -837,13 +830,11 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 			// Fetch live workload status for PostDispatch traits to use if it's created on the cluster
 			tempCtx := appfile.NewBasicContext(*ctxData, wl.Params)
 			if err := wl.EvalContext(tempCtx); err != nil {
-				ctx.Error(err, "failed to evaluate context for workload %s", wl.Name)
 				return
 			}
 			base, _ := tempCtx.Output()
 			componentWorkload, err := base.Unstructured()
 			if err != nil {
-				ctx.Error(err, "failed to unstructure base component generated using workload %s", wl.Name)
 				return
 			}
 			if componentWorkload.GetName() == "" {
@@ -856,7 +847,6 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 				oam.LabelAppName:         ctxData.AppName,
 			}, "")
 			if err != nil {
-				ctx.Error(err, "failed to fetch workload output resource %s from the cluster", componentWorkload.GetName())
 				return
 			}
 			ctxData.Output = object
@@ -899,9 +889,7 @@ func (h *AppHandler) applyPostDispatchTraits(ctx monitorContext.Context, appPars
 		// in the application status.
 		//
 		healthCtx := multicluster.ContextWithClusterName(ctx.GetContext(), svc.Cluster)
-		if _, _, _, _, err := h.collectHealthStatus(healthCtx, wl, svc.Namespace, false); err != nil {
-			ctx.Error(err, "failed to refresh PostDispatch trait status", "component", comp.Name)
-		}
+		_, _, _, _, _ = h.collectHealthStatus(healthCtx, wl, svc.Namespace, false)
 	}
 	return nil
 }

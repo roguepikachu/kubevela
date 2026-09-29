@@ -225,7 +225,6 @@ render unless you've turned metrics on.
 helm install kubevela ./charts/vela-core \
   --namespace vela-system --create-namespace \
   --set admissionWebhooks.enabled=false \
-  --set devLogs=true \
   --wait --debug
 ```
 
