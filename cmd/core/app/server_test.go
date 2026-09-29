@@ -18,8 +18,8 @@ package app
 
 import (
 	"context"
-	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,7 +29,6 @@ import (
 	. "github.com/onsi/gomega"
 	"k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/client-go/rest"
-	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	"github.com/oam-dev/kubevela/apis/types"
@@ -187,57 +186,29 @@ var _ = Describe("Server Tests", func() {
 	})
 
 	Describe("setupLogging", func() {
-		var origStderr *os.File
-
-		BeforeEach(func() {
-			origStderr = os.Stderr
-		})
-
 		AfterEach(func() {
-			os.Stderr = origStderr
-			// Reset klog settings
-			klog.LogToStderr(true)
-			flag.Set("logtostderr", "true")
+			Expect(setupLogging(&config.ObservabilityConfig{})).To(Succeed())
 		})
 
-		Context("debug logging", func() {
-			It("should configure debug logging when LogDebug is true", func() {
-				obsConfig := &config.ObservabilityConfig{
-					LogDebug: true,
-				}
-
-				setupLogging(obsConfig)
-
-				// Verify debug level was set (we can't directly check flag values easily)
-				// But we can verify the function doesn't panic
-				Expect(func() { setupLogging(obsConfig) }).NotTo(Panic())
-			})
+		It("accepts the defaults", func() {
+			Expect(setupLogging(config.NewObservabilityConfig())).To(Succeed())
 		})
 
-		Context("file logging", func() {
-			It("should configure file logging when LogFilePath is set", func() {
-				tempDir := GinkgoT().TempDir()
-				logFile := filepath.Join(tempDir, "test.log")
-
-				obsConfig := &config.ObservabilityConfig{
-					LogFilePath:    logFile,
-					LogFileMaxSize: 100,
-				}
-
-				setupLogging(obsConfig)
-
-				// Verify flags were set (indirectly by checking no panic)
-				Expect(func() { setupLogging(obsConfig) }).NotTo(Panic())
-			})
+		It("treats --log-debug as --log-level=debug", func() {
+			Expect(setupLogging(&config.ObservabilityConfig{LogDebug: true})).To(Succeed())
+			Expect(slog.Default().Enabled(context.Background(), slog.LevelDebug)).To(BeTrue())
 		})
 
-		Context("standard logging", func() {
-			It("should configure standard logging", func() {
-				obsConfig := &config.ObservabilityConfig{}
+		It("rejects an unknown level or format", func() {
+			Expect(setupLogging(&config.ObservabilityConfig{LogLevel: "loud"})).NotTo(Succeed())
+			Expect(setupLogging(&config.ObservabilityConfig{LogFormat: "xml"})).NotTo(Succeed())
+		})
 
-				setupLogging(obsConfig)
-				Expect(func() { setupLogging(obsConfig) }).NotTo(Panic())
-			})
+		It("writes to --log-file-path", func() {
+			logFile := filepath.Join(GinkgoT().TempDir(), "test.log")
+			Expect(setupLogging(&config.ObservabilityConfig{LogFilePath: logFile})).To(Succeed())
+			slog.Info("hello from the test")
+			Expect(os.ReadFile(logFile)).To(ContainSubstring("hello from the test"))
 		})
 	})
 

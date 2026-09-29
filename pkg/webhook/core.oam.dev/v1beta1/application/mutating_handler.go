@@ -97,7 +97,12 @@ func (h *MutatingHandler) handleSharding(_ context.Context, _ admission.Request,
 
 // Handle mutate application
 func (h *MutatingHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	// TODO(logging): this handler has no logging.
+	return withAdmissionLogging(ctx, "mutating", req, func(ctx context.Context) admission.Response {
+		return h.handle(ctx, req)
+	})
+}
+
+func (h *MutatingHandler) handle(ctx context.Context, req admission.Request) admission.Response {
 	oldApp, newApp := &v1beta1.Application{}, &v1beta1.Application{}
 	if err := h.Decoder.Decode(req, newApp); err != nil {
 		return admission.Errored(http.StatusBadRequest, err)

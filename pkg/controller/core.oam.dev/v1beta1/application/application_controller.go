@@ -29,6 +29,7 @@ import (
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -62,6 +63,7 @@ import (
 	core "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
 	"github.com/oam-dev/kubevela/pkg/definition/propexpr"
 	"github.com/oam-dev/kubevela/pkg/features"
+	"github.com/oam-dev/kubevela/pkg/logging"
 	"github.com/oam-dev/kubevela/pkg/monitor/metrics"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	oamutil "github.com/oam-dev/kubevela/pkg/oam/util"
@@ -110,18 +112,39 @@ type options struct {
 
 // Reconcile process app event
 // nolint:gocyclo
-func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (result ctrl.Result, retErr error) {
 	ctx, cancel := ctrlrec.NewReconcileContext(ctx)
 	defer cancel()
-	// TODO(logging): the reconcile loop has no logging.
-	logCtx := monitorContext.NewTraceContext(ctx, "")
+	reconcileID := string(controller.ReconcileIDFromContext(ctx))
+	ctx = logging.WithFields(ctx, "controller", "application", "app", req.Name, "namespace", req.Namespace, "reconcile_id", reconcileID)
+	// monitorContext writes its own span lines through klog, which cannot see
+	// the context fields, so give it the same identity as tags.
+	logCtx := monitorContext.NewTraceContext(ctx, "").AddTag("app", req.Name, "namespace", req.Namespace, "reconcile_id", reconcileID)
 	app := new(v1beta1.Application)
 	if err := r.Get(ctx, client.ObjectKey{
 		Name:      req.Name,
 		Namespace: req.Namespace,
 	}, app); err != nil {
+		if kerrors.IsNotFound(err) {
+			logging.L(ctx).Debug("application not found, nothing to do")
+		}
 		return r.result(client.IgnoreNotFound(err)).ret()
 	}
+	ctx = logging.WithFields(ctx, "generation", app.Generation, "resource_version", app.ResourceVersion)
+	ctx = logging.WithLevelFromAnnotations(ctx, app.GetAnnotations())
+	start := time.Now()
+	logging.L(ctx).Debug("reconcile started", "phase", app.Status.Phase)
+	defer func() {
+		fields := []any{"phase", app.Status.Phase, "duration_ms", time.Since(start).Milliseconds()}
+		if result.RequeueAfter > 0 {
+			fields = append(fields, "requeue_after", result.RequeueAfter.String())
+		}
+		if retErr != nil {
+			logging.L(ctx).Error(retErr, "reconcile failed", fields...)
+			return
+		}
+		logging.L(ctx).Info("reconcile finished", fields...)
+	}()
 	ctx = withOriginalApp(ctx, app)
 	if ctrlrec.IsPaused(app) {
 		return ctrl.Result{}, nil
@@ -220,6 +243,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	authCtx = auth.MonitorContextWithUserInfo(authCtx, app)
 	tBeginWorkflowExecution := time.Now()
 	workflowState, err := workflowExecutor.ExecuteRunners(authCtx, runners)
+	logging.L(logCtx).Debug("workflow executed", "workflow_state", workflowState)
 	metrics.AppReconcileStageDurationHistogram.WithLabelValues("execute-workflow").Observe(time.Since(tBeginWorkflowExecution).Seconds())
 	if err != nil {
 		r.Recorder.Event(app, event.Warning(velatypes.ReasonFailedWorkflow, err))
@@ -719,6 +743,7 @@ func (r *Reconciler) endWithNegativeCondition(ctx context.Context, app *v1beta1.
 		Reason:             condition.ReasonReconcileError,
 		Message:            cond.Message,
 	})
+	logging.L(ctx).Warn("reconcile ended with a failing condition", "condition", cond.Type, "reason", cond.Reason, "message", cond.Message)
 	if err := r.patchStatus(ctx, app, phase); err != nil {
 		return r.result(errors.WithMessage(err, "cannot update application status")).ret()
 	}

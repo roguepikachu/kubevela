@@ -75,8 +75,12 @@ func mergeErrors(errs field.ErrorList) error {
 
 // Handle validate Application Spec here
 func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) admission.Response {
-	// TODO(logging): this handler has no logging.
+	return withAdmissionLogging(ctx, "validating", req, func(ctx context.Context) admission.Response {
+		return h.handle(ctx, req)
+	})
+}
 
+func (h *ValidatingHandler) handle(ctx context.Context, req admission.Request) admission.Response {
 	// Decode the application
 	app := &v1beta1.Application{}
 	if err := h.Decoder.Decode(req, app); err != nil {
