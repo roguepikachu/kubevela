@@ -5,7 +5,7 @@
     //   Package path:      github.com/oam-dev/kubevela/cmd/core
     //   Working directory: the repository root
     //   Program arguments: the "args" below, space separated
-    //   Environment:       POD_NAMESPACE=vela-system
+    //   Environment:       POD_NAMESPACE=vela-system;KUBECONFIG=<your home>/.kube/vela-interview
     "version": "0.2.0",
     "configurations": [
         {
@@ -16,7 +16,8 @@
             "program": "${workspaceFolder}/cmd/core",
             "cwd": "${workspaceFolder}",
             "env": {
-                "POD_NAMESPACE": "vela-system"
+                "POD_NAMESPACE": "vela-system",
+                "KUBECONFIG": "${env:HOME}/.kube/vela-interview"
             },
             "args": [
                 "--use-webhook=true",
