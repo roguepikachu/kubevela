@@ -3,6 +3,12 @@
 
 step() { printf '\n==> %s\n' "$*"; }
 
+# The scripts use a kubeconfig of their own, so they work whatever KUBECONFIG
+# holds in your shell (several files, other clusters) and never edit your main
+# kubeconfig. Point your IDE and terminal at the same file.
+VELA_KUBECONFIG="${VELA_KUBECONFIG:-$HOME/.kube/vela-interview}"
+export KUBECONFIG="${VELA_KUBECONFIG}"
+
 # Architecture of the Docker engine, which is what the k3d nodes run on.
 DOCKER_ARCH="$(docker version -f '{{.Server.Arch}}')"
 

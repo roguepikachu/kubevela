@@ -3,7 +3,8 @@
 # with the admission webhooks enabled.
 #
 # What it does:
-#   1. Creates a k3d cluster (skip with --skip-cluster to reuse the current context)
+#   1. Creates a k3d cluster and writes its kubeconfig to ~/.kube/vela-interview
+#      (skip with --skip-cluster to reuse the cluster from an earlier run)
 #   2. Preloads the images the sample applications use
 #   3. Installs the vela-core chart with the controller scaled to 0, so the CRDs
 #      and the built-in definitions (webservice, scaler, ...) exist but nothing
@@ -47,8 +48,14 @@ if [ "$SKIP_CLUSTER" = false ]; then
   k3d cluster create "${CLUSTER}" --image "${K3S_IMAGE}" --wait \
     --k3s-arg "--disable=traefik@server:0" \
     --k3s-arg "--disable=metrics-server@server:0" \
-    --k3s-arg "--disable=local-storage@server:0"
-  kubectl config use-context "k3d-${CLUSTER}"
+    --k3s-arg "--disable=local-storage@server:0" \
+    --kubeconfig-update-default=false
+  mkdir -p "$(dirname "${VELA_KUBECONFIG}")"
+  # It holds the cluster admin key, so keep it private.
+  (umask 077 && k3d kubeconfig get "${CLUSTER}" > "${VELA_KUBECONFIG}")
+elif [ ! -f "${VELA_KUBECONFIG}" ]; then
+  echo "no kubeconfig at ${VELA_KUBECONFIG}; run without --skip-cluster first" >&2
+  exit 1
 fi
 
 kubectl cluster-info >/dev/null
@@ -75,4 +82,5 @@ step "Pointing admission webhooks at this machine"
 
 step "Done"
 echo "Cluster:  k3d-${CLUSTER}"
-echo "Next:     start cmd/core from your IDE (see hack/interview/launch.json.example)"
+echo "Next:     export KUBECONFIG=${VELA_KUBECONFIG}"
+echo "          then start cmd/core from your IDE (see hack/interview/launch.json.example)"
