@@ -64,7 +64,7 @@ func newTestReconciler(t GinkgoTInterface, objs ...client.Object) *Reconciler {
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objs...).
-		WithStatusSubresource(&v1beta1.SpokeCluster{}).
+		WithStatusSubresource(&v1beta1.SpokeCluster{}, &v1beta1.Application{}).
 		Build()
 	// Deliberately a second, distinct client. Spoke reads must go through SpokeReader, so
 	// any code that reaches for the hub client instead fails identity checks rather than

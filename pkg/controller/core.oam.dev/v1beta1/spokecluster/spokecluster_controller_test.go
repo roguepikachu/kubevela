@@ -337,8 +337,8 @@ var _ = It("ProbeFailureMessageNamesTheEndpoint", func() {
 
 var _ = It("ReconcileRejectsInvalidSpecWithoutRegistering", func() {
 	t := GinkgoT()
-	sc := connectableSpoke("provision-blocked")
-	sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
+	sc := connectableSpoke("adopt-blocked")
+	sc.Spec.Mode = v1beta1.SpokeClusterModeAdopt
 	r := connectedReconciler(t, sc)
 
 	res, err := reconcileOnce(t, r, sc)
