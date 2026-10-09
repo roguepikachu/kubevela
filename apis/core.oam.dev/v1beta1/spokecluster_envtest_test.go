@@ -243,5 +243,35 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 				},
 			}))
 		})
+
+		By("refusing a connect spoke that tries to move straight to provision", func() {
+			spoke := &SpokeCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "connect-to-provision", Namespace: "vela-system"},
+				Spec: SpokeClusterSpec{
+					Mode:       SpokeClusterModeConnect,
+					Credential: CredentialSpec{Type: CredentialTypeKubeconfig, Kubeconfig: kubeconfigArm()},
+				},
+			}
+			r.NoError(k8sClient.Create(ctx, spoke))
+			spoke.Spec.Mode = SpokeClusterModeProvision
+			spoke.Spec.InfraProvisioning = &InfraProvisioning{BlueprintRef: &BlueprintReference{Name: "infra"}}
+			err := k8sClient.Update(ctx, spoke)
+			r.Error(err, "connect to provision is not an allowed mode transition")
+			r.Contains(err.Error(), "release", "the rejection has to spell out the allowed transitions")
+		})
+
+		By("letting a connect spoke adopt its cluster", func() {
+			spoke := &SpokeCluster{
+				ObjectMeta: metav1.ObjectMeta{Name: "connect-to-adopt", Namespace: "vela-system"},
+				Spec: SpokeClusterSpec{
+					Mode:       SpokeClusterModeConnect,
+					Credential: CredentialSpec{Type: CredentialTypeKubeconfig, Kubeconfig: kubeconfigArm()},
+				},
+			}
+			r.NoError(k8sClient.Create(ctx, spoke))
+			spoke.Spec.Mode = SpokeClusterModeAdopt
+			spoke.Spec.InfraProvisioning = &InfraProvisioning{BlueprintRef: &BlueprintReference{Name: "infra"}}
+			r.NoError(k8sClient.Update(ctx, spoke), "connect to adopt is an allowed mode transition")
+		})
 	})
 })

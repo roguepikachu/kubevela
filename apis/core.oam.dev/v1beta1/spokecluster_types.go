@@ -24,11 +24,14 @@ import (
 type SpokeClusterMode string
 
 const (
-	// SpokeClusterModeConnect attaches and observes an existing cluster.
+	// SpokeClusterModeConnect attaches to and observes an existing cluster; never
+	// touches its infrastructure.
 	SpokeClusterModeConnect SpokeClusterMode = "connect"
-	// SpokeClusterModeProvision creates the cluster from a blueprint.
+	// SpokeClusterModeProvision creates the cluster from the infraProvisioning
+	// blueprint and owns its substrate objects.
 	SpokeClusterModeProvision SpokeClusterMode = "provision"
-	// SpokeClusterModeAdopt imports an externally provisioned cluster.
+	// SpokeClusterModeAdopt claims an existing cluster's substrate objects without
+	// creating them; behaves like provision afterwards.
 	SpokeClusterModeAdopt SpokeClusterMode = "adopt"
 )
 
@@ -169,15 +172,15 @@ type SpokeClusterSpec struct {
 	// InfraDeletionPolicy controls what happens to infrastructure created by
 	// infraProvisioning when this SpokeCluster is deleted. retain keeps the
 	// substrate objects (and so the cluster); delete lets vela-core's garbage
-	// collection remove them. Only read in mode: provision.
+	// collection remove them. Read in modes provision and adopt.
 	// +optional
 	// +kubebuilder:validation:Enum=retain;delete
 	// +kubebuilder:default=retain
 	InfraDeletionPolicy InfraDeletionPolicy `json:"infraDeletionPolicy,omitempty"`
 
 	// InfraProvisioning references the ClusterBlueprint the hub renders into an
-	// Application on itself to create the cluster (mode: provision). Rejected in
-	// connect mode by the CRD's CEL rules and the admission webhook.
+	// Application on itself to create (provision) or claim (adopt) the cluster.
+	// Rejected in connect mode by the CRD's CEL rules and the admission webhook.
 	// +optional
 	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
@@ -520,8 +523,9 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
 // +kubebuilder:printcolumn:name="PROVISION",type=string,JSONPath=`.status.provisioning.phase`,priority=1
 // +kubebuilder:validation:XValidation:rule="self.metadata.name != 'local'",message="name must not be the reserved local cluster name"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode in ['connect', 'provision']",message="mode must be 'connect' or 'provision' (adopt is not supported yet)"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode != 'provision' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="mode 'provision' requires infraProvisioning.blueprintRef"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode in ['connect', 'provision', 'adopt']",message="mode must be 'connect', 'provision' or 'adopt'"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'connect' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="modes 'provision' and 'adopt' require infraProvisioning.blueprintRef"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode == oldSelf.spec.mode || (oldSelf.spec.mode == 'connect' && self.spec.mode == 'adopt') || (oldSelf.spec.mode == 'provision' && self.spec.mode == 'adopt') || (oldSelf.spec.mode in ['provision', 'adopt'] && self.spec.mode == 'connect')",message="mode may only change connect to adopt, provision to adopt, or provision/adopt to connect (release)"
 // +kubebuilder:validation:XValidation:rule="self.spec.credential.type in ['kubeconfig', 'aws']",message="credential.type must be kubeconfig or aws"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)",message="infraProvisioning is only read in mode 'provision'"
 // +genclient

@@ -259,17 +259,19 @@ var _ = It("SpokeClusterCRD Phase1CEL", func() {
 	t := GinkgoT()
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
-	r.GreaterOrEqual(len(schema.XValidations), 5)
+	r.GreaterOrEqual(len(schema.XValidations), 6)
 	rules := map[string]string{}
 	for _, v := range schema.XValidations {
 		rules[v.Rule] = v.Message
 	}
 	r.Contains(rules, "self.metadata.name != 'local'")
-	r.Contains(rules, "self.spec.mode in ['connect', 'provision']")
+	r.Contains(rules, "self.spec.mode in ['connect', 'provision', 'adopt']")
 	r.Contains(rules, "self.spec.credential.type in ['kubeconfig', 'aws']")
 	r.Contains(rules, "self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)")
-	r.Contains(rules, "self.spec.mode != 'provision' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))")
-	r.NotContains(rules, "self.spec.mode == 'connect'", "connect-only rule must be gone")
+	r.Contains(rules, "self.spec.mode == 'connect' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))")
+	r.Contains(rules, "self.spec.mode == oldSelf.spec.mode || (oldSelf.spec.mode == 'connect' && self.spec.mode == 'adopt') || (oldSelf.spec.mode == 'provision' && self.spec.mode == 'adopt') || (oldSelf.spec.mode in ['provision', 'adopt'] && self.spec.mode == 'connect')")
+	r.NotContains(rules, "self.spec.mode in ['connect', 'provision']")
+	r.NotContains(rules, "self.spec.mode != 'provision' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))")
 })
 
 // The credential union is enforced on the credential schema rather than the root,
