@@ -101,6 +101,10 @@ var _ = Describe("Validate", func() {
 		Entry("provision mode without infraProvisioning", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
 		}, "spec.infraProvisioning.blueprintRef.name"),
+		Entry("provision mode with infraProvisioning but no blueprintRef", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
+			sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{}
+		}, "spec.infraProvisioning.blueprintRef.name"),
 		Entry("provision mode with an empty blueprintRef name", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
 			sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{}}

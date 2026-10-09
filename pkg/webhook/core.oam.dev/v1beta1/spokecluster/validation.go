@@ -29,7 +29,7 @@ import (
 
 const defaultSecretKey = "kubeconfig"
 
-// Validate checks a SpokeCluster against the Phase 1 policy rules that the
+// Validate checks a SpokeCluster against the admission policy rules that the
 // structural schema cannot express: connect or provision mode, the reserved cluster
 // name, the credential union's exactly-one-arm and per-provider required
 // fields, same-namespace kubeconfig secretRef, and infraProvisioning required
@@ -57,8 +57,12 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	// hub renders to create the cluster. In every other mode it is forbidden, so
 	// a stored object never implies provisioning the hub is not going to do.
 	//
-	// The CRD carries both rules in CEL with the same wording, so this holds
-	// with the webhook off and an operator sees one message either way.
+	// The CRD carries the same two rules in CEL so they hold with the webhook
+	// off. The mode and forbidden-outside-provision messages match the webhook's
+	// exactly; the provision-required check is stricter here (it also rejects an
+	// empty name) and its message differs. The error path is deliberately the
+	// leaf, spec.infraProvisioning.blueprintRef.name, whichever level is
+	// missing, so the table test and kubectl output stay uniform.
 	switch sc.Spec.Mode {
 	case v1beta1.SpokeClusterModeProvision:
 		if sc.Spec.InfraProvisioning == nil || sc.Spec.InfraProvisioning.BlueprintRef == nil ||
