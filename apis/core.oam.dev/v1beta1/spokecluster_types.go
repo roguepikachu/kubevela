@@ -117,7 +117,8 @@ const (
 	InfraDeletionPolicyDelete InfraDeletionPolicy = "delete"
 )
 
-// SpokeCluster status condition types. The reconcile loop sets all four; the constants live
+// SpokeCluster status condition types. The connect loop sets the four connect
+// conditions; InfraProvisioned is set only in mode: provision. The constants live
 // here so every consumer, controller, CLI and test alike, shares one spelling.
 const (
 	// SpokeClusterConditionRegistered is true once the hub-side registration exists.
@@ -197,16 +198,13 @@ type SpokeClusterSpec struct {
 	RolloutStrategyRef *BlueprintReference `json:"rolloutStrategyRef,omitempty"`
 }
 
-// InfraProvisioning is the hub-reconciled shared cloud infrastructure for a
-// SpokeCluster. It is applied on the hub against cloud APIs before any blueprint
-// is dispatched to the spoke, and shared outputs are consumed by every
-// SpokeCluster that references the same blueprint.
-//
-// Phase 2 stub: only the blueprint reference is modeled; provisioning behaviour
-// and shared-output consumption arrive with the dispatch controller.
+// InfraProvisioning names the blueprint the hub renders into a per-cluster
+// Application on itself to create the cluster (mode: provision). The hub owns
+// that Application; the SpokeCluster only mirrors its phase and health in
+// status.provisioning.
 type InfraProvisioning struct {
-	// BlueprintRef references the ClusterBlueprint that describes the shared
-	// infrastructure to reconcile on the hub.
+	// BlueprintRef names the ClusterBlueprint, in the SpokeCluster's namespace,
+	// whose components the hub renders into the infra Application.
 	// +optional
 	BlueprintRef *BlueprintReference `json:"blueprintRef,omitempty"`
 }
@@ -524,8 +522,8 @@ type SpokeClusterInfo struct {
 // +kubebuilder:validation:XValidation:rule="self.metadata.name != 'local'",message="name must not be the reserved local cluster name"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode in ['connect', 'provision']",message="mode must be 'connect' or 'provision' (adopt is not supported yet)"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode != 'provision' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="mode 'provision' requires infraProvisioning.blueprintRef"
-// +kubebuilder:validation:XValidation:rule="self.spec.credential.type in ['kubeconfig', 'aws']",message="credential.type must be kubeconfig or aws in Phase 1"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)",message="infraProvisioning is not supported in connect mode (Phase 2)"
+// +kubebuilder:validation:XValidation:rule="self.spec.credential.type in ['kubeconfig', 'aws']",message="credential.type must be kubeconfig or aws"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)",message="infraProvisioning is only read in mode 'provision'"
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 

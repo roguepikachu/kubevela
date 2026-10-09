@@ -210,7 +210,7 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 			},
 			{
 				name: "phase-2-provisioning-in-connect-mode",
-				want: "infraProvisioning is not supported in connect mode",
+				want: "infraProvisioning is only read in mode 'provision'",
 				spec: SpokeClusterSpec{
 					Mode:              SpokeClusterModeConnect,
 					Credential:        CredentialSpec{Type: CredentialTypeKubeconfig, Kubeconfig: kubeconfigArm()},

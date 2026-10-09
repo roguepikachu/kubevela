@@ -96,7 +96,7 @@ var _ = It("SpokeClusterCRD PrinterColumns", func() {
 	for _, name := range []string{"MODE", "VERSION", "NODES", "PLATFORM", "STATUS", "AGE"} {
 		r.Truef(defaultCols[name], "expected default column %q", name)
 	}
-	for _, name := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "AUTH", "LAST PROBE"} {
+	for _, name := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "AUTH", "LAST PROBE", "PROVISION"} {
 		r.Truef(wideCols[name], "expected wide (priority>0) column %q", name)
 	}
 })
@@ -120,6 +120,7 @@ var _ = It("SpokeClusterCRD Enums", func() {
 	spec := schema.Properties["spec"]
 	r.ElementsMatch([]string{`"connect"`, `"provision"`, `"adopt"`}, enumValues(spec.Properties["mode"]))
 	r.ElementsMatch([]string{`"detach"`, `"orphan"`}, enumValues(spec.Properties["deletionPolicy"]))
+	r.ElementsMatch([]string{`"retain"`, `"delete"`}, enumValues(spec.Properties["infraDeletionPolicy"]))
 
 	credential := spec.Properties["credential"]
 	r.ElementsMatch([]string{`"kubeconfig"`, `"aws"`, `"azure"`, `"gcp"`}, enumValues(credential.Properties["type"]))
@@ -178,6 +179,12 @@ var _ = It("SpokeClusterCRD RequiredFields", func() {
 	mode := spec.Properties["mode"]
 	r.NotNil(mode.Default)
 	r.JSONEq(`"connect"`, string(mode.Default.Raw))
+
+	// infraDeletionPolicy is optional because it defaults to retain.
+	r.NotContains(spec.Required, "infraDeletionPolicy")
+	infraDeletion := spec.Properties["infraDeletionPolicy"]
+	r.NotNil(infraDeletion.Default)
+	r.JSONEq(`"retain"`, string(infraDeletion.Default.Raw))
 })
 
 // TestSpokeClusterCRD_AuthColumnFromSpec asserts the wide AUTH column reads the
@@ -195,13 +202,18 @@ var _ = It("SpokeClusterCRD AuthColumnFromSpec", func() {
 	}
 	r.NotNil(version)
 
-	var authPath string
+	var authPath, provisionPath string
 	for _, c := range version.AdditionalPrinterColumns {
-		if c.Name == "AUTH" {
+		switch c.Name {
+		case "AUTH":
 			authPath = c.JSONPath
+		case "PROVISION":
+			provisionPath = c.JSONPath
 		}
 	}
 	r.Equal(".spec.credential.type", authPath)
+	// PROVISION mirrors the infra Application phase projected into status.
+	r.Equal(".status.provisioning.phase", provisionPath)
 })
 
 // TestSpokeClusterCRD_Phase2Stubs asserts the forward-compatible Phase 2 fields
@@ -233,6 +245,14 @@ var _ = It("SpokeClusterCRD Phase2Stubs", func() {
 	for _, field := range []string{"status", "planesHealthy", "planesTotal", "lastPulledAt"} {
 		r.Contains(health.Properties, field)
 	}
+
+	// status.provisioning mirrors the infra Application: the name and health
+	// flag are always written, phase and message only when known.
+	provisioning := status.Properties["provisioning"]
+	r.Equal([]string{"applicationName", "healthy"}, provisioning.Required)
+	r.Equal("boolean", provisioning.Properties["healthy"].Type)
+	r.Contains(provisioning.Properties, "phase")
+	r.Contains(provisioning.Properties, "message")
 })
 
 var _ = It("SpokeClusterCRD Phase1CEL", func() {
