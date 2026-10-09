@@ -19,11 +19,14 @@ package spokecluster
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -73,6 +76,12 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 			return r.finish(ctx, sc, status, probeInterval(sc), nil)
 		}
 		if app.DeletionTimestamp.IsZero() {
+			// Stripped before the delete so a failure here leaves the Application in
+			// place and the pass retries with backoff, rather than leaving half-marked
+			// objects behind an Application that is already going away.
+			if err := r.stripVelaMarkers(ctx, app); err != nil {
+				return ctrl.Result{}, err
+			}
 			if err := r.Delete(ctx, app); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
@@ -99,6 +108,94 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	sc.Status = *status
 	r.emit(sc, event.Normal(reasonInfraReleased, "substrate objects released; the hub no longer manages this cluster's infrastructure"))
 	return r.reconcileConnect(ctx, sc)
+}
+
+// Marker keys vela-core and this controller stamp on applied resources. The name and
+// namespace labels are deliberately absent: vela-core's own garbage collection removes
+// them when the Application goes, and IsResourceManagedByApplication needs them until then.
+const (
+	velaLabelPrefix       = "app.oam.dev/"
+	velaLabelName         = "app.oam.dev/name"
+	velaLabelNamespace    = "app.oam.dev/namespace"
+	velaAnnotationRender  = "oam.dev/render-hash"
+	velaLabelWorkloadType = "workload.oam.dev/type"
+	velaLabelTraitType    = "trait.oam.dev/type"
+	velaLabelTraitRes     = "trait.oam.dev/resource"
+)
+
+// stripVelaMarkers removes every ownership marker except the name and namespace labels
+// from the resources the infra Application applied. vela-core's garbage collection strips
+// only app.oam.dev/name and app.oam.dev/namespace; it leaves the revision, revision hash,
+// component and render-hash markers behind. An adopt Application created afterwards for
+// the same cluster is revision v1 again and renders to the same hash, so vela-core sees
+// an object that already carries its revision and render hash, skips the apply, and never
+// restores the name label: the Application reports healthy while its resource tracker is
+// empty and the objects belong to nobody. Clearing the markers here makes the next apply
+// a real one. Only hub-local resources are touched; a reference into another cluster is
+// not a substrate object this controller rendered.
+func (r *Reconciler) stripVelaMarkers(ctx context.Context, app *v1beta1.Application) error {
+	for _, ref := range app.Status.AppliedResources {
+		if ref.Cluster != "" && ref.Cluster != "local" {
+			continue
+		}
+		if ref.APIVersion == "" || ref.Kind == "" || ref.Name == "" {
+			continue
+		}
+		obj := &unstructured.Unstructured{}
+		obj.SetAPIVersion(ref.APIVersion)
+		obj.SetKind(ref.Kind)
+		err := r.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj)
+		switch {
+		case apierrors.IsNotFound(err):
+			continue
+		case err != nil:
+			return fmt.Errorf("reading applied resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+		}
+		labels, changedLabels := withoutVelaMarkers(obj.GetLabels())
+		annotations, changedAnnotations := withoutVelaMarkers(obj.GetAnnotations())
+		if !changedLabels && !changedAnnotations {
+			continue
+		}
+		patched := obj.DeepCopy()
+		patched.SetLabels(labels)
+		patched.SetAnnotations(annotations)
+		if err := r.Patch(ctx, patched, client.MergeFrom(obj)); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("stripping vela markers from %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err)
+		}
+		klog.V(1).InfoS("Stripped vela ownership markers from released resource",
+			"application", klog.KObj(app), "kind", ref.Kind, "name", klog.KRef(ref.Namespace, ref.Name))
+	}
+	return nil
+}
+
+// withoutVelaMarkers returns in minus every marker key, and whether anything was removed.
+// A nil map stays nil so a patch against an object without labels or annotations is empty.
+func withoutVelaMarkers(in map[string]string) (map[string]string, bool) {
+	var out map[string]string
+	changed := false
+	for k, v := range in {
+		if isVelaMarker(k) {
+			changed = true
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[k] = v
+	}
+	return out, changed
+}
+
+// isVelaMarker reports whether a label or annotation key is one release must clear. The
+// two labels vela-core's garbage collection owns are excluded on purpose.
+func isVelaMarker(key string) bool {
+	switch key {
+	case velaLabelName, velaLabelNamespace:
+		return false
+	case velaAnnotationRender, velaLabelWorkloadType, velaLabelTraitType, velaLabelTraitRes, labelSpokeName, labelSpokeRole:
+		return true
+	}
+	return strings.HasPrefix(key, velaLabelPrefix)
 }
 
 // retainPolicy is the shape of a garbage-collect policy's properties that release cares

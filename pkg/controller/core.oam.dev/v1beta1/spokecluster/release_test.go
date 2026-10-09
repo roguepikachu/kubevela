@@ -22,6 +22,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -78,7 +79,46 @@ func retainedInfraApp(sc *v1beta1.SpokeCluster) *v1beta1.Application {
 		Name: "retain-infra", Type: "garbage-collect",
 		Properties: &runtime.RawExtension{Raw: []byte(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]},"strategy":"never"}]}`)},
 	})
+	app.Status.AppliedResources = []common.ClusterObjectReference{{
+		ObjectReference: corev1.ObjectReference{APIVersion: "v1", Kind: "ConfigMap", Name: appliedResourceName(sc), Namespace: sc.Namespace},
+	}}
 	return app
+}
+
+func appliedResourceName(sc *v1beta1.SpokeCluster) string {
+	return sc.Name + "-fake"
+}
+
+// appliedResource stands in for a substrate object the infra Application dispatched, with
+// the markers vela-core and this controller stamp on it.
+func appliedResource(sc *v1beta1.SpokeCluster) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      appliedResourceName(sc),
+			Namespace: sc.Namespace,
+			Labels: map[string]string{
+				"app.oam.dev/name":        infraAppName(sc),
+				"app.oam.dev/namespace":   sc.Namespace,
+				"app.oam.dev/appRevision": infraAppName(sc) + "-v1",
+				"app.oam.dev/component":   "foundation-cluster",
+				labelSpokeName:            sc.Name,
+				"keep-me":                 "yes",
+			},
+			Annotations: map[string]string{
+				"oam.dev/render-hash": "abc123",
+				"keep-me":             "yes",
+			},
+		},
+	}
+}
+
+func readAppliedResource(t GinkgoTInterface, r *Reconciler, sc *v1beta1.SpokeCluster) *corev1.ConfigMap {
+	t.Helper()
+	cm := &corev1.ConfigMap{}
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: sc.Namespace, Name: appliedResourceName(sc)}, cm); err != nil {
+		t.Fatalf("applied resource missing after release: %v", err)
+	}
+	return cm
 }
 
 // unretainedInfraApp is the infra Application rendered under infraDeletionPolicy delete:
@@ -125,7 +165,7 @@ func wireHealthySpoke(r *Reconciler) {
 var _ = It("ReleaseDeletesInfraApplicationThenConnects", func() {
 	t := GinkgoT()
 	sc := releasingSpoke("cpspoke1")
-	r := newTestReconciler(t, sc, ownedBy(retainedInfraApp(sc), sc))
+	r := newTestReconciler(t, sc, ownedBy(retainedInfraApp(sc), sc), appliedResource(sc))
 	wireHealthySpoke(r)
 
 	By("the first pass deleting the Application under its retain rule", func() {
@@ -133,6 +173,16 @@ var _ = It("ReleaseDeletesInfraApplicationThenConnects", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(res.RequeueAfter).To(Equal(provisionRequeue))
 		Expect(infraAppExists(t, r, sc)).To(BeFalse(), "the infra Application must be deleted")
+
+		cm := readAppliedResource(t, r, sc)
+		Expect(cm.Labels).To(HaveKeyWithValue("app.oam.dev/name", infraAppName(sc)), "the name label is vela-core's to remove")
+		Expect(cm.Labels).To(HaveKeyWithValue("app.oam.dev/namespace", sc.Namespace))
+		Expect(cm.Labels).NotTo(HaveKey("app.oam.dev/appRevision"))
+		Expect(cm.Labels).NotTo(HaveKey("app.oam.dev/component"))
+		Expect(cm.Labels).NotTo(HaveKey(labelSpokeName))
+		Expect(cm.Labels).To(HaveKeyWithValue("keep-me", "yes"), "unrelated labels survive")
+		Expect(cm.Annotations).NotTo(HaveKey("oam.dev/render-hash"))
+		Expect(cm.Annotations).To(HaveKeyWithValue("keep-me", "yes"), "unrelated annotations survive")
 		latest := readSpoke(t, r, sc)
 		wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleasing)
 		wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
