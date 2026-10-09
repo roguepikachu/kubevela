@@ -76,7 +76,7 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 			ControlPlaneStartTimeout: 2 * time.Minute,
 			ControlPlaneStopTimeout:  time.Minute,
 			UseExistingCluster:       ptr.To(false),
-			CRDDirectoryPaths:        []string{spokeClusterCRDPath},
+			CRDDirectoryPaths:        []string{spokeClusterCRDPath, clusterPlaneCRDPath, clusterBlueprintCRDPath},
 		}
 
 		var err error

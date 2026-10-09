@@ -25,10 +25,16 @@ import (
 // Application component on purpose: vela-cluster-core lifts it into an
 // Application unchanged, so anything a ComponentDefinition accepts works here.
 type ClusterPlaneComponent struct {
-	// Name is unique within the plane.
+	// Name is unique within the plane. The rendered Application component is
+	// "<plane>-<component>", which must be a DNS-1123 label, so each half is
+	// capped at 31 characters.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=31
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
 
 	// Type is the ComponentDefinition that renders this component.
+	// +kubebuilder:validation:MinLength=1
 	Type string `json:"type"`
 
 	// Properties are the ComponentDefinition parameters.
@@ -37,6 +43,8 @@ type ClusterPlaneComponent struct {
 	Properties *runtime.RawExtension `json:"properties,omitempty"`
 
 	// DependsOn names components of the same plane that must be healthy first.
+	// Names are plane-local; the renderer rewrites each to "<plane>-<name>"
+	// when lifting into the Application.
 	// +optional
 	DependsOn []string `json:"dependsOn,omitempty"`
 }

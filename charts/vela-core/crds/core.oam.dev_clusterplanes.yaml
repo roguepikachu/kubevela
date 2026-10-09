@@ -62,13 +62,21 @@ spec:
                     Application unchanged, so anything a ComponentDefinition accepts works here.
                   properties:
                     dependsOn:
-                      description: DependsOn names components of the same plane that
-                        must be healthy first.
+                      description: |-
+                        DependsOn names components of the same plane that must be healthy first.
+                        Names are plane-local; the renderer rewrites each to "<plane>-<name>"
+                        when lifting into the Application.
                       items:
                         type: string
                       type: array
                     name:
-                      description: Name is unique within the plane.
+                      description: |-
+                        Name is unique within the plane. The rendered Application component is
+                        "<plane>-<component>", which must be a DNS-1123 label, so each half is
+                        capped at 31 characters.
+                      maxLength: 31
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     properties:
                       description: Properties are the ComponentDefinition parameters.
@@ -77,6 +85,7 @@ spec:
                     type:
                       description: Type is the ComponentDefinition that renders this
                         component.
+                      minLength: 1
                       type: string
                   required:
                   - name

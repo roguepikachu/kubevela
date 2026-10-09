@@ -23,10 +23,17 @@ import (
 // BlueprintPlane is one plane in a blueprint's composition.
 type BlueprintPlane struct {
 	// Name is the plane's name within the blueprint and the prefix of every
-	// component name the hub renders from it.
+	// component name the hub renders from it. The rendered Application
+	// component is "<plane>-<component>", which must be a DNS-1123 label, so
+	// each half is capped at 31 characters.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=31
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
 
 	// Ref points at the ClusterPlane in the same namespace as the blueprint.
+	// ClusterPlane has no revisions yet, so the infraProvisioning renderer
+	// rejects a non-empty ref.revision rather than ignoring it.
 	Ref BlueprintReference `json:"ref"`
 
 	// DependsOn names planes of the same blueprint that must be healthy first.
