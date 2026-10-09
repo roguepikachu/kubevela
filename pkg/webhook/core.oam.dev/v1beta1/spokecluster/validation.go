@@ -76,7 +76,7 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	default:
 		if sc.Spec.InfraProvisioning != nil {
 			errs = append(errs, field.Forbidden(field.NewPath("spec", "infraProvisioning"),
-				"infraProvisioning is only read in mode 'provision'"))
+				"infraProvisioning is only read in modes 'provision' and 'adopt'"))
 		}
 	}
 

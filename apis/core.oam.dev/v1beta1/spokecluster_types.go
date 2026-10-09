@@ -527,7 +527,7 @@ type SpokeClusterInfo struct {
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'connect' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="modes 'provision' and 'adopt' require infraProvisioning.blueprintRef"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == oldSelf.spec.mode || (oldSelf.spec.mode == 'connect' && self.spec.mode == 'adopt') || (oldSelf.spec.mode == 'provision' && self.spec.mode == 'adopt') || (oldSelf.spec.mode in ['provision', 'adopt'] && self.spec.mode == 'connect')",message="mode may only change connect to adopt, provision to adopt, or provision/adopt to connect (release)"
 // +kubebuilder:validation:XValidation:rule="self.spec.credential.type in ['kubeconfig', 'aws']",message="credential.type must be kubeconfig or aws"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)",message="infraProvisioning is only read in mode 'provision'"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)",message="infraProvisioning is only read in modes 'provision' and 'adopt'"
 // +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 

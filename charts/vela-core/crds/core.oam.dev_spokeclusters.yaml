@@ -557,7 +557,7 @@ spec:
             && self.spec.mode == 'connect')
         - message: credential.type must be kubeconfig or aws
           rule: self.spec.credential.type in ['kubeconfig', 'aws']
-        - message: infraProvisioning is only read in mode 'provision'
+        - message: infraProvisioning is only read in modes 'provision' and 'adopt'
           rule: self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)
     served: true
     storage: true
