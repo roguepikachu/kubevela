@@ -53,6 +53,17 @@ func newSpokeClusterRequest(sc *v1beta1.SpokeCluster, op admissionv1.Operation) 
 	}}
 }
 
+// newSpokeClusterUpdateRequest builds an Update request carrying both the
+// stored object and its replacement, as the apiserver does, so the handler can
+// compare them.
+func newSpokeClusterUpdateRequest(old, cur *v1beta1.SpokeCluster) admission.Request {
+	req := newSpokeClusterRequest(cur, admissionv1.Update)
+	raw, err := json.Marshal(old)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	req.OldObject = runtime.RawExtension{Raw: raw}
+	return req
+}
+
 // patchValue looks up a jsonpatch operation by path (add or replace, either
 // is a valid outcome depending on whether the field was present in the raw
 // request) and returns its value.
@@ -122,6 +133,33 @@ var _ = Describe("ValidatingHandler", func() {
 		handler = &ValidatingHandler{Decoder: decoder, Client: cli}
 
 		req := newSpokeClusterRequest(existing, admissionv1.Update)
+		resp := handler.Handle(context.Background(), req)
+		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
+	})
+
+	It("denies an update that moves connect to provision", func() {
+		existing := validKubeconfigSpoke()
+		cli := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(existing).Build()
+		handler = &ValidatingHandler{Decoder: decoder, Client: cli}
+
+		updated := validKubeconfigSpoke()
+		updated.Spec.Mode = v1beta1.SpokeClusterModeProvision
+		updated.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks-capi"}}
+		req := newSpokeClusterUpdateRequest(existing, updated)
+		resp := handler.Handle(context.Background(), req)
+		gomega.Expect(resp.Allowed).To(gomega.BeFalse())
+		gomega.Expect(resp.Result.Message).To(gomega.ContainSubstring("release"))
+	})
+
+	It("allows an update that moves connect to adopt", func() {
+		existing := validKubeconfigSpoke()
+		cli := fake.NewClientBuilder().WithScheme(testScheme).WithObjects(existing).Build()
+		handler = &ValidatingHandler{Decoder: decoder, Client: cli}
+
+		updated := validKubeconfigSpoke()
+		updated.Spec.Mode = v1beta1.SpokeClusterModeAdopt
+		updated.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks-capi"}}
+		req := newSpokeClusterUpdateRequest(existing, updated)
 		resp := handler.Handle(context.Background(), req)
 		gomega.Expect(resp.Allowed).To(gomega.BeTrue(), "response: %+v", resp.Result)
 	})

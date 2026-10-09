@@ -109,8 +109,11 @@ var _ = Describe("Validate", func() {
 			sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
 			sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{}}
 		}, "spec.infraProvisioning.blueprintRef.name"),
-		Entry("adopt mode", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+		Entry("adopt mode without infraProvisioning", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Mode = v1beta1.SpokeClusterModeAdopt
+		}, "spec.infraProvisioning.blueprintRef.name"),
+		Entry("unknown mode", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Mode = "import"
 		}, "spec.mode"),
 		Entry("reserved name local", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Name = multicluster.ClusterLocalName
@@ -274,4 +277,49 @@ var _ = It("accepts provision mode with a blueprintRef", func() {
 	sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
 	sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks-capi"}}
 	gomega.Expect(Validate(sc)).To(gomega.BeEmpty())
+})
+
+var _ = It("accepts adopt mode with a blueprintRef", func() {
+	sc := validAWSSpoke()
+	sc.Spec.Mode = v1beta1.SpokeClusterModeAdopt
+	sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks-capi"}}
+	gomega.Expect(Validate(sc)).To(gomega.BeEmpty())
+})
+
+// spokeInMode returns a valid AWS spoke in the given mode. Modes other than
+// connect carry the blueprintRef they require, so each fixture would pass
+// Validate on its own and the transition tests exercise only the mode rule.
+func spokeInMode(mode v1beta1.SpokeClusterMode) *v1beta1.SpokeCluster {
+	sc := validAWSSpoke()
+	sc.Spec.Mode = mode
+	if mode != v1beta1.SpokeClusterModeConnect {
+		sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks-capi"}}
+	}
+	return sc
+}
+
+var _ = Describe("ValidateTransition", func() {
+	DescribeTable("enforces the mode state machine",
+		func(from, to v1beta1.SpokeClusterMode, allowed bool) {
+			errs := ValidateTransition(spokeInMode(from), spokeInMode(to))
+			if allowed {
+				gomega.Expect(errs).To(gomega.BeEmpty(), "errors: %v", errs.ToAggregate())
+				return
+			}
+			gomega.Expect(errs).To(gomega.HaveLen(1), "errors: %v", errs.ToAggregate())
+			gomega.Expect(errs[0].Field).To(gomega.Equal("spec.mode"))
+		},
+		Entry("connect to adopt", v1beta1.SpokeClusterModeConnect, v1beta1.SpokeClusterModeAdopt, true),
+		Entry("provision to adopt", v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeAdopt, true),
+		Entry("provision to connect (release)", v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeConnect, true),
+		Entry("adopt to connect (release)", v1beta1.SpokeClusterModeAdopt, v1beta1.SpokeClusterModeConnect, true),
+		Entry("connect to provision", v1beta1.SpokeClusterModeConnect, v1beta1.SpokeClusterModeProvision, false),
+		Entry("adopt to provision", v1beta1.SpokeClusterModeAdopt, v1beta1.SpokeClusterModeProvision, false),
+		Entry("connect to connect", v1beta1.SpokeClusterModeConnect, v1beta1.SpokeClusterModeConnect, true),
+		Entry("provision to provision", v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeProvision, true),
+	)
+
+	It("accepts any mode when there is no old object", func() {
+		gomega.Expect(ValidateTransition(nil, spokeInMode(v1beta1.SpokeClusterModeProvision))).To(gomega.BeNil())
+	})
 })

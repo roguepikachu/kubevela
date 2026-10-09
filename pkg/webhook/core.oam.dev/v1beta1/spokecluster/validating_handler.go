@@ -56,6 +56,18 @@ func (h *ValidatingHandler) Handle(ctx context.Context, req admission.Request) a
 		if errs := Validate(sc); len(errs) > 0 {
 			return admission.Denied(errs.ToAggregate().Error())
 		}
+		// The apiserver always sends the stored object on Update. The length guard
+		// keeps a hand-built request without one (as in tests) from failing the
+		// decode, and in that case there is no transition to judge.
+		if req.Operation == admissionv1.Update && len(req.OldObject.Raw) > 0 {
+			old := &v1beta1.SpokeCluster{}
+			if err := h.Decoder.DecodeRaw(req.OldObject, old); err != nil {
+				return admission.Errored(http.StatusBadRequest, err)
+			}
+			if errs := ValidateTransition(old, sc); len(errs) > 0 {
+				return admission.Denied(errs.ToAggregate().Error())
+			}
+		}
 		if errs := h.validateClusterScopedUniqueness(ctx, sc); len(errs) > 0 {
 			return admission.Denied(errs.ToAggregate().Error())
 		}

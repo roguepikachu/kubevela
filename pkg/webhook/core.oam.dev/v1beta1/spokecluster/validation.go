@@ -30,20 +30,21 @@ import (
 const defaultSecretKey = "kubeconfig"
 
 // Validate checks a SpokeCluster against the admission policy rules that the
-// structural schema cannot express: connect or provision mode, the reserved cluster
-// name, the credential union's exactly-one-arm and per-provider required
+// structural schema cannot express: connect, provision or adopt mode, the reserved
+// cluster name, the credential union's exactly-one-arm and per-provider required
 // fields, same-namespace kubeconfig secretRef, and infraProvisioning required
-// in provision mode and forbidden otherwise. blueprintRef and rolloutStrategyRef are
-// accepted and ignored. It has no client or context dependency so it can run
-// identically in the webhook and in tests.
+// in provision and adopt modes and forbidden in connect. blueprintRef and
+// rolloutStrategyRef are accepted and ignored. It looks at one object only; the
+// mode transition rule on update lives in ValidateTransition. It has no client or
+// context dependency so it can run identically in the webhook and in tests.
 func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	var errs field.ErrorList
 
 	switch sc.Spec.Mode {
-	case v1beta1.SpokeClusterModeConnect, v1beta1.SpokeClusterModeProvision:
+	case v1beta1.SpokeClusterModeConnect, v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeAdopt:
 	default:
 		errs = append(errs, field.Invalid(field.NewPath("spec", "mode"), sc.Spec.Mode,
-			"mode must be 'connect' or 'provision' (adopt is not supported yet)"))
+			"mode must be 'connect', 'provision' or 'adopt'"))
 	}
 
 	if sc.Name == multicluster.ClusterLocalName {
@@ -53,22 +54,24 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 
 	errs = append(errs, validateCredential(sc.Namespace, sc.Spec.Credential)...)
 
-	// infraProvisioning belongs to mode: provision, where it is the blueprint the
-	// hub renders to create the cluster. In every other mode it is forbidden, so
-	// a stored object never implies provisioning the hub is not going to do.
+	// infraProvisioning belongs to the modes where the hub manages infrastructure:
+	// provision, where it is the blueprint the hub renders to create the cluster,
+	// and adopt, where it describes a cluster that already exists so the hub can
+	// take it over. In connect it is forbidden, so a stored object never implies
+	// infrastructure management the hub is not going to do.
 	//
 	// The CRD carries the same two rules in CEL so they hold with the webhook
-	// off. The mode and forbidden-outside-provision messages match the webhook's
-	// exactly; the provision-required check is stricter here (it also rejects an
-	// empty name) and its message differs. The error path is deliberately the
-	// leaf, spec.infraProvisioning.blueprintRef.name, whichever level is
-	// missing, so the table test and kubectl output stay uniform.
+	// off. The mode and forbidden-in-connect messages match the CEL messages
+	// exactly; the required check is stricter here (it also rejects an empty
+	// name) and its message differs. The error path is deliberately the leaf,
+	// spec.infraProvisioning.blueprintRef.name, whichever level is missing, so
+	// the table test and kubectl output stay uniform.
 	switch sc.Spec.Mode {
-	case v1beta1.SpokeClusterModeProvision:
+	case v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeAdopt:
 		if sc.Spec.InfraProvisioning == nil || sc.Spec.InfraProvisioning.BlueprintRef == nil ||
 			sc.Spec.InfraProvisioning.BlueprintRef.Name == "" {
 			errs = append(errs, field.Required(field.NewPath("spec", "infraProvisioning", "blueprintRef", "name"),
-				"mode 'provision' requires the blueprint that creates the cluster"))
+				"modes 'provision' and 'adopt' require the blueprint that describes the cluster"))
 		}
 	default:
 		if sc.Spec.InfraProvisioning != nil {
@@ -78,6 +81,30 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	}
 
 	return errs
+}
+
+// ValidateTransition enforces the mode state machine on update. connect may become
+// adopt (bring an attached cluster under management); provision may become adopt (the
+// honest mode after a retain and re-create); provision or adopt may become connect
+// (release: the hub stops managing the infrastructure). Everything else is refused:
+// connect to provision would try to create a cluster that exists, adopt to provision
+// would claim the hub created it. The CRD carries the same rule in CEL.
+func ValidateTransition(old, cur *v1beta1.SpokeCluster) field.ErrorList {
+	if old == nil || old.Spec.Mode == cur.Spec.Mode {
+		return nil
+	}
+	allowed := map[v1beta1.SpokeClusterMode][]v1beta1.SpokeClusterMode{
+		v1beta1.SpokeClusterModeConnect:   {v1beta1.SpokeClusterModeAdopt},
+		v1beta1.SpokeClusterModeProvision: {v1beta1.SpokeClusterModeAdopt, v1beta1.SpokeClusterModeConnect},
+		v1beta1.SpokeClusterModeAdopt:     {v1beta1.SpokeClusterModeConnect},
+	}
+	for _, m := range allowed[old.Spec.Mode] {
+		if m == cur.Spec.Mode {
+			return nil
+		}
+	}
+	return field.ErrorList{field.Forbidden(field.NewPath("spec", "mode"),
+		fmt.Sprintf("mode may not change from %q to %q; allowed: connect to adopt, provision to adopt, provision or adopt to connect (release)", old.Spec.Mode, cur.Spec.Mode))}
 }
 
 // validateCredential enforces the discriminated union: exactly the arm named
