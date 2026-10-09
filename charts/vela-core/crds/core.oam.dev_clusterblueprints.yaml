@@ -1,0 +1,104 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: clusterblueprints.core.oam.dev
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: ClusterBlueprint
+    listKind: ClusterBlueprintList
+    plural: clusterblueprints
+    shortNames:
+    - cbp
+    singular: clusterblueprint
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.description
+      name: DESCRIPTION
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClusterBlueprint is a complete cluster specification made of ClusterPlanes.
+          Phase 2 POC shape: no revisions, no publishing; resolved by name.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ClusterBlueprintSpec composes planes into a complete cluster
+              specification.
+            properties:
+              description:
+                description: Description is free text for operators.
+                type: string
+              planes:
+                description: Planes are composed in order.
+                items:
+                  description: BlueprintPlane is one plane in a blueprint's composition.
+                  properties:
+                    dependsOn:
+                      description: |-
+                        DependsOn names planes of the same blueprint that must be healthy first.
+                        Not read by the infraProvisioning renderer yet; it rejects blueprints that set it.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: |-
+                        Name is the plane's name within the blueprint and the prefix of every
+                        component name the hub renders from it.
+                      type: string
+                    ref:
+                      description: Ref points at the ClusterPlane in the same namespace
+                        as the blueprint.
+                      properties:
+                        name:
+                          description: Name of the referenced object.
+                          type: string
+                        revision:
+                          description: Revision pins an immutable revision of the
+                            referenced object.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - name
+                  - ref
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - planes
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}
