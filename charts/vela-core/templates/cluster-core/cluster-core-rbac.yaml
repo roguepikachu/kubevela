@@ -38,6 +38,14 @@ rules:
   - apiGroups: ["core.oam.dev"]
     resources: ["spokeclusters/finalizers"]
     verbs: ["update"]
+  # mode: provision renders the infraProvisioning blueprint into an owned Application
+  # and watches it for health. The blueprint and its planes are read by name.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["core.oam.dev"]
+    resources: ["clusterblueprints", "clusterplanes"]
+    verbs: ["get", "list", "watch"]
   # Direct Get of a same-namespace or allowlisted kubeconfig Secret (source credential).
   # list/watch stay off the ClusterRole so the manager never starts a
   # cluster-wide Secret informer; gateway-ns informer verbs live on the Role
