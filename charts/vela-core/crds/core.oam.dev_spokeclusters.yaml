@@ -69,6 +69,10 @@ spec:
       name: LAST PROBE
       priority: 1
       type: date
+    - jsonPath: .status.provisioning.phase
+      name: PROVISION
+      priority: 1
+      type: string
     name: v1beta1
     schema:
       openAPIV3Schema:
@@ -126,10 +130,9 @@ spec:
                     properties:
                       authMode:
                         description: |-
-                          AuthMode records how the hub pod's ambient AWS identity was
-                          wired (podIdentity or irsa). Both values use the same
-                          LoadDefaultConfig chain; Materialize refuses a clear ambient
-                          mismatch.
+                          AuthMode records how the hub pod's ambient AWS identity was wired
+                          (podIdentity or irsa). Both values use the same LoadDefaultConfig chain;
+                          Materialize refuses a clear ambient mismatch.
                         enum:
                         - podIdentity
                         - irsa
@@ -139,10 +142,9 @@ spec:
                         type: string
                       externalId:
                         description: |-
-                          ExternalID is the STS external id for the role assumption.
-                          Required with roleArn so the trust policy can demand the same
-                          value (confused-deputy mitigation). Admission rejects AWS
-                          spokes that omit it.
+                          ExternalID is the STS external id for the role assumption. Required with
+                          roleArn so the trust policy can demand the same value (confused-deputy
+                          mitigation). Admission rejects AWS spokes that omit it.
                         type: string
                       region:
                         description: Region is the AWS region the cluster runs in.
@@ -273,17 +275,22 @@ spec:
                 - detach
                 - orphan
                 type: string
+              infraDeletionPolicy:
+                default: retain
+                description: |-
+                  InfraDeletionPolicy controls what happens to infrastructure created by
+                  infraProvisioning when this SpokeCluster is deleted. retain keeps the
+                  substrate objects (and so the cluster); delete lets vela-core's garbage
+                  collection remove them. Only read in mode: provision.
+                enum:
+                - retain
+                - delete
+                type: string
               infraProvisioning:
                 description: |-
-                  InfraProvisioning references the shared cloud infrastructure the hub
-                  reconciles against cloud APIs before the cluster is dispatched to (VPC,
-                  IAM, DNS, and cluster creation when mode is provision).
-
-                  Phase 2 stub: defined so the schema is forward-compatible. No Phase 1
-                  controller reconciles it. Rejected in connect mode by both the CRD's CEL
-                  rules and the admission webhook, because provisioning infrastructure is
-                  what mode: provision is for, and accepting the field would imply the hub
-                  was going to act on it.
+                  InfraProvisioning references the ClusterBlueprint the hub renders into an
+                  Application on itself to create the cluster (mode: provision). Rejected in
+                  connect mode by the CRD's CEL rules and the admission webhook.
                 properties:
                   blueprintRef:
                     description: |-
@@ -366,7 +373,7 @@ spec:
                       unreachable (discovery is skipped) or while discovery is failing. That is what makes
                       it the field to read for staleness: the InfoSynced condition's lastTransitionTime
                       records when discovery first started succeeding, not when it last did.
-                      status.lastProbeTime is refreshed on a coarser cadence.
+                      status.lastProbeTime is refreshed on a coarser cadence (see probeHeartbeatInterval).
                     format: date-time
                     type: string
                   latencyMillis:
@@ -498,10 +505,9 @@ spec:
                   LastProbeTime is when the hub last wrote a probe observation into status.
                   Healthy passes refresh it at most every five minutes so the LAST PROBE
                   column stays recent without an etcd write on every probe interval.
-                  Probe failures (Connected=False, ProbeFailed) update it on every
-                  observed probe. Pre-probe failures (credential or register) flip
-                  connection via markConnectionUnobserved without advancing
-                  LastProbeTime.
+                  Probe failures (Connected=False, ProbeFailed) update it on every observed
+                  probe. Pre-probe failures (credential or register) flip connection via
+                  markConnectionUnobserved without advancing LastProbeTime.
                 format: date-time
                 type: string
               observedGeneration:
@@ -509,14 +515,40 @@ spec:
                   by the controller.
                 format: int64
                 type: integer
+              provisioning:
+                description: |-
+                  Provisioning mirrors the infraProvisioning Application in mode: provision.
+                  It is a projection for kubectl, not a second source of truth.
+                properties:
+                  applicationName:
+                    description: ApplicationName is the hub Application carrying the
+                      substrate components.
+                    type: string
+                  healthy:
+                    description: Healthy is true when every component of the Application
+                      reports healthy.
+                    type: boolean
+                  message:
+                    description: Message summarizes the component health messages.
+                    type: string
+                  phase:
+                    description: Phase is the Application phase (rendering, runningWorkflow,
+                      running, workflowFailed).
+                    type: string
+                required:
+                - applicationName
+                - healthy
+                type: object
             type: object
         type: object
         x-kubernetes-validations:
         - message: name must not be the reserved local cluster name
           rule: self.metadata.name != 'local'
-        - message: mode must be 'connect' in Phase 1 (provision and adopt are not supported
-            yet)
-          rule: self.spec.mode == 'connect'
+        - message: mode must be 'connect' or 'provision' (adopt is not supported yet)
+          rule: self.spec.mode in ['connect', 'provision']
+        - message: mode 'provision' requires infraProvisioning.blueprintRef
+          rule: self.spec.mode != 'provision' || (has(self.spec.infraProvisioning)
+            && has(self.spec.infraProvisioning.blueprintRef))
         - message: credential.type must be kubeconfig or aws in Phase 1
           rule: self.spec.credential.type in ['kubeconfig', 'aws']
         - message: infraProvisioning is not supported in connect mode (Phase 2)

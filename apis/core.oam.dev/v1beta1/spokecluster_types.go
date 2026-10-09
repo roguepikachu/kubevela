@@ -105,6 +105,18 @@ const (
 	SpokeDeletionPolicyOrphan SpokeDeletionPolicy = "orphan"
 )
 
+// InfraDeletionPolicy controls the fate of cloud infrastructure that a
+// provision-mode SpokeCluster created, when the SpokeCluster is deleted.
+type InfraDeletionPolicy string
+
+const (
+	// InfraDeletionPolicyRetain leaves the substrate objects, and so the cluster, in place.
+	InfraDeletionPolicyRetain InfraDeletionPolicy = "retain"
+	// InfraDeletionPolicyDelete lets the infra Application's garbage collection remove
+	// the substrate objects, which destroys the cluster.
+	InfraDeletionPolicyDelete InfraDeletionPolicy = "delete"
+)
+
 // SpokeCluster status condition types. The reconcile loop sets all four; the constants live
 // here so every consumer, controller, CLI and test alike, shares one spelling.
 const (
@@ -116,6 +128,9 @@ const (
 	SpokeClusterConditionConnected = "Connected"
 	// SpokeClusterConditionInfoSynced is true once cluster inventory was discovered.
 	SpokeClusterConditionInfoSynced = "InfoSynced"
+	// SpokeClusterConditionInfraProvisioned is true once every component of the
+	// infraProvisioning Application reports healthy (mode: provision only).
+	SpokeClusterConditionInfraProvisioned = "InfraProvisioned"
 )
 
 // SpokeClusterSpec is the desired state of a managed cluster on the hub.
@@ -150,15 +165,18 @@ type SpokeClusterSpec struct {
 	// +kubebuilder:default=detach
 	DeletionPolicy SpokeDeletionPolicy `json:"deletionPolicy,omitempty"`
 
-	// InfraProvisioning references the shared cloud infrastructure the hub
-	// reconciles against cloud APIs before the cluster is dispatched to (VPC,
-	// IAM, DNS, and cluster creation when mode is provision).
-	//
-	// Phase 2 stub: defined so the schema is forward-compatible. No Phase 1
-	// controller reconciles it. Rejected in connect mode by both the CRD's CEL
-	// rules and the admission webhook, because provisioning infrastructure is
-	// what mode: provision is for, and accepting the field would imply the hub
-	// was going to act on it.
+	// InfraDeletionPolicy controls what happens to infrastructure created by
+	// infraProvisioning when this SpokeCluster is deleted. retain keeps the
+	// substrate objects (and so the cluster); delete lets vela-core's garbage
+	// collection remove them. Only read in mode: provision.
+	// +optional
+	// +kubebuilder:validation:Enum=retain;delete
+	// +kubebuilder:default=retain
+	InfraDeletionPolicy InfraDeletionPolicy `json:"infraDeletionPolicy,omitempty"`
+
+	// InfraProvisioning references the ClusterBlueprint the hub renders into an
+	// Application on itself to create the cluster (mode: provision). Rejected in
+	// connect mode by the CRD's CEL rules and the admission webhook.
 	// +optional
 	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
@@ -376,6 +394,11 @@ type SpokeClusterStatus struct {
 	// +optional
 	LastProbeTime *metav1.Time `json:"lastProbeTime,omitempty"`
 
+	// Provisioning mirrors the infraProvisioning Application in mode: provision.
+	// It is a projection for kubectl, not a second source of truth.
+	// +optional
+	Provisioning *ProvisioningStatus `json:"provisioning,omitempty"`
+
 	// DispatchedRevision is the blueprint revision the hub last dispatched to the
 	// spoke. The dispatch controller advances a spoke when this differs from
 	// spec.blueprintRef.revision.
@@ -392,6 +415,23 @@ type SpokeClusterStatus struct {
 	// aggregation exist; nil in connect-only Phase 1.
 	// +optional
 	Health *SpokeClusterHealth `json:"health,omitempty"`
+}
+
+// ProvisioningStatus is what the hub observed on the infraProvisioning Application.
+type ProvisioningStatus struct {
+	// ApplicationName is the hub Application carrying the substrate components.
+	ApplicationName string `json:"applicationName"`
+
+	// Phase is the Application phase (rendering, runningWorkflow, running, workflowFailed).
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// Healthy is true when every component of the Application reports healthy.
+	Healthy bool `json:"healthy"`
+
+	// Message summarizes the component health messages.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // SpokeClusterHealth is the blueprint health the hub pulls from the spoke
@@ -480,8 +520,10 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="SYNCED",type=date,JSONPath=`.status.clusterInfo.lastSyncedTime`,priority=1
 // +kubebuilder:printcolumn:name="AUTH",type=string,JSONPath=`.spec.credential.type`,priority=1
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
+// +kubebuilder:printcolumn:name="PROVISION",type=string,JSONPath=`.status.provisioning.phase`,priority=1
 // +kubebuilder:validation:XValidation:rule="self.metadata.name != 'local'",message="name must not be the reserved local cluster name"
-// +kubebuilder:validation:XValidation:rule="self.spec.mode == 'connect'",message="mode must be 'connect' in Phase 1 (provision and adopt are not supported yet)"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode in ['connect', 'provision']",message="mode must be 'connect' or 'provision' (adopt is not supported yet)"
+// +kubebuilder:validation:XValidation:rule="self.spec.mode != 'provision' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="mode 'provision' requires infraProvisioning.blueprintRef"
 // +kubebuilder:validation:XValidation:rule="self.spec.credential.type in ['kubeconfig', 'aws']",message="credential.type must be kubeconfig or aws in Phase 1"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode != 'connect' || !has(self.spec.infraProvisioning)",message="infraProvisioning is not supported in connect mode (Phase 2)"
 // +genclient
