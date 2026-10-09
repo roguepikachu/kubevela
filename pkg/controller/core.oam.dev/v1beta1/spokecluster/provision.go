@@ -54,13 +54,39 @@ const (
 
 	labelSpokeName = "spokecluster.core.oam.dev/name"
 	labelSpokeRole = "spokecluster.core.oam.dev/role"
+	labelSpokeUID  = "spokecluster.core.oam.dev/uid"
 	roleInfra      = "infra"
+
+	// infraAppUIDChars is how much of the SpokeCluster UID goes into the Application name.
+	// Eight hex characters separate incarnations comfortably while leaving room for the
+	// spoke name inside a DNS-1123 label.
+	infraAppUIDChars = 8
+	// dnsLabelMaxLen is the longest a DNS-1123 label, and so an Application name, may be.
+	dnsLabelMaxLen = 63
 )
 
-// infraAppName is deterministic so a controller restart mid-provision resumes the same
-// Application instead of rendering a second cluster.
+// infraAppName is deterministic per SpokeCluster incarnation, keyed by UID, so a controller
+// restart mid-provision resumes the same Application instead of rendering a second cluster,
+// while a SpokeCluster re-created after a release or a retained delete renders under a new
+// name and therefore a new revision. That defeats vela-core's skip-unchanged check, which
+// otherwise sees the retained objects' stale app.oam.dev/appRevision and oam.dev/render-hash
+// markers as already applied and never restores app.oam.dev/name. An object without a UID
+// (built directly in a test) falls back to the plain name. The base is truncated when needed
+// so the whole stays a valid DNS-1123 label with the suffix intact.
 func infraAppName(sc *v1beta1.SpokeCluster) string {
-	return "sc-" + sc.Name + "-infra"
+	base := "sc-" + sc.Name + "-infra"
+	uid := string(sc.UID)
+	if uid == "" {
+		return base
+	}
+	if len(uid) > infraAppUIDChars {
+		uid = uid[:infraAppUIDChars]
+	}
+	suffix := "-" + uid
+	if len(base)+len(suffix) > dnsLabelMaxLen {
+		base = strings.TrimRight(base[:dnsLabelMaxLen-len(suffix)], "-")
+	}
+	return base + suffix
 }
 
 // reconcileProvision renders the infraProvisioning blueprint into one Application on the
@@ -202,6 +228,9 @@ func (r *Reconciler) ensureInfraApplication(ctx context.Context, sc *v1beta1.Spo
 		}
 		app.Labels[labelSpokeName] = sc.Name
 		app.Labels[labelSpokeRole] = roleInfra
+		// The UID label is what ties an Application back to one incarnation of the spoke
+		// once the name carries only a prefix of it.
+		app.Labels[labelSpokeUID] = string(sc.UID)
 		app.Spec.Components = comps
 		app.Spec.Policies = policies
 		return controllerutil.SetControllerReference(sc, app, r.Scheme)

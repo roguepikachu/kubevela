@@ -27,6 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	workflowv1alpha1 "github.com/kubevela/workflow/api/v1alpha1"
@@ -85,6 +87,29 @@ func healthyInfraApp(sc *v1beta1.SpokeCluster) *v1beta1.Application {
 	}
 }
 
+var _ = It("InfraAppNameIsPerIncarnation", func() {
+	first := provisionSpoke("cpspoke1")
+	first.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
+	second := provisionSpoke("cpspoke1")
+	second.UID = types.UID("9d1c7b3e-dddd-4eee-8fff-000000000002")
+
+	Expect(infraAppName(first)).NotTo(Equal(infraAppName(second)), "a re-created spoke must render under a new name")
+	Expect(infraAppName(first)).To(Equal(infraAppName(first)), "the same incarnation always maps to the same name")
+	Expect(infraAppName(first)).To(Equal("sc-cpspoke1-infra-0f6e2a1c"))
+	for _, sc := range []*v1beta1.SpokeCluster{first, second} {
+		Expect(validation.IsDNS1123Label(infraAppName(sc))).To(BeEmpty())
+	}
+
+	long := provisionSpoke("a-very-long-spoke-name-that-pushes-the-application-name-past-the-limit")
+	long.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
+	Expect(validation.IsDNS1123Label(infraAppName(long))).To(BeEmpty())
+	Expect(infraAppName(long)).To(HaveSuffix("-0f6e2a1c"), "truncation keeps the incarnation suffix")
+
+	bare := connectableSpoke("cpspoke1")
+	bare.UID = ""
+	Expect(infraAppName(bare)).To(Equal("sc-cpspoke1-infra"), "no UID means the plain name")
+})
+
 var _ = It("ProvisionRendersInfraApplicationAndWaits", func() {
 	t := GinkgoT()
 	sc := provisionSpoke("cpspoke1")
@@ -117,7 +142,9 @@ var _ = It("ProvisionRendersInfraApplicationAndWaits", func() {
 	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonProvisioning)
 	Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateUnknown))
 	Expect(latest.Status.Provisioning).NotTo(BeNil())
-	Expect(latest.Status.Provisioning.ApplicationName).To(Equal("sc-cpspoke1-infra"))
+	Expect(latest.Status.Provisioning.ApplicationName).To(Equal(infraAppName(sc)))
+	Expect(latest.Status.Provisioning.ApplicationName).To(HaveSuffix("-infra-"+string(sc.UID)[:infraAppUIDChars]), "the name carries the incarnation UID prefix")
+	Expect(app.Labels).To(HaveKeyWithValue(labelSpokeUID, string(sc.UID)))
 	Expect(latest.Status.Provisioning.Healthy).To(BeFalse())
 	Expect(secretExists(t, r.Client, "cpspoke1")).To(BeFalse(), "no gateway secret before the cluster exists")
 })
