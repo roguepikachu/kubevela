@@ -204,22 +204,35 @@ func (r *Reconciler) ensureInfraApplication(ctx context.Context, sc *v1beta1.Spo
 }
 
 // infraPolicies is always apply-once (substrates write defaults back into their own
-// spec, and vela-core must not fight them) plus, unless infraDeletionPolicy is delete, a
-// garbage-collect rule that never recycles the substrate objects.
+// spec, and vela-core must not fight them) and take-over (a retained cluster's substrate
+// objects lose their application labels when the owning SpokeCluster is deleted, and
+// vela-core's pre-dispatch dry run refuses to adopt unmanaged objects unless told to; the
+// policy only ever claims objects that belong to no application) plus, unless
+// infraDeletionPolicy is delete, a garbage-collect rule that never recycles the substrate
+// objects.
 func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent) ([]v1beta1.AppPolicy, error) {
+	names := make([]string, 0, len(comps))
+	for _, c := range comps {
+		names = append(names, c.Name)
+	}
 	applyOnce, err := json.Marshal(map[string]any{"enable": true})
 	if err != nil {
 		return nil, err
 	}
-	policies := []v1beta1.AppPolicy{{
-		Name: "apply-once", Type: "apply-once", Properties: &runtime.RawExtension{Raw: applyOnce},
-	}}
+	takeOver, err := json.Marshal(map[string]any{
+		"rules": []map[string]any{{
+			"selector": map[string]any{"componentNames": names},
+		}},
+	})
+	if err != nil {
+		return nil, err
+	}
+	policies := []v1beta1.AppPolicy{
+		{Name: "apply-once", Type: "apply-once", Properties: &runtime.RawExtension{Raw: applyOnce}},
+		{Name: "take-over-retained", Type: "take-over", Properties: &runtime.RawExtension{Raw: takeOver}},
+	}
 	if sc.Spec.InfraDeletionPolicy == v1beta1.InfraDeletionPolicyDelete {
 		return policies, nil
-	}
-	names := make([]string, 0, len(comps))
-	for _, c := range comps {
-		names = append(names, c.Name)
 	}
 	gc, err := json.Marshal(map[string]any{
 		"rules": []map[string]any{{

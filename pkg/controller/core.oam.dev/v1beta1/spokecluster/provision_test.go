@@ -108,6 +108,7 @@ var _ = It("ProvisionRendersInfraApplicationAndWaits", func() {
 		policies[p.Type] = string(p.Properties.Raw)
 	}
 	Expect(policies["apply-once"]).To(MatchJSON(`{"enable":true}`))
+	Expect(policies["take-over"]).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]}}]}`), "a retained cluster must be re-adoptable")
 	Expect(policies["garbage-collect"]).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]},"strategy":"never"}]}`))
 
 	latest := readSpoke(t, r, sc)
@@ -134,7 +135,7 @@ var _ = It("ProvisionDeletePolicyDeleteOmitsRetainRule", func() {
 	for _, p := range app.Spec.Policies {
 		types = append(types, p.Type)
 	}
-	Expect(types).To(ConsistOf("apply-once"))
+	Expect(types).To(ConsistOf("apply-once", "take-over"))
 })
 
 var _ = It("ProvisionHealthyHandsOverToConnect", func() {
