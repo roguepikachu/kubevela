@@ -194,6 +194,38 @@ var _ = It("ProvisionReportsUnmanagedExists", func() {
 	Expect(latest.Status.Provisioning.Message).To(ContainSubstring("mode adopt"))
 })
 
+var _ = It("ProvisionReportsUnmanagedExistsBeforeWorkflowFails", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	bp, plane := infraBlueprint(sc.Namespace)
+	app := unmanagedExistsInfraApp(sc)
+	app.Status.Phase = common.ApplicationRunningWorkflow
+	r := newTestReconciler(t, sc, bp, plane, app)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraUnmanagedExists)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionUnknown, reasonInfraUnmanagedExists)
+})
+
+var _ = It("ProvisionSuspendedWorkflowReportsUnhealthy", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	bp, plane := infraBlueprint(sc.Namespace)
+	app := healthyInfraApp(sc)
+	app.Status.Phase = common.ApplicationWorkflowSuspending
+	app.Status.Services = []common.ApplicationComponentStatus{{Name: "foundation-cluster", Healthy: false}}
+	r := newTestReconciler(t, sc, bp, plane, app)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraUnhealthy)
+})
+
 var _ = It("AdoptDoesNotReportUnmanagedExists", func() {
 	t := GinkgoT()
 	sc := provisionSpoke("cpspoke1")

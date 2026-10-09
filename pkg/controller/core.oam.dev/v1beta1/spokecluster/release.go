@@ -18,7 +18,7 @@ package spokecluster
 
 import (
 	"context"
-	"strings"
+	"encoding/json"
 
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -57,6 +57,15 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	case err != nil:
 		return ctrl.Result{}, err
 	default:
+		// Only an Application this SpokeCluster created may be deleted on its behalf. A
+		// same-named Application owned by something else (or by nothing) is someone
+		// else's cluster, and deleting it would tear that cluster down.
+		if !metav1.IsControlledBy(app, sc) {
+			msg := "infra Application " + app.Name + " is not owned by this SpokeCluster; refusing to delete it"
+			setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleaseRefused, msg)
+			markConnectionUnobserved(status, reasonReleaseRefused, msg)
+			return r.finish(ctx, sc, status, probeInterval(sc), nil)
+		}
 		if !hasRetainRule(app) {
 			msg := "infra Application has no retain rule (infraDeletionPolicy was delete); releasing it would destroy the cluster. Set infraDeletionPolicy retain in the previous mode first"
 			setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleaseRefused, msg)
@@ -71,9 +80,11 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 		}
 		// vela-core still has to process the deletion and strip its labels, so this pass
 		// stops here and the Owns watch wakes the loop when the Application is gone.
+		// status.connection and the Connected condition are deliberately left alone: the
+		// spoke is as reachable as it was a pass ago, only who owns its infrastructure is
+		// changing, and reporting Unknown would read as an outage that never happened.
 		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleasing,
 			"releasing substrate objects: the infra Application is being deleted under its retain rule")
-		markConnectionUnobserved(status, reasonReleasing, "release in progress")
 		return r.finish(ctx, sc, status, provisionRequeue, nil)
 	}
 
@@ -90,15 +101,51 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	return r.reconcileConnect(ctx, sc)
 }
 
-// hasRetainRule reports whether the infra Application carries a garbage-collect rule with
-// strategy never, which is what makes deleting it safe for the cluster. The check is on the
-// raw policy JSON because the controller wrote it with encoding/json, which emits exactly
-// this spelling.
+// retainPolicy is the shape of a garbage-collect policy's properties that release cares
+// about: which components each rule selects and what it does with their resources.
+type retainPolicy struct {
+	Rules []struct {
+		Strategy string `json:"strategy"`
+		Selector struct {
+			ComponentNames []string `json:"componentNames"`
+		} `json:"selector"`
+	} `json:"rules"`
+}
+
+// hasRetainRule reports whether every component of the infra Application is covered by a
+// garbage-collect rule with strategy never, which is what makes deleting the Application
+// safe for the cluster. A rule with no componentNames selects every component. The policy
+// is parsed rather than string-matched so a rule that retains only some of the substrate
+// objects, or one written by hand with different spacing, is judged on what it means.
 func hasRetainRule(app *v1beta1.Application) bool {
+	retained := map[string]bool{}
 	for _, p := range app.Spec.Policies {
-		if p.Type == "garbage-collect" && p.Properties != nil && strings.Contains(string(p.Properties.Raw), `"strategy":"never"`) {
-			return true
+		if p.Type != "garbage-collect" || p.Properties == nil {
+			continue
+		}
+		var policy retainPolicy
+		if err := json.Unmarshal(p.Properties.Raw, &policy); err != nil {
+			continue
+		}
+		for _, rule := range policy.Rules {
+			if rule.Strategy != "never" {
+				continue
+			}
+			if len(rule.Selector.ComponentNames) == 0 {
+				return len(app.Spec.Components) > 0
+			}
+			for _, name := range rule.Selector.ComponentNames {
+				retained[name] = true
+			}
 		}
 	}
-	return false
+	if len(app.Spec.Components) == 0 {
+		return false
+	}
+	for _, c := range app.Spec.Components {
+		if !retained[c.Name] {
+			return false
+		}
+	}
+	return true
 }

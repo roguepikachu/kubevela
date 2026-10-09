@@ -116,9 +116,12 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		}
 		// Provision renders without take-over, so a cluster that already exists outside
 		// any application fails the dispatch dry run. Retrying cannot fix that; naming
-		// the mode that can is the whole value of the distinct reason.
-		if reason == reasonInfraUnhealthy && sc.Spec.Mode == v1beta1.SpokeClusterModeProvision && unmanagedObjectsExist(app) {
-			reason = reasonInfraUnmanagedExists
+		// the mode that can is the whole value of the distinct reason. Checked on any
+		// phase rather than only after infraAppFailed: the step message is set the moment
+		// the dry run refuses, while the Application may sit in runningWorkflow for a
+		// while before vela-core gives up on the step.
+		if sc.Spec.Mode == v1beta1.SpokeClusterModeProvision && unmanagedObjectsExist(app) {
+			reason, connMsg = reasonInfraUnmanagedExists, "substrate objects already exist and belong to no application"
 			summary += "; the cluster's substrate objects already exist and belong to no application: use mode adopt to claim them"
 			status.Provisioning.Message = summary
 		}
@@ -285,10 +288,12 @@ func unmanagedObjectsExist(app *v1beta1.Application) bool {
 }
 
 // infraAppFailed reports whether the Application has reached a phase it will not leave
-// without intervention, as opposed to one it is still working through.
+// without intervention, as opposed to one it is still working through. workflowSuspending
+// counts as failed because vela-core's EnableSuspendOnFailure gate parks a failed workflow
+// in suspending instead of workflowFailed, and nobody suspends an infra workflow on purpose.
 func infraAppFailed(phase common.ApplicationPhase) bool {
 	switch phase {
-	case common.ApplicationWorkflowFailed, common.ApplicationWorkflowTerminated, common.ApplicationUnhealthy:
+	case common.ApplicationWorkflowFailed, common.ApplicationWorkflowTerminated, common.ApplicationWorkflowSuspending, common.ApplicationUnhealthy:
 		return true
 	}
 	return false

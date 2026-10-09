@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
@@ -38,6 +39,9 @@ import (
 // previous mode.
 func releasingSpoke(name string) *v1beta1.SpokeCluster {
 	sc := connectableSpoke(name)
+	// A fixed UID so the infra Application's controller reference can point at it; the
+	// fake client keeps whatever UID an object is created with.
+	sc.UID = types.UID("spoke-" + name)
 	sc.Status.Provisioning = &v1beta1.ProvisioningStatus{ApplicationName: infraAppName(sc), Healthy: true, Phase: "running"}
 	meta.SetStatusCondition(&sc.Status.Conditions, metav1.Condition{
 		Type:    v1beta1.SpokeClusterConditionInfraProvisioned,
@@ -45,7 +49,24 @@ func releasingSpoke(name string) *v1beta1.SpokeCluster {
 		Reason:  reasonInfraReady,
 		Message: "1/1 components healthy",
 	})
+	// The spoke was connected while provisioned; release must not disturb that.
+	sc.Status.Connection = v1beta1.ConnectionStateConnected
+	meta.SetStatusCondition(&sc.Status.Conditions, metav1.Condition{
+		Type:    v1beta1.SpokeClusterConditionConnected,
+		Status:  metav1.ConditionTrue,
+		Reason:  reasonProbeSucceeded,
+		Message: "spoke answered the authenticated probe",
+	})
 	return sc
+}
+
+// ownedBy stamps the controller reference a provision pass would have set on the infra
+// Application, so release recognises it as this SpokeCluster's own.
+func ownedBy(app *v1beta1.Application, sc *v1beta1.SpokeCluster) *v1beta1.Application {
+	app.OwnerReferences = []metav1.OwnerReference{
+		*metav1.NewControllerRef(sc, v1beta1.SchemeGroupVersion.WithKind("SpokeCluster")),
+	}
+	return app
 }
 
 // retainedInfraApp is the infra Application a provision or adopt pass renders when
@@ -104,7 +125,7 @@ func wireHealthySpoke(r *Reconciler) {
 var _ = It("ReleaseDeletesInfraApplicationThenConnects", func() {
 	t := GinkgoT()
 	sc := releasingSpoke("cpspoke1")
-	r := newTestReconciler(t, sc, retainedInfraApp(sc))
+	r := newTestReconciler(t, sc, ownedBy(retainedInfraApp(sc), sc))
 	wireHealthySpoke(r)
 
 	By("the first pass deleting the Application under its retain rule", func() {
@@ -114,7 +135,8 @@ var _ = It("ReleaseDeletesInfraApplicationThenConnects", func() {
 		Expect(infraAppExists(t, r, sc)).To(BeFalse(), "the infra Application must be deleted")
 		latest := readSpoke(t, r, sc)
 		wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleasing)
-		Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateUnknown))
+		wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
+		Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateConnected), "release changes ownership, not reachability")
 		Expect(secretExists(t, r.Client, "cpspoke1")).To(BeFalse(), "no connect work while the release is in flight")
 	})
 
@@ -133,7 +155,7 @@ var _ = It("ReleaseDeletesInfraApplicationThenConnects", func() {
 var _ = It("ReleaseRefusedWithoutRetainRule", func() {
 	t := GinkgoT()
 	sc := releasingSpoke("cpspoke1")
-	r := newTestReconciler(t, sc, unretainedInfraApp(sc))
+	r := newTestReconciler(t, sc, ownedBy(unretainedInfraApp(sc), sc))
 	wireHealthySpoke(r)
 
 	_, err := reconcileOnce(t, r, sc)
@@ -146,6 +168,39 @@ var _ = It("ReleaseRefusedWithoutRetainRule", func() {
 	Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateUnknown))
 	Expect(latest.Status.Provisioning).NotTo(BeNil(), "the projection stays until the release goes through")
 	Expect(secretExists(t, r.Client, "cpspoke1")).To(BeFalse())
+})
+
+var _ = It("ReleaseRefusedWhenApplicationNotOwned", func() {
+	t := GinkgoT()
+	sc := releasingSpoke("cpspoke1")
+	r := newTestReconciler(t, sc, retainedInfraApp(sc))
+	wireHealthySpoke(r)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	Expect(infraAppExists(t, r, sc)).To(BeTrue(), "an Application this spoke does not own must survive")
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleaseRefused)
+	Expect(meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned).Message).To(ContainSubstring("not owned by this SpokeCluster"))
+	Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateUnknown))
+	Expect(latest.Status.Provisioning).NotTo(BeNil())
+})
+
+var _ = It("ReleaseRefusedWhenRetainRuleCoversOnlySomeComponents", func() {
+	t := GinkgoT()
+	sc := releasingSpoke("cpspoke1")
+	app := ownedBy(retainedInfraApp(sc), sc)
+	app.Spec.Components = append(app.Spec.Components, common.ApplicationComponent{Name: "foundation-nodes", Type: "eks-nodegroup"})
+	r := newTestReconciler(t, sc, app)
+	wireHealthySpoke(r)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	Expect(infraAppExists(t, r, sc)).To(BeTrue(), "a rule retaining only some components leaves the rest to be destroyed")
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleaseRefused)
 })
 
 var _ = It("ConnectWithoutProvisioningStatusNeverTouchesApplications", func() {
