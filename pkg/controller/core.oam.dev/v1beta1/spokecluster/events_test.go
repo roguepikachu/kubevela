@@ -136,3 +136,43 @@ var _ = It("EmitGatewaySecretEvent", func() {
 		Expect(rec.events).To(BeEmpty())
 	})
 })
+
+// InfraProvisioned is the one condition with a Normal in-flight reason: Provisioning is
+// progress, not a fault, so it must not be reported as a Warning or counted as a
+// condition failure.
+var _ = It("EmitStatusEventsInfraProvisioned", func() {
+	resetSpokeMetrics()
+	rec := &recordingRecorder{}
+	r := &Reconciler{record: rec}
+	sc := metricSpoke("tenant-a", "spoke-provision")
+
+	By("warning once when the blueprint cannot be resolved", func() {
+		next := &v1beta1.SpokeClusterStatus{Connection: v1beta1.ConnectionStateUnknown}
+		setCondition(next, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse,
+			reasonBlueprintUnresolved, "reading ClusterBlueprint tenant-a/eks: not found")
+		r.emitStatusEvents(sc, nil, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeWarning))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonBlueprintUnresolved))
+	})
+
+	By("reporting normal progress when provisioning starts", func() {
+		prev := &v1beta1.SpokeClusterStatus{Connection: v1beta1.ConnectionStateUnknown}
+		setCondition(prev, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse,
+			reasonBlueprintUnresolved, "reading ClusterBlueprint tenant-a/eks: not found")
+		next := prev.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse,
+			reasonProvisioning, "0/1 components healthy")
+		rec.events = nil
+		r.emitStatusEvents(sc, prev, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeNormal))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonProvisioning))
+
+		By("staying quiet while the same reason persists across passes", func() {
+			rec.events = nil
+			r.emitStatusEvents(sc, next, next)
+			Expect(rec.events).To(BeEmpty())
+		})
+	})
+})

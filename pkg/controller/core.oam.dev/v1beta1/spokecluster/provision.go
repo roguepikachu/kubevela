@@ -33,6 +33,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	spokeadmission "github.com/oam-dev/kubevela/pkg/webhook/core.oam.dev/v1beta1/spokecluster"
 )
 
 // Provision condition reasons. Stable strings, like the connect reasons.
@@ -40,6 +41,7 @@ const (
 	reasonBlueprintUnresolved = "BlueprintUnresolved"
 	reasonInfraRenderFailed   = "InfraRenderFailed"
 	reasonProvisioning        = "Provisioning"
+	reasonInfraUnhealthy      = "InfraUnhealthy"
 	reasonInfraReady          = "InfraReady"
 )
 
@@ -68,6 +70,19 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 	status := sc.Status.DeepCopy()
 	status.ObservedGeneration = sc.Generation
 
+	// A stored object that admission would reject must never create cloud
+	// infrastructure, whether the validating webhook was Ignore during bootstrap or
+	// disabled outright. The connect path enforces the same principle after hand-over;
+	// checking here as well means a bad credential fails before a cluster is rendered
+	// for it rather than after.
+	if errs := spokeadmission.Validate(sc); len(errs) > 0 {
+		msg := errs.ToAggregate().Error()
+		setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonSpecInvalid, msg)
+		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonSpecInvalid, msg)
+		markConnectionUnobserved(status, reasonSpecInvalid, msg)
+		return r.finish(ctx, sc, status, probeInterval(sc), nil)
+	}
+
 	comps, err := r.resolveInfraComponents(ctx, sc)
 	if err != nil {
 		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonBlueprintUnresolved, err.Error())
@@ -82,7 +97,7 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		return r.finish(ctx, sc, status, 0, err)
 	}
 
-	healthy, summary := summarizeInfraHealth(app, len(comps))
+	healthy, summary := summarizeInfraHealth(app, comps)
 	status.Provisioning = &v1beta1.ProvisioningStatus{
 		ApplicationName: app.Name,
 		Phase:           string(app.Status.Phase),
@@ -90,8 +105,16 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		Message:         summary,
 	}
 	if !healthy {
-		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonProvisioning, summary)
-		markConnectionUnobserved(status, reasonProvisioning, "cluster is still being provisioned")
+		// An Application still working through its workflow is the normal in-flight
+		// state. One whose workflow failed or terminated, or that applied everything and
+		// still reports unhealthy, will not recover on its own, so it gets a reason an
+		// operator can alert on without parsing the message.
+		reason, connMsg := reasonProvisioning, "cluster is still being provisioned"
+		if infraAppFailed(app.Status.Phase) {
+			reason, connMsg = reasonInfraUnhealthy, "infrastructure Application is unhealthy"
+		}
+		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reason, summary)
+		markConnectionUnobserved(status, reason, connMsg)
 		return r.finish(ctx, sc, status, provisionRequeue, nil)
 	}
 	setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionTrue, reasonInfraReady, summary)
@@ -212,12 +235,31 @@ func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent
 	}), nil
 }
 
+// infraAppFailed reports whether the Application has reached a phase it will not leave
+// without intervention, as opposed to one it is still working through.
+func infraAppFailed(phase common.ApplicationPhase) bool {
+	switch phase {
+	case common.ApplicationWorkflowFailed, common.ApplicationWorkflowTerminated, common.ApplicationUnhealthy:
+		return true
+	}
+	return false
+}
+
 // summarizeInfraHealth reports whether every expected component is healthy and the
-// Application is running, with a one-line summary for the condition message.
-func summarizeInfraHealth(app *v1beta1.Application, want int) (bool, string) {
+// Application is running, with a one-line summary for the condition message. Services
+// are matched by the component names this pass rendered, so a stale entry left behind
+// by a component that was since removed from the plane cannot make the count add up.
+func summarizeInfraHealth(app *v1beta1.Application, comps []common.ApplicationComponent) (bool, string) {
+	expected := make(map[string]struct{}, len(comps))
+	for _, c := range comps {
+		expected[c.Name] = struct{}{}
+	}
 	healthy := 0
 	var msgs []string
 	for _, s := range app.Status.Services {
+		if _, ok := expected[s.Name]; !ok {
+			continue
+		}
 		if s.Healthy {
 			healthy++
 		}
@@ -226,10 +268,10 @@ func summarizeInfraHealth(app *v1beta1.Application, want int) (bool, string) {
 		}
 	}
 	sort.Strings(msgs)
-	summary := fmt.Sprintf("%d/%d components healthy, application phase %q", healthy, want, app.Status.Phase)
+	summary := fmt.Sprintf("%d/%d components healthy, application phase %q", healthy, len(expected), app.Status.Phase)
 	if len(msgs) > 0 {
 		summary += "; " + strings.Join(msgs, "; ")
 	}
-	all := want > 0 && healthy == want && app.Status.Phase == common.ApplicationRunning
+	all := len(expected) > 0 && healthy == len(expected) && app.Status.Phase == common.ApplicationRunning
 	return all, summary
 }

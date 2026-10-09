@@ -53,6 +53,9 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //   - CredentialValid False (new): Warning MaterializeFailed / NoProvider / SpecInvalid
 //   - Registered False (new): Warning RegisterFailed
 //   - InfoSynced False (new): Warning DiscoveryFailed
+//   - InfraProvisioned True, or False/Provisioning (new): Normal InfraReady / Provisioning
+//   - InfraProvisioned False, any other reason (new): Warning BlueprintUnresolved /
+//     InfraRenderFailed / InfraUnhealthy / SpecInvalid
 //
 // Connection -> Unknown deliberately has no event of its own. It is always the
 // consequence of a credential or registration failure that already emitted, so a second
@@ -80,6 +83,33 @@ func (r *Reconciler) emitStatusEvents(sc *v1beta1.SpokeCluster, prev, next *v1be
 	emitWarningOnConditionFalse(r, sc, prev, next, v1beta1.SpokeClusterConditionCredentialValid)
 	emitWarningOnConditionFalse(r, sc, prev, next, v1beta1.SpokeClusterConditionRegistered)
 	emitWarningOnConditionFalse(r, sc, prev, next, v1beta1.SpokeClusterConditionInfoSynced)
+	emitInfraProvisionedEvent(r, sc, prev, next)
+}
+
+// emitInfraProvisionedEvent reports provisioning progress and failures. Reason
+// Provisioning is the normal in-flight state and is a Normal event; every other
+// False reason (BlueprintUnresolved, InfraRenderFailed, InfraUnhealthy, SpecInvalid)
+// is a Warning and counts as a condition failure, so a permanent misconfiguration
+// is visible in events and metrics rather than only in the condition.
+func emitInfraProvisionedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
+	nextCond := meta.FindStatusCondition(next.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
+	if nextCond == nil {
+		return
+	}
+	var prevCond *metav1.Condition
+	if prev != nil {
+		prevCond = meta.FindStatusCondition(prev.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
+	}
+	if prevCond != nil && prevCond.Status == nextCond.Status && prevCond.Reason == nextCond.Reason {
+		return
+	}
+	switch {
+	case nextCond.Status == metav1.ConditionTrue, nextCond.Reason == reasonProvisioning:
+		r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
+	default:
+		r.emit(sc, event.Warning(event.Reason(nextCond.Reason), fmt.Errorf("%s", nextCond.Message)))
+		spokeConditionFailures.WithLabelValues(sc.Namespace, sc.Name, v1beta1.SpokeClusterConditionInfraProvisioned, nextCond.Reason).Inc()
+	}
 }
 
 func countConnectionTransition(sc *v1beta1.SpokeCluster, to v1beta1.ConnectionState) {

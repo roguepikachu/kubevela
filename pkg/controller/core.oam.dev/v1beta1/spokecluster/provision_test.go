@@ -23,6 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -217,7 +218,92 @@ var _ = It("ProvisionIsIdempotentAcrossPasses", func() {
 	Expect(err).NotTo(HaveOccurred())
 	second := readInfraApp(t, r, sc)
 	Expect(second.UID).To(Equal(first.UID), "the same Application is updated, never recreated")
+	Expect(second.ResourceVersion).To(Equal(first.ResourceVersion), "an unchanged render issues no Update")
 
 	raw, _ := json.Marshal(second.Spec)
 	Expect(string(raw)).To(ContainSubstring(`"foundation-cluster"`))
+})
+
+var _ = It("ProvisionRejectsInvalidCredentialWithoutRendering", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	sc.Spec.Credential.Kubeconfig.SecretRef.Namespace = "other-ns"
+	bp, plane := infraBlueprint(sc.Namespace)
+	r := newTestReconciler(t, sc, bp, plane)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonSpecInvalid)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonSpecInvalid)
+	Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateUnknown))
+	app := &v1beta1.Application{}
+	err = r.Get(context.Background(), client.ObjectKey{Namespace: sc.Namespace, Name: infraAppName(sc)}, app)
+	Expect(apierrors.IsNotFound(err)).To(BeTrue(), "no infrastructure may be rendered for a spec admission rejects")
+})
+
+var _ = It("ProvisionWorkflowFailedReportsUnhealthy", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	bp, plane := infraBlueprint(sc.Namespace)
+	app := healthyInfraApp(sc)
+	app.Status.Phase = common.ApplicationWorkflowFailed
+	app.Status.Services = []common.ApplicationComponentStatus{{
+		Name: "foundation-cluster", Healthy: false, Message: "AWSManagedControlPlane rejected: subnet not found",
+	}}
+	r := newTestReconciler(t, sc, bp, plane, app)
+
+	res, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(res.RequeueAfter).To(Equal(provisionRequeue))
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraUnhealthy)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionUnknown, reasonInfraUnhealthy)
+	Expect(latest.Status.Provisioning.Healthy).To(BeFalse())
+	Expect(latest.Status.Provisioning.Phase).To(Equal("workflowFailed"))
+	Expect(latest.Status.Provisioning.Message).To(ContainSubstring("subnet not found"))
+})
+
+var _ = It("ProvisionTwoPassHandOverKeepsProjection", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	bp, plane := infraBlueprint(sc.Namespace)
+	r := newTestReconciler(t, sc, bp, plane)
+	r.Providers = kubeconfigRegistry(tokenCredential(), nil)
+	r.probeFn = func(_ context.Context, _ *v1beta1.SpokeCluster) (time.Duration, error) {
+		return 5 * time.Millisecond, nil
+	}
+	r.discoverFn = func(_ context.Context, _ *v1beta1.SpokeCluster, _ *credential.Materialized, latency time.Duration) (*v1beta1.SpokeClusterInfo, error) {
+		return &v1beta1.SpokeClusterInfo{KubernetesVersion: "v1.35.6-eks", NodeCount: 2, LatencyMillis: latency.Milliseconds()}, nil
+	}
+
+	By("rendering the Application and waiting while it is unhealthy", func() {
+		_, err := reconcileOnce(t, r, sc)
+		Expect(err).NotTo(HaveOccurred())
+		latest := readSpoke(t, r, sc)
+		wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonProvisioning)
+		Expect(secretExists(t, r.Client, "cpspoke1")).To(BeFalse())
+	})
+
+	By("the substrate finishing and vela-core marking the Application running", func() {
+		app := readInfraApp(t, r, sc)
+		app.Status.Phase = common.ApplicationRunning
+		app.Status.Services = []common.ApplicationComponentStatus{{Name: "foundation-cluster", Healthy: true, Message: "EKS cpspoke1 ready=true"}}
+		Expect(r.Status().Update(context.Background(), app)).To(Succeed())
+	})
+
+	By("the next pass handing over to connect without losing the provisioning projection", func() {
+		_, err := reconcileOnce(t, r, sc)
+		Expect(err).NotTo(HaveOccurred())
+		latest := readSpoke(t, r, sc)
+		wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionTrue, reasonInfraReady)
+		wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
+		Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateConnected))
+		Expect(latest.Status.Provisioning).NotTo(BeNil())
+		Expect(latest.Status.Provisioning.Healthy).To(BeTrue())
+		Expect(latest.Status.ClusterInfo.NodeCount).To(Equal(2))
+		Expect(secretExists(t, r.Client, "cpspoke1")).To(BeTrue())
+	})
 })
