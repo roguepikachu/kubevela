@@ -86,8 +86,9 @@ const (
 
 // Reconcile brings one SpokeCluster's status in line with the spoke's live state.
 //
-// The order is fixed: fetch, deletion dispatch, finalizer, then provision or connect by
-// mode. The finalizer is persisted before any external side effect, so a spoke that got as
+// The order is fixed: fetch, deletion dispatch, finalizer, then dispatch by mode: provision
+// and adopt render the infra Application (adopt with take-over), connect releases any
+// infrastructure the spoke used to manage and then runs the connect sequence. The finalizer is persisted before any external side effect, so a spoke that got as
 // far as a gateway Secret always has teardown guaranteed. Adding it does trigger a
 // follow-up reconcile, but this pass carries on into the connect sequence rather than
 // returning early, so a first-time SpokeCluster reaches Connected in one pass instead of
@@ -111,10 +112,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
-	if sc.Spec.Mode == v1beta1.SpokeClusterModeProvision {
+	switch sc.Spec.Mode {
+	case v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeAdopt:
 		return r.reconcileProvision(ctx, sc)
+	default:
+		// A connect spoke that still carries a provisioning projection was moved here
+		// from provision or adopt; its infrastructure has to be released before plain
+		// connect work resumes.
+		if sc.Status.Provisioning != nil {
+			return r.releaseInfra(ctx, sc)
+		}
+		return r.reconcileConnect(ctx, sc)
 	}
-	return r.reconcileConnect(ctx, sc)
 }
 
 // reconcileConnect runs the connect sequence and writes status exactly once, whichever step
@@ -130,8 +139,8 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 
 	// Re-check admission rules even when the validating webhook is Ignore (job-patch
 	// bootstrap window) or disabled. A stored adopt, local or azure object must not
-	// register a gateway Secret; a provision object reaches this point only after its
-	// infrastructure is healthy.
+	// register a gateway Secret; a provision or adopt object reaches this point only after
+	// its infrastructure is healthy, or after release.
 	if errs := spokeadmission.Validate(sc); len(errs) > 0 {
 		msg := errs.ToAggregate().Error()
 		setCondition(status, v1beta1.SpokeClusterConditionCredentialValid, metav1.ConditionFalse, reasonSpecInvalid, msg)

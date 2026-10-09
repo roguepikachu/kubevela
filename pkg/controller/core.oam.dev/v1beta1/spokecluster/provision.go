@@ -38,11 +38,12 @@ import (
 
 // Provision condition reasons. Stable strings, like the connect reasons.
 const (
-	reasonBlueprintUnresolved = "BlueprintUnresolved"
-	reasonInfraRenderFailed   = "InfraRenderFailed"
-	reasonProvisioning        = "Provisioning"
-	reasonInfraUnhealthy      = "InfraUnhealthy"
-	reasonInfraReady          = "InfraReady"
+	reasonBlueprintUnresolved  = "BlueprintUnresolved"
+	reasonInfraRenderFailed    = "InfraRenderFailed"
+	reasonProvisioning         = "Provisioning"
+	reasonInfraUnhealthy       = "InfraUnhealthy"
+	reasonInfraUnmanagedExists = "InfraUnmanagedExists"
+	reasonInfraReady           = "InfraReady"
 )
 
 const (
@@ -112,6 +113,14 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		reason, connMsg := reasonProvisioning, "cluster is still being provisioned"
 		if infraAppFailed(app.Status.Phase) {
 			reason, connMsg = reasonInfraUnhealthy, "infrastructure Application is unhealthy"
+		}
+		// Provision renders without take-over, so a cluster that already exists outside
+		// any application fails the dispatch dry run. Retrying cannot fix that; naming
+		// the mode that can is the whole value of the distinct reason.
+		if reason == reasonInfraUnhealthy && sc.Spec.Mode == v1beta1.SpokeClusterModeProvision && unmanagedObjectsExist(app) {
+			reason = reasonInfraUnmanagedExists
+			summary += "; the cluster's substrate objects already exist and belong to no application: use mode adopt to claim them"
+			status.Provisioning.Message = summary
 		}
 		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reason, summary)
 		markConnectionUnobserved(status, reason, connMsg)
@@ -203,13 +212,14 @@ func (r *Reconciler) ensureInfraApplication(ctx context.Context, sc *v1beta1.Spo
 	return app, nil
 }
 
-// infraPolicies is always apply-once (substrates write defaults back into their own
-// spec, and vela-core must not fight them) and take-over (a retained cluster's substrate
-// objects lose their application labels when the owning SpokeCluster is deleted, and
-// vela-core's pre-dispatch dry run refuses to adopt unmanaged objects unless told to; the
-// policy only ever claims objects that belong to no application) plus, unless
-// infraDeletionPolicy is delete, a garbage-collect rule that never recycles the substrate
-// objects.
+// infraPolicies is always apply-once, because substrates write defaults back into their
+// own spec and vela-core must not fight them. take-over is added in mode adopt only: a
+// retained cluster's substrate objects lose their application labels when the owning
+// SpokeCluster is deleted, and vela-core's pre-dispatch dry run refuses to adopt unmanaged
+// objects unless told to, so adopt has to say so. Provision must never claim objects it
+// did not create, so it renders without the policy and lets the dry run refuse (see
+// unmanagedObjectsExist). Unless infraDeletionPolicy is delete, a garbage-collect rule
+// that never recycles the substrate objects completes the set.
 func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent) ([]v1beta1.AppPolicy, error) {
 	names := make([]string, 0, len(comps))
 	for _, c := range comps {
@@ -229,7 +239,11 @@ func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent
 	}
 	policies := []v1beta1.AppPolicy{
 		{Name: "apply-once", Type: "apply-once", Properties: &runtime.RawExtension{Raw: applyOnce}},
-		{Name: "take-over-retained", Type: "take-over", Properties: &runtime.RawExtension{Raw: takeOver}},
+	}
+	if sc.Spec.Mode == v1beta1.SpokeClusterModeAdopt {
+		policies = append(policies, v1beta1.AppPolicy{
+			Name: "take-over-existing", Type: "take-over", Properties: &runtime.RawExtension{Raw: takeOver},
+		})
 	}
 	if sc.Spec.InfraDeletionPolicy == v1beta1.InfraDeletionPolicyDelete {
 		return policies, nil
@@ -246,6 +260,28 @@ func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent
 	return append(policies, v1beta1.AppPolicy{
 		Name: "retain-infra", Type: "garbage-collect", Properties: &runtime.RawExtension{Raw: gc},
 	}), nil
+}
+
+// unmanagedObjectsExist reports whether vela-core refused the dispatch because the
+// substrate objects already exist and belong to no application. Claiming them is
+// adoption's job, so provision mode names the fix instead of retrying forever. Sub-steps
+// are checked too because a step group reports the failing apply in its children.
+func unmanagedObjectsExist(app *v1beta1.Application) bool {
+	if app.Status.Workflow == nil {
+		return false
+	}
+	const marker = "exists but not managed by any application"
+	for _, step := range app.Status.Workflow.Steps {
+		if strings.Contains(step.Message, marker) {
+			return true
+		}
+		for _, sub := range step.SubStepsStatus {
+			if strings.Contains(sub.Message, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // infraAppFailed reports whether the Application has reached a phase it will not leave

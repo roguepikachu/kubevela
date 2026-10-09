@@ -29,6 +29,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	workflowv1alpha1 "github.com/kubevela/workflow/api/v1alpha1"
+
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 	"github.com/oam-dev/kubevela/pkg/spokecluster/credential"
@@ -108,7 +110,7 @@ var _ = It("ProvisionRendersInfraApplicationAndWaits", func() {
 		policies[p.Type] = string(p.Properties.Raw)
 	}
 	Expect(policies["apply-once"]).To(MatchJSON(`{"enable":true}`))
-	Expect(policies["take-over"]).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]}}]}`), "a retained cluster must be re-adoptable")
+	Expect(policies).NotTo(HaveKey("take-over"), "provision must not claim objects it did not create")
 	Expect(policies["garbage-collect"]).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]},"strategy":"never"}]}`))
 
 	latest := readSpoke(t, r, sc)
@@ -135,7 +137,75 @@ var _ = It("ProvisionDeletePolicyDeleteOmitsRetainRule", func() {
 	for _, p := range app.Spec.Policies {
 		types = append(types, p.Type)
 	}
-	Expect(types).To(ConsistOf("apply-once", "take-over"))
+	Expect(types).To(ConsistOf("apply-once"))
+})
+
+var _ = It("AdoptRendersWithTakeOver", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	sc.Spec.Mode = v1beta1.SpokeClusterModeAdopt
+	bp, plane := infraBlueprint(sc.Namespace)
+	r := newTestReconciler(t, sc, bp, plane)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	app := readInfraApp(t, r, sc)
+	policies := map[string]string{}
+	for _, p := range app.Spec.Policies {
+		policies[p.Type] = string(p.Properties.Raw)
+	}
+	Expect(policies["apply-once"]).To(MatchJSON(`{"enable":true}`))
+	Expect(policies["take-over"]).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]}}]}`), "adopt claims the existing substrate objects")
+	Expect(policies["garbage-collect"]).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["foundation-cluster"]},"strategy":"never"}]}`))
+})
+
+// unmanagedExistsInfraApp is an infra Application whose dispatch vela-core refused because
+// the substrate objects already exist and belong to no application.
+func unmanagedExistsInfraApp(sc *v1beta1.SpokeCluster) *v1beta1.Application {
+	app := healthyInfraApp(sc)
+	app.Status.Phase = common.ApplicationWorkflowFailed
+	app.Status.Services = []common.ApplicationComponentStatus{{Name: "foundation-cluster", Healthy: false}}
+	app.Status.Workflow = &common.WorkflowStatus{
+		Steps: []workflowv1alpha1.WorkflowStepStatus{{StepStatus: workflowv1alpha1.StepStatus{
+			ID:   "step-1",
+			Name: "foundation-cluster",
+			Type: "apply-component",
+			Message: "apply-component failed: Dispatch: pre-dispatch dryrun failed: Found 6 errors. " +
+				"[(cannot apply ApplyOption: AWSManagedControlPlane vela-system/cpspoke1-control-plane exists but not managed by any application now)]",
+		}}},
+	}
+	return app
+}
+
+var _ = It("ProvisionReportsUnmanagedExists", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	bp, plane := infraBlueprint(sc.Namespace)
+	r := newTestReconciler(t, sc, bp, plane, unmanagedExistsInfraApp(sc))
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraUnmanagedExists)
+	cond := meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
+	Expect(cond.Message).To(ContainSubstring("mode adopt"))
+	Expect(latest.Status.Provisioning.Message).To(ContainSubstring("mode adopt"))
+})
+
+var _ = It("AdoptDoesNotReportUnmanagedExists", func() {
+	t := GinkgoT()
+	sc := provisionSpoke("cpspoke1")
+	sc.Spec.Mode = v1beta1.SpokeClusterModeAdopt
+	bp, plane := infraBlueprint(sc.Namespace)
+	r := newTestReconciler(t, sc, bp, plane, unmanagedExistsInfraApp(sc))
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraUnhealthy)
 })
 
 var _ = It("ProvisionHealthyHandsOverToConnect", func() {

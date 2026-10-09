@@ -53,9 +53,13 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //   - CredentialValid False (new): Warning MaterializeFailed / NoProvider / SpecInvalid
 //   - Registered False (new): Warning RegisterFailed
 //   - InfoSynced False (new): Warning DiscoveryFailed
-//   - InfraProvisioned True, or False/Provisioning (new): Normal InfraReady / Provisioning
+//   - InfraProvisioned True, or False/Provisioning or False/Releasing (new): Normal
+//     InfraReady / Provisioning / Releasing
 //   - InfraProvisioned False, any other reason (new): Warning BlueprintUnresolved /
-//     InfraRenderFailed / InfraUnhealthy / SpecInvalid
+//     InfraRenderFailed / InfraUnhealthy / InfraUnmanagedExists / ReleaseRefused /
+//     SpecInvalid
+//   - InfraProvisioned removed after a release: Normal InfraReleased, emitted from
+//     releaseInfra itself because there is no condition left to compare
 //
 // Connection -> Unknown deliberately has no event of its own. It is always the
 // consequence of a credential or registration failure that already emitted, so a second
@@ -86,11 +90,12 @@ func (r *Reconciler) emitStatusEvents(sc *v1beta1.SpokeCluster, prev, next *v1be
 	emitInfraProvisionedEvent(r, sc, prev, next)
 }
 
-// emitInfraProvisionedEvent reports provisioning progress and failures. Reason
-// Provisioning is the normal in-flight state and is a Normal event; every other
-// False reason (BlueprintUnresolved, InfraRenderFailed, InfraUnhealthy, SpecInvalid)
-// is a Warning and counts as a condition failure, so a permanent misconfiguration
-// is visible in events and metrics rather than only in the condition.
+// emitInfraProvisionedEvent reports provisioning progress and failures. Provisioning
+// and Releasing are the normal in-flight states and are Normal events; every other
+// False reason (BlueprintUnresolved, InfraRenderFailed, InfraUnhealthy,
+// InfraUnmanagedExists, ReleaseRefused, SpecInvalid) is a Warning and counts as a
+// condition failure, so a permanent misconfiguration is visible in events and metrics
+// rather than only in the condition.
 func emitInfraProvisionedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
 	nextCond := meta.FindStatusCondition(next.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
 	if nextCond == nil {
@@ -104,7 +109,7 @@ func emitInfraProvisionedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, ne
 		return
 	}
 	switch {
-	case nextCond.Status == metav1.ConditionTrue, nextCond.Reason == reasonProvisioning:
+	case nextCond.Status == metav1.ConditionTrue, nextCond.Reason == reasonProvisioning, nextCond.Reason == reasonReleasing:
 		r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
 	default:
 		r.emit(sc, event.Warning(event.Reason(nextCond.Reason), fmt.Errorf("%s", nextCond.Message)))
