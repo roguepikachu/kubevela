@@ -98,9 +98,13 @@ var _ = Describe("Validate", func() {
 			}
 			gomega.Expect(fields).To(gomega.ContainElement(wantField), "errors: %v", errs.ToAggregate())
 		},
-		Entry("provision mode", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+		Entry("provision mode without infraProvisioning", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
-		}, "spec.mode"),
+		}, "spec.infraProvisioning.blueprintRef.name"),
+		Entry("provision mode with an empty blueprintRef name", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
+			sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{}}
+		}, "spec.infraProvisioning.blueprintRef.name"),
 		Entry("adopt mode", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
 			sc.Spec.Mode = v1beta1.SpokeClusterModeAdopt
 		}, "spec.mode"),
@@ -259,4 +263,11 @@ var _ = Describe("Default", func() {
 
 		gomega.Expect(func() { Default(sc) }).NotTo(gomega.Panic())
 	})
+})
+
+var _ = It("accepts provision mode with a blueprintRef", func() {
+	sc := validAWSSpoke()
+	sc.Spec.Mode = v1beta1.SpokeClusterModeProvision
+	sc.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks-capi"}}
+	gomega.Expect(Validate(sc)).To(gomega.BeEmpty())
 })

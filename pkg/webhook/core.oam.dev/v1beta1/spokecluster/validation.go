@@ -30,18 +30,20 @@ import (
 const defaultSecretKey = "kubeconfig"
 
 // Validate checks a SpokeCluster against the Phase 1 policy rules that the
-// structural schema cannot express: connect-only mode, the reserved cluster
+// structural schema cannot express: connect or provision mode, the reserved cluster
 // name, the credential union's exactly-one-arm and per-provider required
-// fields, same-namespace kubeconfig secretRef, and rejection of
-// infraProvisioning in connect mode. blueprintRef and rolloutStrategyRef are
+// fields, same-namespace kubeconfig secretRef, and infraProvisioning required
+// in provision mode and forbidden otherwise. blueprintRef and rolloutStrategyRef are
 // accepted and ignored. It has no client or context dependency so it can run
 // identically in the webhook and in tests.
 func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 	var errs field.ErrorList
 
-	if sc.Spec.Mode != v1beta1.SpokeClusterModeConnect {
+	switch sc.Spec.Mode {
+	case v1beta1.SpokeClusterModeConnect, v1beta1.SpokeClusterModeProvision:
+	default:
 		errs = append(errs, field.Invalid(field.NewPath("spec", "mode"), sc.Spec.Mode,
-			"mode must be 'connect' (provision and adopt are not supported in Phase 1)"))
+			"mode must be 'connect' or 'provision' (adopt is not supported yet)"))
 	}
 
 	if sc.Name == multicluster.ClusterLocalName {
@@ -51,15 +53,24 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 
 	errs = append(errs, validateCredential(sc.Namespace, sc.Spec.Credential)...)
 
-	// infraProvisioning belongs to mode: provision. blueprintRef and
-	// rolloutStrategyRef stay accepted and ignored so GitOps can land the
-	// Phase 2 shape early; no Phase 1 controller reads them.
+	// infraProvisioning belongs to mode: provision, where it is the blueprint the
+	// hub renders to create the cluster. In every other mode it is forbidden, so
+	// a stored object never implies provisioning the hub is not going to do.
 	//
-	// The CRD carries the same rule in CEL, so this holds with the webhook off.
-	// Both report the same message, so an operator sees one wording either way.
-	if sc.Spec.InfraProvisioning != nil {
-		errs = append(errs, field.Forbidden(field.NewPath("spec", "infraProvisioning"),
-			"infraProvisioning is not supported in connect mode (Phase 2)"))
+	// The CRD carries both rules in CEL with the same wording, so this holds
+	// with the webhook off and an operator sees one message either way.
+	switch sc.Spec.Mode {
+	case v1beta1.SpokeClusterModeProvision:
+		if sc.Spec.InfraProvisioning == nil || sc.Spec.InfraProvisioning.BlueprintRef == nil ||
+			sc.Spec.InfraProvisioning.BlueprintRef.Name == "" {
+			errs = append(errs, field.Required(field.NewPath("spec", "infraProvisioning", "blueprintRef", "name"),
+				"mode 'provision' requires the blueprint that creates the cluster"))
+		}
+	default:
+		if sc.Spec.InfraProvisioning != nil {
+			errs = append(errs, field.Forbidden(field.NewPath("spec", "infraProvisioning"),
+				"infraProvisioning is only read in mode 'provision'"))
+		}
 	}
 
 	return errs
