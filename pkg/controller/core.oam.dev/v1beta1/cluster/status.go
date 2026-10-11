@@ -26,13 +26,16 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
 
-// Values of status.health.status.
+// Values of status.health.status. They follow the phase: Healthy when Ready, Degraded when
+// Degraded, Progressing for every stage in between (and for a Cluster with no planes yet).
+// Defined here for now; an API follow-up moves them onto the type and documents Progressing.
 const (
 	// HealthStatusHealthy means every plane's Application is running with every
 	// component healthy.
 	HealthStatusHealthy = "Healthy"
-	// HealthStatusDegraded means at least one plane is not healthy, whether it is still
-	// coming up or its workflow failed.
+	// HealthStatusProgressing means the planes are still converging and nothing has failed.
+	HealthStatusProgressing = "Progressing"
+	// HealthStatusDegraded means at least one plane's workflow failed.
 	HealthStatusDegraded = "Degraded"
 )
 
@@ -41,6 +44,7 @@ const (
 	reasonResolved              = "Resolved"
 	reasonBlueprintMissing      = "BlueprintRevisionMissing"
 	reasonPlaneRevisionMissing  = "PlaneRevisionMissing"
+	reasonDependencyUnresolved  = "DependencyUnresolved"
 	messageApplicationNotFound  = "Application not found"
 	messagePlaneRevisionMissing = "waiting for ClusterPlaneRevision "
 )
@@ -81,17 +85,25 @@ func observePlanes(status *v1beta1.ClusterStatus, planes []orderedPlane, apps ma
 		status.Planes = append(status.Planes, ps)
 	}
 
-	health := &v1beta1.ClusterHealth{
-		Status:        HealthStatusDegraded,
+	status.Phase = clusterPhase(status.Planes, found, failed)
+	status.Health = &v1beta1.ClusterHealth{
+		Status:        healthStatus(status.Phase),
 		PlanesHealthy: healthy,
 		PlanesTotal:   len(planes),
 		LastCheckTime: &now,
 	}
-	if len(planes) > 0 && healthy == len(planes) {
-		health.Status = HealthStatusHealthy
+}
+
+// healthStatus is the aggregate health the phase implies.
+func healthStatus(phase v1beta1.ClusterPhase) string {
+	switch phase {
+	case v1beta1.ClusterPhaseReady:
+		return HealthStatusHealthy
+	case v1beta1.ClusterPhaseDegraded:
+		return HealthStatusDegraded
+	default:
+		return HealthStatusProgressing
 	}
-	status.Health = health
-	status.Phase = clusterPhase(status.Planes, found, failed)
 }
 
 // clusterPhase is Pending until any Application exists, Degraded as soon as any workflow

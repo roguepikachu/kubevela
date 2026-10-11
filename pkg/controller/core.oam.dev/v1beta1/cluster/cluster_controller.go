@@ -75,7 +75,7 @@ type Reconciler struct {
 // bundle object by object, so a Cluster can land before the revisions it names, and the
 // next pass picks them up.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	klog.InfoS("Reconcile Cluster", "cluster", klog.KRef(req.Namespace, req.Name))
+	klog.V(2).InfoS("Reconcile Cluster", "cluster", klog.KRef(req.Namespace, req.Name))
 
 	cl := &v1beta1.Cluster{}
 	if err := r.Get(ctx, req.NamespacedName, cl); err != nil {
@@ -97,29 +97,48 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if len(missing) > 0 {
 		setCondition(status, v1beta1.ClusterConditionBlueprintResolved, metav1.ConditionFalse, reasonBlueprintMissing,
 			"ClusterBlueprintRevision not found: "+strings.Join(missing, ", "))
-		status.Phase = v1beta1.ClusterPhasePending
+		// Planes and health from the previous revision are cleared rather than kept: they
+		// describe a blueprint the spec no longer names, and the hub, which reads this
+		// status, would otherwise map stale plane names onto the new blueprint. The
+		// Applications themselves stay until a resolvable revision replaces them.
+		observePlanes(status, nil, nil, metav1.Now())
 		return r.finish(ctx, cl, status, requeueNotReady)
 	}
 
 	planes := orderPlanes(cl, revs)
-	var missingPlaneRevs []string
+	unresolved := unresolvedDependencies(planes)
+	var problems []string
+	rendered := make(map[string]*v1beta1.Application, len(planes))
 	for _, p := range planes {
+		if deps := unresolved[p.Plane.Name]; len(deps) > 0 {
+			// A wait step on a plane nobody renders would never complete, so the plane is
+			// reported rather than rendered; the hub validates blueprints, so this is a
+			// bundle the hub should not have produced.
+			problems = append(problems, fmt.Sprintf("plane %s depends on unknown plane(s) %s", p.Plane.Name, strings.Join(deps, ", ")))
+			continue
+		}
 		planeRev := &v1beta1.ClusterPlaneRevision{}
 		if err := r.Get(ctx, client.ObjectKey{Namespace: cl.Namespace, Name: p.Plane.PlaneRevision}, planeRev); err != nil {
 			if apierrors.IsNotFound(err) {
 				// Whatever Application the plane already has stays as it is until the hub
 				// re-pushes the revision; deleting or blanking it would tear down a running
 				// plane over a transient gap in the bundle.
-				missingPlaneRevs = append(missingPlaneRevs, p.Plane.PlaneRevision)
+				problems = append(problems, messagePlaneRevisionMissing+p.Plane.PlaneRevision)
 				continue
 			}
 			return ctrl.Result{}, err
 		}
-		if err := r.ensureApplication(ctx, cl, p, planeRev); err != nil {
+		app, err := r.ensureApplication(ctx, cl, p, planeRev)
+		if err != nil {
 			return ctrl.Result{}, err
 		}
+		rendered[p.Plane.Name] = app
 	}
 
+	// The List serves prune only. Status is computed from the objects this pass wrote,
+	// overlaid on whatever else is owned (a plane kept while its revision is missing), so
+	// a first pass reports every plane even before an informer cache has seen the
+	// Applications it just created.
 	owned, err := r.ownedApplications(ctx, cl)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -127,10 +146,16 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.pruneApplications(ctx, cl, planes, owned); err != nil {
 		return ctrl.Result{}, err
 	}
+	for plane, app := range rendered {
+		owned[plane] = app
+	}
 
-	if len(missingPlaneRevs) > 0 {
-		setCondition(status, v1beta1.ClusterConditionBlueprintResolved, metav1.ConditionFalse, reasonPlaneRevisionMissing,
-			messagePlaneRevisionMissing+strings.Join(missingPlaneRevs, ", "))
+	if len(problems) > 0 {
+		reason := reasonDependencyUnresolved
+		if strings.HasPrefix(problems[0], messagePlaneRevisionMissing) || len(unresolved) == 0 {
+			reason = reasonPlaneRevisionMissing
+		}
+		setCondition(status, v1beta1.ClusterConditionBlueprintResolved, metav1.ConditionFalse, reason, strings.Join(problems, "; "))
 	} else {
 		setCondition(status, v1beta1.ClusterConditionBlueprintResolved, metav1.ConditionTrue, reasonResolved,
 			"every blueprint and plane revision was found")
@@ -138,7 +163,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	observePlanes(status, planes, owned, metav1.Now())
 
 	requeue := requeueNotReady
-	if status.Phase == v1beta1.ClusterPhaseReady && len(missingPlaneRevs) == 0 {
+	if status.Phase == v1beta1.ClusterPhaseReady && len(problems) == 0 {
 		requeue = requeueReady
 	}
 	return r.finish(ctx, cl, status, requeue)
@@ -169,7 +194,7 @@ func (r *Reconciler) blueprintRevisions(ctx context.Context, cl *v1beta1.Cluster
 // unchanged plane is a no-op write. SetControllerReference refuses an Application another
 // controller already owns, so a same-named foreign Application surfaces as an error
 // rather than being taken over.
-func (r *Reconciler) ensureApplication(ctx context.Context, cl *v1beta1.Cluster, p orderedPlane, planeRev *v1beta1.ClusterPlaneRevision) error {
+func (r *Reconciler) ensureApplication(ctx context.Context, cl *v1beta1.Cluster, p orderedPlane, planeRev *v1beta1.ClusterPlaneRevision) (*v1beta1.Application, error) {
 	desired := planeApplication(cl, p.Plane, planeRev, p.Deps)
 	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: desired.Name, Namespace: desired.Namespace}}
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, app, func() error {
@@ -183,12 +208,12 @@ func (r *Reconciler) ensureApplication(ctx context.Context, cl *v1beta1.Cluster,
 		return controllerutil.SetControllerReference(cl, app, r.Scheme)
 	})
 	if err != nil {
-		return fmt.Errorf("applying Application %s/%s for plane %s: %w", desired.Namespace, desired.Name, p.Plane.Name, err)
+		return nil, fmt.Errorf("applying Application %s/%s for plane %s: %w", desired.Namespace, desired.Name, p.Plane.Name, err)
 	}
 	if op != controllerutil.OperationResultNone {
 		klog.InfoS("Plane Application reconciled", "cluster", klog.KObj(cl), "plane", p.Plane.Name, "application", app.Name, "op", op)
 	}
-	return nil
+	return app, nil
 }
 
 // ownedApplications lists the Applications this controller rendered for the Cluster, keyed
@@ -235,8 +260,18 @@ func (r *Reconciler) finish(ctx context.Context, cl *v1beta1.Cluster, status *v1
 		if err := r.updateStatus(ctx, cl, status); err != nil {
 			return ctrl.Result{}, err
 		}
+		klog.InfoS("Cluster status updated", "cluster", klog.KObj(cl), "phase", status.Phase,
+			"health", healthSummary(status.Health), "requeueAfter", requeue)
 	}
 	return ctrl.Result{RequeueAfter: requeue}, nil
+}
+
+// healthSummary renders health as "<status> <healthy>/<total>" for a log line.
+func healthSummary(h *v1beta1.ClusterHealth) string {
+	if h == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s %d/%d", h.Status, h.PlanesHealthy, h.PlanesTotal)
 }
 
 // updateStatus replaces status wholesale through the status subresource, retrying on

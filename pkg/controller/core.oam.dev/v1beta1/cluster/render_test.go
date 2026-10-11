@@ -82,6 +82,28 @@ var _ = Describe("render", func() {
 		})
 	})
 
+	Describe("unresolvedDependencies", func() {
+		It("names every explicit dependsOn that no rendered plane satisfies", func() {
+			rev := blueprintRev("bp-1",
+				bpPlane("cni", v1beta1.LifecyclePhaseClusterInit),
+				bpPlane("policy", v1beta1.LifecyclePhaseClusterInit, "cni", "zzz"),
+				bpPlane("storage", v1beta1.LifecyclePhasePlaneProvisioning, "nope"),
+			)
+			planes := orderPlanes(clusterWithRefs("bp-1"), map[string]*v1beta1.ClusterBlueprintRevision{"bp-1": rev})
+			unresolved := unresolvedDependencies(planes)
+			Expect(unresolved).To(Equal(map[string][]string{"policy": {"zzz"}, "storage": {"nope"}}))
+		})
+
+		It("is empty when every dependency is rendered", func() {
+			rev := blueprintRev("bp-1",
+				bpPlane("cni", v1beta1.LifecyclePhaseClusterInit),
+				bpPlane("storage", v1beta1.LifecyclePhasePlaneProvisioning, "cni"),
+			)
+			planes := orderPlanes(clusterWithRefs("bp-1"), map[string]*v1beta1.ClusterBlueprintRevision{"bp-1": rev})
+			Expect(unresolvedDependencies(planes)).To(BeEmpty())
+		})
+	})
+
 	Describe("planeApplication", func() {
 		It("renders the Application shape the spoke's vela-core expects", func() {
 			cl := clusterWithRefs("bp-1")

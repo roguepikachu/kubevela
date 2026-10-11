@@ -136,6 +136,26 @@ func orderPlanes(cl *v1beta1.Cluster, revs map[string]*v1beta1.ClusterBlueprintR
 	return out
 }
 
+// unresolvedDependencies maps each plane to the explicit dependsOn entries that name no
+// plane in the rendered set. Implicit dependencies always resolve, so only explicit ones
+// can appear. Rendering such a plane would give it a wait step that never completes, so
+// the controller reports it instead.
+func unresolvedDependencies(planes []orderedPlane) map[string][]string {
+	rendered := make(map[string]struct{}, len(planes))
+	for _, p := range planes {
+		rendered[p.Plane.Name] = struct{}{}
+	}
+	unresolved := map[string][]string{}
+	for _, p := range planes {
+		for _, dep := range p.Plane.DependsOn {
+			if _, ok := rendered[dep]; !ok {
+				unresolved[p.Plane.Name] = append(unresolved[p.Plane.Name], dep)
+			}
+		}
+	}
+	return unresolved
+}
+
 // applicationName is the Application a plane renders into.
 func applicationName(plane string) string {
 	return applicationPrefix + plane
@@ -146,6 +166,11 @@ func applicationName(plane string) string {
 // already exists. Components are lifted verbatim (names unprefixed, properties and
 // dependsOn kept); no policy is set, so the deploy step targets the local cluster; the
 // workflow waits on each dependency's Application before deploying.
+//
+// The wait is depends-on-app, which only checks that the dependency's Application has
+// reached status.status running. That is weaker than the per-component health check this
+// controller applies when it reports a plane healthy, so a plane can start deploying while
+// a dependency's component is still unhealthy; Cluster.status is where that shows.
 func planeApplication(cl *v1beta1.Cluster, plane v1beta1.BlueprintPlaneRevision, planeRev *v1beta1.ClusterPlaneRevision, deps []string) *v1beta1.Application {
 	comps := make([]common.ApplicationComponent, 0, len(planeRev.Spec.Components))
 	for _, c := range planeRev.Spec.Components {

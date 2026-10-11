@@ -287,9 +287,11 @@ var _ = Describe("Cluster controller", func() {
 		It("has the first plane deploy straight away", func() {
 			Expect(stepNames(mustGetApp(r, "cluster-cni"))).To(Equal([]string{"deploy"}))
 		})
+	})
 
-		It("skips an empty phase when deriving implicit dependencies", func() {
-			r2 := newTestReconciler(GinkgoT(),
+	Describe("ordering planes across an empty phase", func() {
+		It("derives implicit dependencies from the previous non-empty phase", func() {
+			r := newTestReconciler(GinkgoT(),
 				clusterWithRefs("bp-2"),
 				blueprintRev("bp-2",
 					bpPlane("cni", v1beta1.LifecyclePhaseClusterInit),
@@ -297,9 +299,37 @@ var _ = Describe("Cluster controller", func() {
 				),
 				planeRev("cni"), planeRev("smoke"),
 			)
-			_, err := reconcile(r2)
+			_, err := reconcile(r)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(stepNames(mustGetApp(r2, "cluster-smoke"))).To(Equal([]string{"wait-cni", "deploy"}))
+			Expect(stepNames(mustGetApp(r, "cluster-smoke"))).To(Equal([]string{"wait-cni", "deploy"}))
+		})
+	})
+
+	Describe("an explicit dependsOn on a plane the blueprint does not render", func() {
+		It("reports it through BlueprintResolved and renders every other plane", func() {
+			r := newTestReconciler(GinkgoT(),
+				clusterWithRefs("bp-1"),
+				blueprintRev("bp-1",
+					bpPlane("cni", v1beta1.LifecyclePhaseClusterInit),
+					bpPlane("policy", v1beta1.LifecyclePhaseClusterInit, "zzz"),
+				),
+				planeRev("cni"), planeRev("policy"),
+			)
+			res, err := reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(res.RequeueAfter).To(Equal(30 * time.Second))
+
+			mustGetApp(r, "cluster-cni")
+			_, err = getApp(r, "cluster-policy")
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(), "a plane waiting on an unknown plane must not be rendered, got %v", err)
+
+			cl := getCluster(r)
+			cond := meta.FindStatusCondition(cl.Status.Conditions, v1beta1.ClusterConditionBlueprintResolved)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Message).To(ContainSubstring("policy"))
+			Expect(cond.Message).To(ContainSubstring("zzz"))
+			Expect(cl.Status.Planes).To(HaveLen(2))
 		})
 	})
 
@@ -361,6 +391,7 @@ var _ = Describe("Cluster controller", func() {
 			Expect(res.RequeueAfter).To(Equal(30 * time.Second))
 			cl := getCluster(r)
 			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhaseInitializing))
+			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
 			Expect(cl.Status.Health.PlanesHealthy).To(Equal(2))
 		})
 
@@ -390,6 +421,67 @@ var _ = Describe("Cluster controller", func() {
 			Expect(cl.Status.Health.Status).To(Equal(HealthStatusDegraded))
 		})
 
+		It("reports Progressing with 0/0 when the referenced phases render no planes", func() {
+			r0 := newTestReconciler(GinkgoT(),
+				&v1beta1.Cluster{
+					ObjectMeta: metav1.ObjectMeta{Name: testCluster, Namespace: testNS, UID: apitypes.UID("uid-" + testCluster)},
+					Spec: v1beta1.ClusterSpec{
+						ClusterInit: &v1beta1.PhaseSpec{BlueprintRef: v1beta1.BlueprintReference{Name: "bp-1"}},
+					},
+				},
+				blueprintRev("bp-1", bpPlane("infra", v1beta1.LifecyclePhasePlaneProvisioning)),
+				planeRev("infra"),
+			)
+			_, err := reconcile(r0)
+			Expect(err).NotTo(HaveOccurred())
+			cl := getCluster(r0)
+			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhasePending))
+			Expect(cl.Status.Planes).To(BeEmpty())
+			Expect(cl.Status.Health).NotTo(BeNil())
+			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.PlanesHealthy).To(Equal(0))
+			Expect(cl.Status.Health.PlanesTotal).To(Equal(0))
+			Expect(listApps(r0)).To(BeEmpty())
+		})
+
+		It("reports every plane with its Application name on the very first pass", func() {
+			// The first pass is the one where an informer cache would not yet hold the
+			// Applications it just created, so planes[] has to come from the written objects.
+			cl := getCluster(r)
+			Expect(cl.Status.Planes).To(HaveLen(3))
+			Expect(cl.Status.Planes[0].Application).To(Equal(initApp))
+			Expect(cl.Status.Planes[1].Application).To(Equal(infraApp))
+			Expect(cl.Status.Planes[2].Application).To(Equal(checkApp))
+			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhaseInitializing))
+		})
+
+		It("does not rewrite an unchanged status on the next pass", func() {
+			markHealthy(r, initApp, infraApp, checkApp)
+			_, err := reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			before := getCluster(r).ResourceVersion
+			_, err = reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getCluster(r).ResourceVersion).To(Equal(before))
+		})
+
+		It("refreshes lastCheckTime once it is older than the heartbeat interval", func() {
+			markHealthy(r, initApp, infraApp, checkApp)
+			_, err := reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			cl := getCluster(r)
+			stale := metav1.NewTime(time.Now().Add(-healthHeartbeatInterval - time.Minute))
+			cl.Status.Health.LastCheckTime = &stale
+			Expect(r.Status().Update(ctx, cl)).To(Succeed())
+			before := getCluster(r).ResourceVersion
+
+			_, err = reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			after := getCluster(r)
+			Expect(after.ResourceVersion).NotTo(Equal(before))
+			Expect(after.Status.Health.LastCheckTime.Time).To(BeTemporally(">", stale.Time))
+		})
+
 		It("treats a running Application with an unhealthy component as unhealthy", func() {
 			markHealthy(r, initApp, infraApp)
 			setAppStatus(r, checkApp, common.ApplicationRunning, false)
@@ -413,6 +505,38 @@ var _ = Describe("Cluster controller", func() {
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
 			Expect(cond.Message).To(ContainSubstring("bp-missing"))
 			Expect(listApps(r)).To(BeEmpty())
+			Expect(cl.Status.Planes).To(BeEmpty())
+			Expect(cl.Status.Health).NotTo(BeNil())
+			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.PlanesTotal).To(Equal(0))
+		})
+
+		It("clears planes and health reported for the previous revision", func() {
+			r := newTestReconciler(GinkgoT(),
+				clusterWithRefs("bp-1"),
+				blueprintRev("bp-1", bpPlane("cni", v1beta1.LifecyclePhaseClusterInit)),
+				planeRev("cni"),
+			)
+			_, err := reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			markHealthy(r, "cluster-cni")
+			_, err = reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getCluster(r).Status.Phase).To(Equal(v1beta1.ClusterPhaseReady))
+
+			cl := getCluster(r)
+			ref := &v1beta1.PhaseSpec{BlueprintRef: v1beta1.BlueprintReference{Name: "bp-missing"}}
+			cl.Spec = v1beta1.ClusterSpec{ClusterInit: ref, PlaneProvisioning: ref, HealthValidation: ref}
+			Expect(r.Update(ctx, cl)).To(Succeed())
+			_, err = reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+
+			cl = getCluster(r)
+			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhasePending))
+			Expect(cl.Status.Planes).To(BeEmpty())
+			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.PlanesTotal).To(Equal(0))
+			Expect(listApps(r)).To(HaveLen(1), "the previous revision's Application is kept until a resolvable revision replaces it")
 		})
 	})
 
@@ -495,6 +619,22 @@ var _ = Describe("Cluster controller", func() {
 			app := mustGetApp(r, "cluster-cni")
 			Expect(app.Spec.Components).To(HaveLen(1))
 			Expect(app.Spec.Components[0].Name).To(Equal("cilium"))
+		})
+
+		It("does not prune a labelled Application another owner controls", func() {
+			foreign := &v1beta1.Application{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "cluster-someone-elses",
+					Namespace: testNS,
+					Labels:    map[string]string{LabelClusterName: testCluster, LabelClusterPlane: "someone-elses"},
+				},
+			}
+			Expect(r.Create(ctx, foreign)).To(Succeed())
+			_, err := reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+			_, err = getApp(r, "cluster-someone-elses")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(getCluster(r).Status.Planes).To(HaveLen(1))
 		})
 
 		It("leaves an unchanged Application's ResourceVersion alone on the next pass", func() {
