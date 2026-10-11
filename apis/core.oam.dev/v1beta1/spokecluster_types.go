@@ -400,10 +400,10 @@ type SpokeClusterStatus struct {
 	// +optional
 	Provisioning *ProvisioningStatus `json:"provisioning,omitempty"`
 
-	// InfraIncarnation counts how many times this SpokeCluster has started managing
-	// infrastructure (provision or adopt). Release increments it, so the next adopt renders
-	// its Application under a new name and vela-core applies the retained objects instead of
-	// skipping them on their stale revision markers. Zero for the first incarnation.
+	// InfraIncarnation is the index of the current infrastructure incarnation. Each
+	// completed release increments it, so the next provision or adopt renders its
+	// Application under a new name and vela-core applies the retained objects instead of
+	// skipping them on their stale revision markers. Zero until the first release.
 	// +optional
 	InfraIncarnation int32 `json:"infraIncarnation,omitempty"`
 

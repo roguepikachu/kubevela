@@ -48,8 +48,17 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	status := sc.Status.DeepCopy()
 	status.ObservedGeneration = sc.Generation
 
+	// The projection recorded the name the Application was rendered under, so release
+	// follows that record and only recomputes the name when the record is missing.
+	name := ""
+	if sc.Status.Provisioning != nil {
+		name = sc.Status.Provisioning.ApplicationName
+	}
+	if name == "" {
+		name = infraAppName(sc)
+	}
 	app := &v1beta1.Application{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: infraAppName(sc)}, app)
+	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: name}, app)
 	switch {
 	case apierrors.IsNotFound(err):
 		// Already gone, whether this pass or an earlier one deleted it: fall through to
@@ -98,8 +107,8 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	// starts from sc.Status, and it must see the projection gone or a no-op connect pass
 	// would carry the stale provisioning fields forward.
 	status.Provisioning = nil
-	// The Application is already gone under the old name, so bumping the counter here
-	// cannot strand it; the next provision or adopt renders under a new name instead.
+	// The recorded Application is already gone, so bumping the counter here cannot strand
+	// it; the next provision or adopt renders under a new name instead.
 	status.InfraIncarnation++
 	meta.RemoveStatusCondition(&status.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
 	if err := r.updateStatus(ctx, sc, status); err != nil {

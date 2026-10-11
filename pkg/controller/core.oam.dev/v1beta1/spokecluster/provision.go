@@ -59,8 +59,9 @@ const (
 	roleInfra      = "infra"
 
 	// infraAppUIDChars is how much of the SpokeCluster UID goes into the Application name.
-	// Eight hex characters separate incarnations comfortably while leaving room for the
-	// spoke name inside a DNS-1123 label.
+	// Eight hex characters separate same-named SpokeCluster objects comfortably while
+	// leaving room for the spoke name inside a DNS-1123 label; the incarnation counter,
+	// not the UID, separates incarnations within one object.
 	infraAppUIDChars = 8
 	// dnsLabelMaxLen is the longest a DNS-1123 label, and so an Application name, may be.
 	dnsLabelMaxLen = 63
@@ -89,7 +90,7 @@ func infraAppName(sc *v1beta1.SpokeCluster) string {
 	}
 	suffix := "-" + uid
 	if sc.Status.InfraIncarnation != 0 {
-		suffix += "-" + strconv.FormatInt(int64(sc.Status.InfraIncarnation), 10)
+		suffix += "-" + strconv.Itoa(int(sc.Status.InfraIncarnation))
 	}
 	if len(base)+len(suffix) > dnsLabelMaxLen {
 		base = strings.TrimRight(base[:dnsLabelMaxLen-len(suffix)], "-")
@@ -236,8 +237,8 @@ func (r *Reconciler) ensureInfraApplication(ctx context.Context, sc *v1beta1.Spo
 		}
 		app.Labels[labelSpokeName] = sc.Name
 		app.Labels[labelSpokeRole] = roleInfra
-		// The UID label is what ties an Application back to one incarnation of the spoke
-		// once the name carries only a prefix of it.
+		// The UID label is what ties an Application back to one SpokeCluster object once
+		// the name carries only a prefix of the UID.
 		app.Labels[labelSpokeUID] = string(sc.UID)
 		app.Spec.Components = comps
 		app.Spec.Policies = policies

@@ -88,52 +88,58 @@ func healthyInfraApp(sc *v1beta1.SpokeCluster) *v1beta1.Application {
 	}
 }
 
-var _ = It("InfraAppNameIsPerIncarnation", func() {
-	first := provisionSpoke("cpspoke1")
-	first.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
-	second := provisionSpoke("cpspoke1")
-	second.UID = types.UID("9d1c7b3e-dddd-4eee-8fff-000000000002")
+// infraNameUID is the UID every naming case shares; the first eight characters are what
+// reaches the Application name.
+const infraNameUID = "0f6e2a1c-aaaa-4bbb-8ccc-000000000001"
 
-	Expect(infraAppName(first)).NotTo(Equal(infraAppName(second)), "a re-created spoke must render under a new name")
-	Expect(infraAppName(first)).To(Equal(infraAppName(first)), "the same incarnation always maps to the same name")
-	Expect(infraAppName(first)).To(Equal("sc-cpspoke1-infra-0f6e2a1c"))
-	for _, sc := range []*v1beta1.SpokeCluster{first, second} {
-		Expect(validation.IsDNS1123Label(infraAppName(sc))).To(BeEmpty())
-	}
+// infraNameSuffix12 is the suffix infraNameUID produces at incarnation 12.
+const infraNameSuffix12 = "-0f6e2a1c-12"
 
-	third := provisionSpoke("cpspoke1")
-	third.UID = first.UID
-	third.Status.InfraIncarnation = 2
-	Expect(infraAppName(third)).To(Equal("sc-cpspoke1-infra-0f6e2a1c-2"), "the release counter joins the UID in the name")
-	Expect(validation.IsDNS1123Label(infraAppName(third))).To(BeEmpty())
+type infraNameCase struct {
+	spoke      string
+	uid        string
+	counter    int32
+	want       string // exact name, when set
+	wantSuffix string // suffix, when the base is truncated
+	wantLen    int    // exact length, when set
+}
 
-	long := provisionSpoke("a-very-long-spoke-name-that-pushes-the-application-name-past-the-limit")
-	long.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
-	Expect(validation.IsDNS1123Label(infraAppName(long))).To(BeEmpty())
-	Expect(infraAppName(long)).To(HaveSuffix("-0f6e2a1c"), "truncation keeps the incarnation suffix")
+var _ = DescribeTable("InfraAppNameIsPerIncarnation", func(tc infraNameCase) {
+	sc := provisionSpoke(tc.spoke)
+	sc.UID = types.UID(tc.uid)
+	sc.Status.InfraIncarnation = tc.counter
+	got := infraAppName(sc)
 
-	// A 60-character spoke name with a two-digit counter: the whole suffix survives, the
-	// result fills the label exactly, and the truncated base keeps no trailing hyphen.
-	sixty := provisionSpoke(strings.Repeat("longspoke", 6) + "name00")
-	Expect(sixty.Name).To(HaveLen(60))
-	sixty.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
-	sixty.Status.InfraIncarnation = 12
-	got := infraAppName(sixty)
-	Expect(got).To(HaveLen(dnsLabelMaxLen))
-	Expect(got).To(HaveSuffix("-0f6e2a1c-12"))
-	Expect(strings.TrimSuffix(got, "-0f6e2a1c-12")).NotTo(HaveSuffix("-"))
 	Expect(validation.IsDNS1123Label(got)).To(BeEmpty())
-
-	// When the cut lands on a hyphen in the spoke name, that hyphen goes too.
-	long.Status.InfraIncarnation = 12
-	Expect(validation.IsDNS1123Label(infraAppName(long))).To(BeEmpty())
-	Expect(strings.TrimSuffix(infraAppName(long), "-0f6e2a1c-12")).NotTo(HaveSuffix("-"))
-	Expect(infraAppName(long)).To(HaveSuffix("-0f6e2a1c-12"))
-
-	bare := connectableSpoke("cpspoke1")
-	bare.UID = ""
-	Expect(infraAppName(bare)).To(Equal("sc-cpspoke1-infra"), "no UID means the plain name")
-})
+	Expect(got).To(Equal(infraAppName(sc)), "the same incarnation always maps to the same name")
+	if tc.want != "" {
+		Expect(got).To(Equal(tc.want))
+	}
+	if tc.wantSuffix != "" {
+		Expect(got).To(HaveSuffix(tc.wantSuffix), "truncation keeps the whole suffix")
+		Expect(strings.TrimSuffix(got, tc.wantSuffix)).NotTo(HaveSuffix("-"), "the truncated base keeps no trailing hyphen")
+	}
+	if tc.wantLen != 0 {
+		Expect(got).To(HaveLen(tc.wantLen))
+	}
+},
+	Entry("first incarnation carries only the UID prefix",
+		infraNameCase{spoke: "cpspoke1", uid: infraNameUID, want: "sc-cpspoke1-infra-0f6e2a1c"}),
+	Entry("a re-created spoke with a new UID renders under a new name",
+		infraNameCase{spoke: "cpspoke1", uid: "9d1c7b3e-dddd-4eee-8fff-000000000002", want: "sc-cpspoke1-infra-9d1c7b3e"}),
+	Entry("the release counter joins the UID in the name",
+		infraNameCase{spoke: "cpspoke1", uid: infraNameUID, counter: 2, want: "sc-cpspoke1-infra-0f6e2a1c-2"}),
+	Entry("no UID means the plain name",
+		infraNameCase{spoke: "cpspoke1", want: "sc-cpspoke1-infra"}),
+	Entry("a long spoke name is truncated around the UID suffix",
+		infraNameCase{spoke: "a-very-long-spoke-name-that-pushes-the-application-name-past-the-limit", uid: infraNameUID, wantSuffix: "-0f6e2a1c"}),
+	Entry("a long spoke name whose cut lands on a hyphen loses that hyphen too",
+		infraNameCase{spoke: "a-very-long-spoke-name-that-pushes-the-application-name-past-the-limit", uid: infraNameUID, counter: 12, wantSuffix: infraNameSuffix12}),
+	Entry("a 60-character spoke name with a two-digit counter fills the label exactly",
+		infraNameCase{spoke: strings.Repeat("longspoke", 6) + "name00", uid: infraNameUID, counter: 12, wantSuffix: infraNameSuffix12, wantLen: dnsLabelMaxLen}),
+	Entry("a 60-character spoke name at the first incarnation also fills the label",
+		infraNameCase{spoke: strings.Repeat("longspoke", 6) + "name00", uid: infraNameUID, wantSuffix: "-0f6e2a1c", wantLen: dnsLabelMaxLen}),
+)
 
 var _ = It("ProvisionRendersInfraApplicationAndWaits", func() {
 	t := GinkgoT()

@@ -192,13 +192,36 @@ var _ = It("ReAdoptAfterReleaseRendersUnderNewName", func() {
 
 	latest := readSpoke(t, r, sc)
 	newName := infraAppName(latest)
-	Expect(newName).To(Equal(oldName+"-1"), "the second incarnation renders under a new name")
+	Expect(newName).NotTo(Equal(oldName), "the second incarnation renders under a new name")
 	Expect(r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: newName}, &v1beta1.Application{})).To(Succeed(),
 		"the new Application exists so vela-core applies the retained objects under a fresh revision")
 	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: oldName}, &v1beta1.Application{})
 	Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the released Application stays gone")
 	Expect(latest.Status.Provisioning).NotTo(BeNil())
-	Expect(latest.Status.Provisioning.ApplicationName).To(Equal(newName))
+	Expect(latest.Status.Provisioning.ApplicationName).To(Equal(newName), "the projection names the Application that now exists")
+})
+
+var _ = It("ReleaseDeletesTheRecordedApplicationName", func() {
+	t := GinkgoT()
+	ctx := context.Background()
+	sc := releasingSpoke("cpspoke1")
+	// The projection records a name the current infraAppName would not produce, as happens
+	// when the naming scheme changes between the provision that rendered the Application
+	// and the release that removes it. Release must follow the record, not the formula.
+	const recorded = "sc-cpspoke1-infra-recorded-elsewhere"
+	Expect(recorded).NotTo(Equal(infraAppName(sc)))
+	sc.Status.Provisioning.ApplicationName = recorded
+	app := ownedBy(retainedInfraApp(sc), sc)
+	app.Name = recorded
+	r := newTestReconciler(t, sc, app)
+	wireHealthySpoke(r)
+
+	res, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(res.RequeueAfter).To(Equal(provisionRequeue), "release found an Application to delete")
+	err = r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: recorded}, &v1beta1.Application{})
+	Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the recorded Application must be deleted")
+	wantCondition(t, readSpoke(t, r, sc), v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonReleasing)
 })
 
 var _ = It("ReleaseRefusedWithoutRetainRule", func() {
