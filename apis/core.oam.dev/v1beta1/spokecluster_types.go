@@ -135,6 +135,9 @@ const (
 	// SpokeClusterConditionInfraProvisioned is true once every component of the
 	// infraProvisioning Application reports healthy (mode: provision only).
 	SpokeClusterConditionInfraProvisioned = "InfraProvisioned"
+	// SpokeClusterConditionBootstrapped is True once every component of the bootstrap
+	// plane is healthy on the spoke.
+	SpokeClusterConditionBootstrapped = "Bootstrapped"
 )
 
 // SpokeClusterSpec is the desired state of a managed cluster on the hub.
@@ -184,6 +187,13 @@ type SpokeClusterSpec struct {
 	// +optional
 	InfraProvisioning *InfraProvisioning `json:"infraProvisioning,omitempty"`
 
+	// Bootstrap, when set, makes the hub install the spoke's runtime (Flux and vela-core)
+	// by rendering the referenced ClusterPlane into an Application targeted at this spoke
+	// through the gateway. It is read in every mode once the spoke is Connected and is
+	// re-applied on each pass, so a deleted runtime is repaired; it is never a state sync.
+	// +optional
+	Bootstrap *BootstrapSpec `json:"bootstrap,omitempty"`
+
 	// BlueprintRef references the ClusterBlueprint revision to dispatch to the
 	// cluster.
 	//
@@ -225,6 +235,20 @@ type BlueprintReference struct {
 	// Revision pins an immutable revision of the referenced object.
 	// +optional
 	Revision string `json:"revision,omitempty"`
+}
+
+// BootstrapSpec names the plane whose components install the spoke's runtime.
+type BootstrapSpec struct {
+	// PlaneRef is the ClusterPlane in the SpokeCluster's namespace to render.
+	// +kubebuilder:validation:Required
+	PlaneRef PlaneReference `json:"planeRef"`
+}
+
+// PlaneReference points at a ClusterPlane by name.
+type PlaneReference struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
 }
 
 // CredentialSpec is a discriminated union of hub-to-spoke credentials keyed by
@@ -406,6 +430,11 @@ type SpokeClusterStatus struct {
 	// skipping them on their stale revision markers. Zero until the first release.
 	// +optional
 	InfraIncarnation int32 `json:"infraIncarnation,omitempty"`
+
+	// Bootstrap mirrors the bootstrap Application once spec.bootstrap is set. A
+	// projection for kubectl, not a second source of truth.
+	// +optional
+	Bootstrap *ProvisioningStatus `json:"bootstrap,omitempty"`
 
 	// DispatchedRevision is the blueprint revision the hub last dispatched to the
 	// spoke. The dispatch controller advances a spoke when this differs from

@@ -82,6 +82,16 @@ var _ = Describe("Validate", func() {
 			sc.Spec.RolloutStrategyRef = &v1beta1.BlueprintReference{Name: "canary-10pct", Revision: "v2"}
 			return sc
 		}),
+		Entry("bootstrap with a planeRef is accepted in connect mode", func() *v1beta1.SpokeCluster {
+			sc := validKubeconfigSpoke()
+			sc.Spec.Bootstrap = &v1beta1.BootstrapSpec{PlaneRef: v1beta1.PlaneReference{Name: "foundation-runtime"}}
+			return sc
+		}),
+		Entry("bootstrap with a planeRef is accepted in provision mode", func() *v1beta1.SpokeCluster {
+			sc := spokeInMode(v1beta1.SpokeClusterModeProvision)
+			sc.Spec.Bootstrap = &v1beta1.BootstrapSpec{PlaneRef: v1beta1.PlaneReference{Name: "foundation-runtime"}}
+			return sc
+		}),
 	)
 
 	DescribeTable("rejects invalid spokes",
@@ -178,6 +188,9 @@ var _ = Describe("Validate", func() {
 				BlueprintRef: &v1beta1.BlueprintReference{Name: "infra-a"},
 			}
 		}, "spec.infraProvisioning"),
+		Entry("bootstrap without a planeRef name", validKubeconfigSpoke, func(sc *v1beta1.SpokeCluster) {
+			sc.Spec.Bootstrap = &v1beta1.BootstrapSpec{}
+		}, "spec.bootstrap.planeRef.name"),
 	)
 })
 

@@ -120,6 +120,27 @@ spec:
                 required:
                 - name
                 type: object
+              bootstrap:
+                description: |-
+                  Bootstrap, when set, makes the hub install the spoke's runtime (Flux and vela-core)
+                  by rendering the referenced ClusterPlane into an Application targeted at this spoke
+                  through the gateway. It is read in every mode once the spoke is Connected and is
+                  re-applied on each pass, so a deleted runtime is repaired; it is never a state sync.
+                properties:
+                  planeRef:
+                    description: PlaneRef is the ClusterPlane in the SpokeCluster's
+                      namespace to render.
+                    properties:
+                      name:
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                required:
+                - planeRef
+                type: object
               credential:
                 description: |-
                   Credential is the hub-to-spoke connectivity credential, a discriminated
@@ -356,6 +377,30 @@ spec:
           status:
             description: SpokeClusterStatus is the observed state of a managed cluster.
             properties:
+              bootstrap:
+                description: |-
+                  Bootstrap mirrors the bootstrap Application once spec.bootstrap is set. A
+                  projection for kubectl, not a second source of truth.
+                properties:
+                  applicationName:
+                    description: ApplicationName is the hub Application carrying the
+                      substrate components.
+                    type: string
+                  healthy:
+                    description: Healthy is true when every component of the Application
+                      reports healthy.
+                    type: boolean
+                  message:
+                    description: Message summarizes the component health messages.
+                    type: string
+                  phase:
+                    description: Phase is the Application phase (rendering, runningWorkflow,
+                      running, workflowFailed).
+                    type: string
+                required:
+                - applicationName
+                - healthy
+                type: object
               clusterInfo:
                 description: ClusterInfo is the discovered inventory of the spoke.
                 properties:

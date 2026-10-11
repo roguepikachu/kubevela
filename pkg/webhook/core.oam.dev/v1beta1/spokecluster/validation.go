@@ -33,8 +33,9 @@ const defaultSecretKey = "kubeconfig"
 // structural schema cannot express: connect, provision or adopt mode, the reserved
 // cluster name, the credential union's exactly-one-arm and per-provider required
 // fields, same-namespace kubeconfig secretRef, and infraProvisioning required
-// in provision and adopt modes and forbidden in connect. blueprintRef and
-// rolloutStrategyRef are accepted and ignored. It looks at one object only; the
+// in provision and adopt modes and forbidden in connect, and a bootstrap block
+// that names its ClusterPlane. blueprintRef and rolloutStrategyRef are accepted
+// and ignored. It looks at one object only; the
 // mode transition rule on update lives in ValidateTransition. It has no client or
 // context dependency so it can run identically in the webhook and in tests.
 func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
@@ -78,6 +79,16 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 			errs = append(errs, field.Forbidden(field.NewPath("spec", "infraProvisioning"),
 				"infraProvisioning is only read in modes 'provision' and 'adopt'"))
 		}
+	}
+
+	// bootstrap is valid in every mode: it names the ClusterPlane the hub renders
+	// into the spoke's runtime once the spoke is Connected, and that holds whether
+	// the hub created the cluster or merely reached it. The only rule is that a
+	// bootstrap block has to say which plane, which the CRD also enforces through
+	// required plus minLength so it holds with the webhook off.
+	if sc.Spec.Bootstrap != nil && sc.Spec.Bootstrap.PlaneRef.Name == "" {
+		errs = append(errs, field.Required(field.NewPath("spec", "bootstrap", "planeRef", "name"),
+			"bootstrap requires the ClusterPlane to render"))
 	}
 
 	return errs

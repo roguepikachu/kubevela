@@ -300,4 +300,70 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(spoke), got))
 		r.Equal(int32(3), got.Status.InfraIncarnation, "status.infraIncarnation must round-trip through the API server")
 	})
+
+	// spec.bootstrap names the ClusterPlane the hub renders into the spoke's runtime
+	// install. It is valid in every mode, so a connect spoke carries it unchanged.
+	It("AcceptsBootstrapPlaneRefInConnectMode", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		r.NoError(k8sClient.Create(ctx, &SpokeCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "bootstrap-connect", Namespace: "vela-system"},
+			Spec: SpokeClusterSpec{
+				Mode: SpokeClusterModeConnect,
+				Credential: CredentialSpec{
+					Type:       CredentialTypeKubeconfig,
+					Kubeconfig: &KubeconfigCredential{SecretRef: SecretKeyRef{Name: "some-kubeconfig"}},
+				},
+				Bootstrap: &BootstrapSpec{PlaneRef: PlaneReference{Name: "foundation-runtime"}},
+			},
+		}), "a connect spoke with spec.bootstrap.planeRef must be admitted")
+	})
+
+	// An empty bootstrap block says nothing about which plane to render, so the
+	// schema refuses it even with the webhook off.
+	It("RejectsBootstrapWithoutPlaneRef", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		err := k8sClient.Create(ctx, &SpokeCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "bootstrap-empty", Namespace: "vela-system"},
+			Spec: SpokeClusterSpec{
+				Mode: SpokeClusterModeConnect,
+				Credential: CredentialSpec{
+					Type:       CredentialTypeKubeconfig,
+					Kubeconfig: &KubeconfigCredential{SecretRef: SecretKeyRef{Name: "some-kubeconfig"}},
+				},
+				Bootstrap: &BootstrapSpec{},
+			},
+		})
+		r.Error(err, "the API server must refuse spec.bootstrap without a planeRef")
+		r.Contains(err.Error(), "planeRef", "the rejection has to name the missing field")
+	})
+
+	// status.bootstrap is the kubectl projection of the bootstrap Application and has
+	// to survive the status subresource like status.provisioning does.
+	It("StatusRoundTripsBootstrap", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		spoke := &SpokeCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "bootstrap-status", Namespace: "vela-system"},
+			Spec: SpokeClusterSpec{
+				Mode: SpokeClusterModeConnect,
+				Credential: CredentialSpec{
+					Type:       CredentialTypeKubeconfig,
+					Kubeconfig: &KubeconfigCredential{SecretRef: SecretKeyRef{Name: "some-kubeconfig"}},
+				},
+			},
+		}
+		r.NoError(k8sClient.Create(ctx, spoke))
+		want := &ProvisioningStatus{ApplicationName: "sc-x-bootstrap", Healthy: true, Phase: "running", Message: "m"}
+		spoke.Status.Bootstrap = want
+		r.NoError(k8sClient.Status().Update(ctx, spoke))
+
+		got := &SpokeCluster{}
+		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(spoke), got))
+		r.Equal(want, got.Status.Bootstrap, "status.bootstrap must round-trip through the API server")
+	})
 })
