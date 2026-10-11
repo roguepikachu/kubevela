@@ -33,17 +33,33 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/appfile"
 	"github.com/oam-dev/kubevela/pkg/oam"
 	"github.com/oam-dev/kubevela/pkg/oam/util"
 	"github.com/oam-dev/kubevela/pkg/resourcekeeper"
+	"github.com/oam-dev/kubevela/pkg/utils/apply"
 )
 
 // rootTrackedKeeper wraps a real ResourceKeeper and reports every resource as already tracked,
 // which is what a garbage-collect policy with strategy never or onAppDelete produces across
-// Application revisions. Policy lookups are delegated to the wrapped keeper.
-type rootTrackedKeeper struct{ resourcekeeper.ResourceKeeper }
+// Application revisions. Policy lookups are delegated to the wrapped keeper. Dispatch is not
+// forwarded; it records Kind/name of every manifest in dispatched when that is set.
+type rootTrackedKeeper struct {
+	resourcekeeper.ResourceKeeper
+	dispatched *[]string
+}
 
 func (rootTrackedKeeper) ContainsResources([]*unstructured.Unstructured) bool { return true }
+
+func (k rootTrackedKeeper) Dispatch(_ context.Context, manifests []*unstructured.Unstructured, _ []apply.ApplyOption, _ ...resourcekeeper.DispatchOption) error {
+	if k.dispatched == nil {
+		return nil
+	}
+	for _, m := range manifests {
+		*k.dispatched = append(*k.dispatched, m.GetKind()+"/"+m.GetName())
+	}
+	return nil
+}
 
 // policyStubKeeper is a ResourceKeeper double for the unit specs: only the two policy lookups are
 // implemented, everything else panics through the nil embedded interface.
@@ -89,7 +105,8 @@ var _ = Describe("Deploy health check across application revisions", func() {
 				Components: []common.ApplicationComponent{{
 					Name:       compName,
 					Type:       "worker-with-health",
-					Properties: &runtime.RawExtension{Raw: []byte(`{"image":"busybox","lives":"3","enemies":"none"}`)},
+					// Keys sorted: componentPropertiesChanged compares marshalled JSON bytes against this raw value.
+					Properties: &runtime.RawExtension{Raw: []byte(`{"enemies":"none","image":"busybox","lives":"3"}`)},
 				}},
 			},
 		}
@@ -149,22 +166,47 @@ var _ = Describe("Deploy health check across application revisions", func() {
 		Expect(k8sClient.Create(ctx, cm)).To(Succeed())
 	}
 
-	// runHealthCheck runs the deploy step's health check for the component as revision currentRev,
-	// with the resource keeper reporting the component's resources as already tracked.
-	runHealthCheck := func() (bool, *common.ApplicationComponentStatus) {
+	// newHandler builds an AppHandler for the app at revision currentRev whose resource keeper
+	// reports the component's resources as already tracked and records dispatches.
+	newHandler := func(dispatched *[]string) (*AppHandler, *appfile.Appfile) {
 		af, err := appParser.GenerateAppFile(ctx, app)
 		Expect(err).NotTo(HaveOccurred())
 		handler, err := NewAppHandler(ctx, reconciler, app)
 		Expect(err).NotTo(HaveOccurred())
-		handler.resourceKeeper = rootTrackedKeeper{handler.resourceKeeper}
+		handler.resourceKeeper = rootTrackedKeeper{ResourceKeeper: handler.resourceKeeper, dispatched: dispatched}
 		handler.currentAppRev = &v1beta1.ApplicationRevision{
 			ObjectMeta: metav1.ObjectMeta{Name: currentRev, Namespace: namespaceName},
 			Spec:       v1beta1.ApplicationRevisionSpec{ApplicationRevisionCompressibleFields: v1beta1.ApplicationRevisionCompressibleFields{Application: *app}},
 		}
+		return handler, af
+	}
+
+	// runHealthCheck runs the deploy step's health check for the component.
+	runHealthCheck := func() (bool, *common.ApplicationComponentStatus) {
+		handler, af := newHandler(nil)
 		healthy, status, _, _, err := handler.checkComponentHealth(appParser, af)(ctx, app.Spec.Components[0], nil, "", "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(status).NotTo(BeNil())
 		return healthy, status
+	}
+
+	// runDispatcher runs the component's DefaultDispatch stage dispatcher, the path applyComponentFunc
+	// takes under MultiStageComponentApply, and returns the Kind/name of every dispatched manifest.
+	runDispatcher := func() []string {
+		var dispatched []string
+		handler, af := newHandler(&dispatched)
+		comp := app.Spec.Components[0]
+		wl, manifest, err := handler.prepareWorkloadAndManifests(ctx, appParser, comp, nil, af)
+		Expect(err).NotTo(HaveOccurred())
+		wl.Ctx.SetCtx(ctx)
+		readyWorkload, readyTraits, err := renderComponentsAndTraits(manifest, handler.currentAppRev, "", "")
+		Expect(err).NotTo(HaveOccurred())
+		dispatchers, err := handler.generateDispatcher(handler.currentAppRev, nil, readyWorkload, readyTraits, "", nil)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dispatchers).To(HaveLen(1))
+		_, err = dispatchers[0].run(ctx, wl, handler.currentAppRev, "")
+		Expect(err).NotTo(HaveOccurred())
+		return dispatched
 	}
 
 	applyOncePolicy := func(properties string) {
@@ -232,6 +274,18 @@ var _ = Describe("Deploy health check across application revisions", func() {
 
 		Expect(healthy).To(BeFalse())
 		expectPendingReapply(status)
+	})
+
+	It("component dispatcher re-dispatches an owned workload left by an older revision", func() {
+		createLiveWorkload(app.Name, olderRev)
+
+		Expect(runDispatcher()).To(ContainElements("Deployment/"+compName, "ConfigMap/"+compName+"game-config"))
+	})
+
+	It("component dispatcher leaves a healthy workload applied by the current revision alone", func() {
+		createLiveWorkload(app.Name, currentRev)
+
+		Expect(runDispatcher()).To(BeEmpty())
 	})
 })
 

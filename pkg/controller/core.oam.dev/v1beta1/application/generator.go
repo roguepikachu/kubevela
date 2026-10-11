@@ -300,30 +300,42 @@ func (h *AppHandler) checkComponentHealth(appParser *appfile.Parser, af *appfile
 			return false, nil, nil, nil, err
 		}
 
-		// The deploy step skips the apply for every component whose health check passes.
-		// A resource recorded in the root ResourceTracker (garbage-collect strategy never or
-		// onAppDelete) stays "contained" across Application revisions, so a healthy live object
-		// left behind by the previous revision would otherwise keep a new revision from ever
-		// reaching the cluster. Treat such an object as not yet applied. The render hash covers
-		// the whole object including the appRevision label, so a new revision never matches it;
-		// when the spec is unchanged the apply then changes only metadata, which is cheap.
-		if isHealth {
-			liveObjects := append([]*unstructured.Unstructured{output}, outputs...)
-			if stale, found := h.staleRevisionResource(liveObjects...); found {
-				isHealth = false
-				status.Healthy = false
-				note := fmt.Sprintf("%s %s applied by revision %s, current revision is %s; pending re-apply",
-					stale.GetKind(), stale.GetName(), stale.GetLabels()[oam.LabelAppRevision], h.currentAppRev.Name)
-				if status.Message == "" {
-					status.Message = note
-				} else {
-					status.Message = status.Message + "; " + note
-				}
-			}
-		}
+		isHealth = h.markStaleRevision(isHealth, status, output, outputs)
 
 		return isHealth, status, output, outputs, err
 	}
+}
+
+// markStaleRevision adjusts a collected health result for live objects left behind by an older
+// Application revision. Both the deploy step's pre-check and the component dispatcher skip the
+// apply for a component whose health check passes. A resource recorded in the root
+// ResourceTracker (garbage-collect strategy never or onAppDelete) stays "contained" across
+// Application revisions, so a healthy live object left behind by the previous revision would
+// otherwise keep a new revision from ever reaching the cluster. When isHealth is true and one of
+// the live objects qualifies (see staleRevisionResource), status.Healthy is cleared, a note is
+// appended to status.Message, and false is returned; otherwise isHealth is returned unchanged.
+// The render hash covers the whole object including the appRevision label, so a new revision
+// never matches it; when the spec is unchanged the apply then changes only metadata, which is cheap.
+func (h *AppHandler) markStaleRevision(isHealth bool, status *common.ApplicationComponentStatus, output *unstructured.Unstructured, outputs []*unstructured.Unstructured) bool {
+	if !isHealth {
+		return isHealth
+	}
+	liveObjects := append([]*unstructured.Unstructured{output}, outputs...)
+	stale, found := h.staleRevisionResource(liveObjects...)
+	if !found {
+		return isHealth
+	}
+	if status != nil {
+		status.Healthy = false
+		note := fmt.Sprintf("%s %s applied by revision %s, current revision is %s; pending re-apply",
+			stale.GetKind(), stale.GetName(), stale.GetLabels()[oam.LabelAppRevision], h.currentAppRev.Name)
+		if status.Message == "" {
+			status.Message = note
+		} else {
+			status.Message = status.Message + "; " + note
+		}
+	}
+	return false
 }
 
 // staleRevisionResource returns the first live object that this Application controls, that the

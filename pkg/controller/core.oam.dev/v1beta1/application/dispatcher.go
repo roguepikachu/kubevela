@@ -131,12 +131,14 @@ func (h *AppHandler) generateDispatcher(appRev *v1beta1.ApplicationRevision, pre
 			if !h.resourceKeeper.ContainsResources(manifests) {
 				return false, nil
 			}
-			_, _, _, isHealth, err := h.collectHealthStatus(ctx, comp, options.OverrideNamespace, skipWorkload,
+			status, output, outputs, isHealth, err := h.collectHealthStatus(ctx, comp, options.OverrideNamespace, skipWorkload,
 				ByTraitType(readyTraits, options.Traits))
 			if err != nil {
 				return false, err
 			}
-			return isHealth, nil
+			// A live object left by an older revision must be re-dispatched even though it is
+			// healthy and already tracked; see markStaleRevision.
+			return h.markStaleRevision(isHealth, status, output, outputs), nil
 		}
 		dispatcher.run = func(ctx context.Context, comp *appfile.Component, appRev *v1beta1.ApplicationRevision, clusterName string) (bool, error) {
 			skipWorkload, dispatchManifests := assembleManifestFn(comp.SkipApplyWorkload)
