@@ -51,6 +51,9 @@ cluster; `delete` removes it with the SpokeCluster.
 | `05-clusterplane-foundation-runtime.yaml` | The bootstrap plane: namespaces, Flux, vela-core as a Flux HelmRelease from an OCI chart |
 | `06-spokecluster-connect-with-bootstrap.yaml` | Bootstrap an existing cluster you only connect to |
 | `07-invalid-examples.yaml` | Shapes admission rejects, with the message you will see |
+| `08-clusterplanes-clusterinit.yaml` | Two clusterInit planes for the spoke: Kyverno with a baseline Audit policy, and cert-manager |
+| `09-clusterblueprint-platform-baseline.yaml` | The blueprint `spec.blueprintRef` points at; the hub snapshots it into revisions and dispatches it |
+| `10-spokecluster-adopt-with-dispatch.yaml` | A bootstrapped spoke pointed at that blueprint: Dispatched and SpokeReady conditions, health pulled from the spoke Cluster |
 
 ## Prerequisites the examples assume
 
@@ -65,6 +68,17 @@ cluster; `delete` removes it with the SpokeCluster.
   source-controller on the spoke can authenticate to it (on EKS managed node groups pods cannot
   reach IMDS, so give `flux-system/source-controller` an EKS Pod Identity association to a read-only
   registry role).
+
+## Dispatch in one paragraph
+
+Once a spoke is Bootstrapped it runs its own vela-core, and the hub stops rendering workloads for it. Setting `spec.blueprintRef` on the
+SpokeCluster makes the hub snapshot the ClusterBlueprint and every plane it names into content-hashed ClusterBlueprintRevision and
+ClusterPlaneRevision objects, and ship them to the spoke in one Application, `sc-<spoke>-dispatch`, together with the ComponentDefinitions
+the planes use and a `Cluster` CR whose three phase refs (clusterInit, planeProvisioning, healthValidation) all name that blueprint revision.
+The spoke's own cluster-core turns the Cluster CR into one Application per plane, `cluster-<plane>`, with a `depends-on-app` wait step per
+dependency and a `deploy` step. The hub polls the Cluster status back into `status.health` and the `Dispatched` and `SpokeReady`
+conditions. Editing a plane cuts a new revision and the spoke follows; deleting objects on the spoke is repaired by the spoke alone, with
+the hub down if need be, because the plane Applications live on the spoke.
 
 ## Things that bit us, so you do not have to find them again
 

@@ -1,0 +1,41 @@
+# An adopted (or provisioned, or connected) spoke that has been bootstrapped, pointed at a blueprint
+# of clusterInit planes. Requires Bootstrapped=True: dispatch waits (Dispatched=False, reason
+# WaitingForBootstrap) until the spoke runs its own vela-core.
+#
+# What happens: the hub snapshots blueprint platform-baseline and its planes into revisions,
+# renders Application sc-spoke-a-dispatch (topology spoke-a, garbage-collect never) carrying the
+# revisions, the ComponentDefinitions the planes use and a Cluster CR named spoke-a; the spoke's
+# cluster-core renders Applications cluster-foundation-policy and cluster-foundation-certs; the hub
+# pulls Cluster.status back every 30 s:
+#   Dispatched=True   reason Dispatched, status.dispatchedRevision=platform-baseline-<hash8>
+#   SpokeReady=True   reason SpokeReady, status.health.phase=Ready, planes 2/2 healthy
+#
+# Editing a plane cuts a new revision and the spoke follows. Clearing spec.blueprintRef deletes the
+# dispatch Application; the spoke objects stay (garbage-collect never) until the cluster goes.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: spoke-a
+  namespace: vela-system
+  labels:
+    provider: aws
+    region: us-west-2
+spec:
+  mode: adopt
+  infraDeletionPolicy: retain
+  infraProvisioning:
+    blueprintRef:
+      name: eks-capi
+  bootstrap:
+    planeRef:
+      name: foundation-runtime
+  blueprintRef:
+    name: platform-baseline
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: tenant-example-spoke-a
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/tenant-example-spoke-spoke-a
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core

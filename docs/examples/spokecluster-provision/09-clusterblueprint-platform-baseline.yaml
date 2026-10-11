@@ -1,0 +1,19 @@
+# The blueprint a bootstrapped spoke is pointed at through spec.blueprintRef. The hub snapshots it and its planes
+# into content-hashed ClusterBlueprintRevision and ClusterPlaneRevision objects, ships them to the spoke inside
+# Application sc-<spoke>-dispatch together with a Cluster CR, and pulls the Cluster status back into
+# SpokeCluster.status.health and the Dispatched and SpokeReady conditions. Editing a plane cuts a new revision.
+kind: ClusterBlueprint
+metadata:
+  name: platform-baseline
+  namespace: vela-system
+spec:
+  description: clusterInit planes for every spoke, policy and certificates
+  planes:
+  - name: foundation-policy
+    ref:
+      name: foundation-policy
+    phase: clusterInit
+  - name: foundation-certs
+    ref:
+      name: foundation-certs
+    phase: clusterInit
