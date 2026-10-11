@@ -252,12 +252,24 @@ func (rd *appRender) spec(sc *v1beta1.SpokeCluster) (v1beta1.ApplicationSpec, er
 	if err := add(policyKeep, "garbage-collect", map[string]any{"rules": keepRules(sc, infraNames, runtimeNames)}); err != nil {
 		return v1beta1.ApplicationSpec{}, err
 	}
-	// take-over with no rules lets the Application claim any object its components render
-	// that belongs to no application. Mode adopt needs it for retained substrate objects.
-	// For this POC it is present in every mode, so the one Application can also take over
-	// what the three Applications it replaces applied before they were deleted.
-	if err := add(policyAdopt, "take-over", map[string]any{}); err != nil {
+	// take-over matches nothing without rules (TakeOverPolicySpec.FindStrategy), so it
+	// names every component and the kinds the platform step dispatches. Mode adopt needs it
+	// for retained substrate objects; for this POC it is present in every mode, so the one
+	// Application can also claim what the three Applications it replaces applied.
+	allNames := append(append([]string{}, infraNames...), runtimeNames...)
+	adoptRules := []map[string]any{{"selector": map[string]any{"resourceTypes": dispatchedKinds}}}
+	if len(allNames) > 0 {
+		adoptRules = append(adoptRules, map[string]any{"selector": map[string]any{"componentNames": allNames}})
+	}
+	if err := add(policyAdopt, "take-over", map[string]any{"rules": adoptRules}); err != nil {
 		return v1beta1.ApplicationSpec{}, err
+	}
+	// Substrates write defaults back into their own objects and vela-core must not fight
+	// them, so the infra components are apply-once (as the former infra Application was).
+	if len(infraNames) > 0 {
+		if err := add("apply-once", "apply-once", map[string]any{"enable": true, "rules": []map[string]any{{"selector": map[string]any{"componentNames": infraNames}}}}); err != nil {
+			return v1beta1.ApplicationSpec{}, err
+		}
 	}
 
 	if len(infraNames) > 0 {
@@ -302,6 +314,10 @@ func (rd *appRender) spec(sc *v1beta1.SpokeCluster) (v1beta1.ApplicationSpec, er
 	}, nil
 }
 
+// dispatchedKinds are the kinds the platform step applies to the spoke outside any
+// component: they must be kept on deletion and claimable by take-over.
+var dispatchedKinds = []string{"Cluster", "ClusterBlueprintRevision", "ClusterPlaneRevision", "ComponentDefinition"}
+
 // keepRules are the garbage-collect rules that make deleting the Application safe for
 // what it rendered: a never rule over the component names, and a never rule over the
 // kinds the platform step dispatches to the spoke (revisions, definitions and the Cluster
@@ -322,7 +338,7 @@ func keepRules(sc *v1beta1.SpokeCluster, infraNames, runtimeNames []string) []ma
 		})
 	}
 	return append(rules, map[string]any{
-		"selector": map[string]any{"resourceTypes": []string{"Cluster", "ClusterBlueprintRevision", "ClusterPlaneRevision", "ComponentDefinition"}},
+		"selector": map[string]any{"resourceTypes": dispatchedKinds},
 		"strategy": "never",
 	})
 }
