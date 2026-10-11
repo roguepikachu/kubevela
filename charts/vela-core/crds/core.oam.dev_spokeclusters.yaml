@@ -77,6 +77,10 @@ spec:
       name: BOOTSTRAP
       priority: 1
       type: string
+    - jsonPath: .status.health.phase
+      name: SPOKE
+      priority: 1
+      type: string
     name: v1beta1
     schema:
       openAPIV3Schema:
@@ -515,26 +519,55 @@ spec:
                 type: string
               dispatchedRevision:
                 description: |-
-                  DispatchedRevision is the blueprint revision the hub last dispatched to the
-                  spoke. The dispatch controller advances a spoke when this differs from
-                  spec.blueprintRef.revision.
-
-                  Phase 2 stub: written by the dispatch controller once blueprint dispatch is
-                  built; empty in connect-only Phase 1.
+                  DispatchedRevision is the ClusterBlueprintRevision name the hub last shipped
+                  to the spoke. The dispatch on the hub writes it after the bundle is applied
+                  and advances the spoke when the snapshot of spec.blueprintRef hashes to a
+                  different name.
                 type: string
               health:
                 description: |-
-                  Health is the spoke's blueprint health, pulled from the spoke Cluster on
-                  demand while connected. The spoke never pushes it to the hub.
-
-                  Phase 2 stub: populated once blueprint dispatch and spoke-side health
-                  aggregation exist; nil in connect-only Phase 1.
+                  Health is the spoke's blueprint health, pulled from the spoke Cluster's
+                  status on demand while connected. The status pull on the hub fills it; the
+                  spoke never pushes it.
                 properties:
                   lastPulledAt:
                     description: LastPulledAt is when the hub last pulled health from
                       the spoke.
                     format: date-time
                     type: string
+                  phase:
+                    description: |-
+                      Phase is the spoke Cluster's lifecycle phase (Pending, Initializing,
+                      Provisioning, Validating, Ready, Degraded) at the last pull.
+                    type: string
+                  planes:
+                    description: Planes is the per-plane health as the spoke Cluster
+                      reported it.
+                    items:
+                      description: SpokePlaneHealth is one plane's health as pulled
+                        from the spoke Cluster.
+                      properties:
+                        healthy:
+                          description: Healthy is true when every component of the
+                            plane's Application is healthy.
+                          type: boolean
+                        message:
+                          description: Message summarizes the plane's component health
+                            messages.
+                          type: string
+                        name:
+                          description: Name is the plane's name within the dispatched
+                            blueprint.
+                          type: string
+                        phase:
+                          description: Phase is the lifecycle stage the plane ran
+                            in on the spoke.
+                          type: string
+                      required:
+                      - healthy
+                      - name
+                      type: object
+                    type: array
                   planesHealthy:
                     description: PlanesHealthy is the number of blueprint planes reporting
                       healthy.

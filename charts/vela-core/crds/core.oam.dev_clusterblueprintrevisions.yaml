@@ -1,0 +1,130 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: clusterblueprintrevisions.core.oam.dev
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: ClusterBlueprintRevision
+    listKind: ClusterBlueprintRevisionList
+    plural: clusterblueprintrevisions
+    shortNames:
+    - cbprev
+    singular: clusterblueprintrevision
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.blueprintName
+      name: BLUEPRINT
+      type: string
+    - jsonPath: .spec.hash
+      name: HASH
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClusterBlueprintRevision is an immutable snapshot of a ClusterBlueprint,
+          named "<blueprint>-<hash8>". The hub creates one, together with a
+          ClusterPlaneRevision per plane, when a SpokeCluster dispatches a blueprint,
+          and ships the set to the spoke where the Cluster's phase refs name it. It
+          has no status: a snapshot has nothing to report.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ClusterBlueprintRevisionSpec is the frozen content of one
+              ClusterBlueprint.
+            properties:
+              blueprintName:
+                description: BlueprintName is the ClusterBlueprint this revision was
+                  taken from.
+                minLength: 1
+                type: string
+              description:
+                description: Description is the blueprint's description at snapshot
+                  time.
+                type: string
+              hash:
+                description: |-
+                  Hash is the content hash of the snapshotted blueprint together with the
+                  plane revisions it pins, so a change in any plane yields a new revision.
+                minLength: 1
+                type: string
+              planes:
+                description: |-
+                  Planes are the blueprint's planes at snapshot time, in order, each pinned
+                  to a ClusterPlaneRevision.
+                items:
+                  description: |-
+                    BlueprintPlaneRevision is one plane of a snapshotted blueprint, pinned to the
+                    ClusterPlaneRevision that holds its content.
+                  properties:
+                    dependsOn:
+                      description: DependsOn names planes of the same blueprint that
+                        must be healthy first.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Name is the plane's name within the blueprint,
+                        unchanged from the source.
+                      minLength: 1
+                      type: string
+                    phase:
+                      description: |-
+                        Phase is the lifecycle stage the plane belongs to on the spoke. It is
+                        recorded explicitly here, so the snapshot does not depend on the
+                        blueprint's default.
+                      enum:
+                      - clusterInit
+                      - planeProvisioning
+                      - healthValidation
+                      type: string
+                    planeRevision:
+                      description: |-
+                        PlaneRevision is the name of the ClusterPlaneRevision, in the same
+                        namespace, that holds this plane's snapshotted components.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - phase
+                  - planeRevision
+                  type: object
+                minItems: 1
+                type: array
+            required:
+            - blueprintName
+            - hash
+            - planes
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

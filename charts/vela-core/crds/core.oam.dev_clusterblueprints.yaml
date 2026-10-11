@@ -78,6 +78,17 @@ spec:
                       minLength: 1
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    phase:
+                      default: planeProvisioning
+                      description: |-
+                        Phase is the lifecycle stage the plane belongs to on the spoke. Stages run
+                        in order clusterInit, planeProvisioning, healthValidation; a plane that
+                        names none is plane provisioning.
+                      enum:
+                      - clusterInit
+                      - planeProvisioning
+                      - healthValidation
+                      type: string
                     ref:
                       description: |-
                         Ref points at the ClusterPlane in the same namespace as the blueprint.

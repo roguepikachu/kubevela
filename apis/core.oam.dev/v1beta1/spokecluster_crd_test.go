@@ -96,7 +96,7 @@ var _ = It("SpokeClusterCRD PrinterColumns", func() {
 	for _, name := range []string{"MODE", "VERSION", "NODES", "PLATFORM", "STATUS", "AGE"} {
 		r.Truef(defaultCols[name], "expected default column %q", name)
 	}
-	for _, name := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "AUTH", "LAST PROBE", "PROVISION"} {
+	for _, name := range []string{"REGION", "ENDPOINT", "CPU", "MEMORY", "LATENCY", "AUTH", "LAST PROBE", "PROVISION", "BOOTSTRAP", "SPOKE"} {
 		r.Truef(wideCols[name], "expected wide (priority>0) column %q", name)
 	}
 })
@@ -240,11 +240,16 @@ var _ = It("SpokeClusterCRD Phase2Stubs", func() {
 	r.Contains(status.Properties, "dispatchedRevision")
 	r.Equal("string", status.Properties["dispatchedRevision"].Type)
 
-	// status.health summarizes the blueprint health pulled from the spoke.
+	// status.health summarizes the blueprint health pulled from the spoke Cluster:
+	// the aggregate, the spoke's own phase and a per-plane breakdown.
 	health := status.Properties["health"]
-	for _, field := range []string{"status", "planesHealthy", "planesTotal", "lastPulledAt"} {
+	for _, field := range []string{"status", "phase", "planesHealthy", "planesTotal", "lastPulledAt", "planes"} {
 		r.Contains(health.Properties, field)
 	}
+	planeHealth := health.Properties["planes"].Items.Schema
+	r.ElementsMatch([]string{"name", "healthy"}, planeHealth.Required)
+	r.Contains(planeHealth.Properties, "phase")
+	r.Contains(planeHealth.Properties, "message")
 
 	// status.provisioning mirrors the infra Application: the name and health
 	// flag are always written, phase and message only when known.

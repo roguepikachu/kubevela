@@ -155,6 +155,9 @@ func init() {
 	SchemeBuilder.Register(&SpokeCluster{}, &SpokeClusterList{})
 	SchemeBuilder.Register(&ClusterPlane{}, &ClusterPlaneList{})
 	SchemeBuilder.Register(&ClusterBlueprint{}, &ClusterBlueprintList{})
+	SchemeBuilder.Register(&ClusterPlaneRevision{}, &ClusterPlaneRevisionList{})
+	SchemeBuilder.Register(&ClusterBlueprintRevision{}, &ClusterBlueprintRevisionList{})
+	SchemeBuilder.Register(&Cluster{}, &ClusterList{})
 	_ = SchemeBuilder.AddToScheme(k8sscheme.Scheme)
 }
 

@@ -138,6 +138,12 @@ const (
 	// SpokeClusterConditionBootstrapped is true once every component of the bootstrap
 	// plane is healthy on the spoke.
 	SpokeClusterConditionBootstrapped = "Bootstrapped"
+	// SpokeClusterConditionDispatched is true once the blueprint revision bundle and
+	// the spoke Cluster were applied on the spoke.
+	SpokeClusterConditionDispatched = "Dispatched"
+	// SpokeClusterConditionSpokeReady is true once the pulled spoke Cluster status
+	// reports phase Ready.
+	SpokeClusterConditionSpokeReady = "SpokeReady"
 )
 
 // SpokeClusterSpec is the desired state of a managed cluster on the hub.
@@ -440,20 +446,16 @@ type SpokeClusterStatus struct {
 	// +optional
 	Bootstrap *ProvisioningStatus `json:"bootstrap,omitempty"`
 
-	// DispatchedRevision is the blueprint revision the hub last dispatched to the
-	// spoke. The dispatch controller advances a spoke when this differs from
-	// spec.blueprintRef.revision.
-	//
-	// Phase 2 stub: written by the dispatch controller once blueprint dispatch is
-	// built; empty in connect-only Phase 1.
+	// DispatchedRevision is the ClusterBlueprintRevision name the hub last shipped
+	// to the spoke. The dispatch on the hub writes it after the bundle is applied
+	// and advances the spoke when the snapshot of spec.blueprintRef hashes to a
+	// different name.
 	// +optional
 	DispatchedRevision string `json:"dispatchedRevision,omitempty"`
 
-	// Health is the spoke's blueprint health, pulled from the spoke Cluster on
-	// demand while connected. The spoke never pushes it to the hub.
-	//
-	// Phase 2 stub: populated once blueprint dispatch and spoke-side health
-	// aggregation exist; nil in connect-only Phase 1.
+	// Health is the spoke's blueprint health, pulled from the spoke Cluster's
+	// status on demand while connected. The status pull on the hub fills it; the
+	// spoke never pushes it.
 	// +optional
 	Health *SpokeClusterHealth `json:"health,omitempty"`
 }
@@ -478,15 +480,19 @@ type ProvisioningStatus struct {
 }
 
 // SpokeClusterHealth is the blueprint health the hub pulls from the spoke
-// Cluster on demand. It summarizes how many of the dispatched blueprint's planes
-// are healthy at the time of the last pull.
-//
-// Phase 2 stub: no controller pulls this in Phase 1.
+// Cluster on demand. It is a projection of Cluster.status for kubectl on the
+// hub: the aggregate, the spoke's lifecycle phase and a per-plane breakdown as
+// of the last pull.
 type SpokeClusterHealth struct {
 	// Status is the aggregate blueprint health of the spoke (for example Healthy
 	// or Degraded).
 	// +optional
 	Status string `json:"status,omitempty"`
+
+	// Phase is the spoke Cluster's lifecycle phase (Pending, Initializing,
+	// Provisioning, Validating, Ready, Degraded) at the last pull.
+	// +optional
+	Phase string `json:"phase,omitempty"`
 
 	// PlanesHealthy is the number of blueprint planes reporting healthy.
 	// +optional
@@ -499,6 +505,27 @@ type SpokeClusterHealth struct {
 	// LastPulledAt is when the hub last pulled health from the spoke.
 	// +optional
 	LastPulledAt *metav1.Time `json:"lastPulledAt,omitempty"`
+
+	// Planes is the per-plane health as the spoke Cluster reported it.
+	// +optional
+	Planes []SpokePlaneHealth `json:"planes,omitempty"`
+}
+
+// SpokePlaneHealth is one plane's health as pulled from the spoke Cluster.
+type SpokePlaneHealth struct {
+	// Name is the plane's name within the dispatched blueprint.
+	Name string `json:"name"`
+
+	// Phase is the lifecycle stage the plane ran in on the spoke.
+	// +optional
+	Phase string `json:"phase,omitempty"`
+
+	// Healthy is true when every component of the plane's Application is healthy.
+	Healthy bool `json:"healthy"`
+
+	// Message summarizes the plane's component health messages.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // SpokeClusterInfo is the discovered inventory of a managed cluster.
@@ -565,6 +592,7 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
 // +kubebuilder:printcolumn:name="PROVISION",type=string,JSONPath=`.status.provisioning.phase`,priority=1
 // +kubebuilder:printcolumn:name="BOOTSTRAP",type=string,JSONPath=`.status.bootstrap.phase`,priority=1
+// +kubebuilder:printcolumn:name="SPOKE",type=string,JSONPath=`.status.health.phase`,priority=1
 // +kubebuilder:validation:XValidation:rule="self.metadata.name != 'local'",message="name must not be the reserved local cluster name"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode in ['connect', 'provision', 'adopt']",message="mode must be 'connect', 'provision' or 'adopt'"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'connect' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="modes 'provision' and 'adopt' require infraProvisioning.blueprintRef"

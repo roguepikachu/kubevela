@@ -1,0 +1,126 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: clusterplanerevisions.core.oam.dev
+spec:
+  group: core.oam.dev
+  names:
+    categories:
+    - oam
+    kind: ClusterPlaneRevision
+    listKind: ClusterPlaneRevisionList
+    plural: clusterplanerevisions
+    shortNames:
+    - cplanerev
+    singular: clusterplanerevision
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.planeName
+      name: PLANE
+      type: string
+    - jsonPath: .spec.hash
+      name: HASH
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: AGE
+      type: date
+    name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ClusterPlaneRevision is an immutable snapshot of a ClusterPlane, named
+          "<plane>-<hash8>". The hub creates one when a SpokeCluster dispatches a
+          blueprint and ships it to the spoke alongside the ClusterBlueprintRevision
+          that pins it, so the spoke renders exactly what the hub saw. It has no
+          status: a snapshot has nothing to report.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ClusterPlaneRevisionSpec is the frozen content of one ClusterPlane.
+            properties:
+              components:
+                description: Components are the plane's components at snapshot time,
+                  verbatim.
+                items:
+                  description: |-
+                    ClusterPlaneComponent is one component of a plane. It has the shape of an
+                    Application component on purpose: vela-cluster-core lifts it into an
+                    Application unchanged, so anything a ComponentDefinition accepts works here.
+                  properties:
+                    dependsOn:
+                      description: |-
+                        DependsOn names components of the same plane that must be healthy first.
+                        Names are plane-local; the renderer rewrites each to "<plane>-<name>"
+                        when lifting into the Application.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: |-
+                        Name is unique within the plane. The rendered Application component is
+                        "<plane>-<component>", which must be a DNS-1123 label, so each half is
+                        capped at 31 characters.
+                      maxLength: 31
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    properties:
+                      description: Properties are the ComponentDefinition parameters.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type:
+                      description: Type is the ComponentDefinition that renders this
+                        component.
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  - type
+                  type: object
+                minItems: 1
+                type: array
+              description:
+                description: Description is the plane's description at snapshot time.
+                type: string
+              hash:
+                description: |-
+                  Hash is the content hash of the snapshotted ClusterPlaneSpec. Two
+                  revisions of the same plane with the same hash are the same content.
+                minLength: 1
+                type: string
+              planeName:
+                description: PlaneName is the ClusterPlane this revision was taken
+                  from.
+                minLength: 1
+                type: string
+            required:
+            - components
+            - hash
+            - planeName
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

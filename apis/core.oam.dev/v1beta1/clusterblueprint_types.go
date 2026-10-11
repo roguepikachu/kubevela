@@ -20,6 +20,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// LifecyclePhase is the stage of the spoke's lifecycle a blueprint plane runs in.
+type LifecyclePhase string
+
+const (
+	// LifecyclePhaseClusterInit runs first: planes that prepare the cluster
+	// before anything else is provisioned, such as CNI or cluster-wide policy.
+	LifecyclePhaseClusterInit LifecyclePhase = "clusterInit"
+	// LifecyclePhasePlaneProvisioning runs second: the infrastructure planes
+	// themselves. It is the default for a plane that names no phase.
+	LifecyclePhasePlaneProvisioning LifecyclePhase = "planeProvisioning"
+	// LifecyclePhaseHealthValidation runs last: planes that check the
+	// provisioned cluster once every other plane is healthy.
+	LifecyclePhaseHealthValidation LifecyclePhase = "healthValidation"
+)
+
 // BlueprintPlane is one plane in a blueprint's composition.
 type BlueprintPlane struct {
 	// Name is the plane's name within the blueprint and the prefix of every
@@ -35,6 +50,14 @@ type BlueprintPlane struct {
 	// ClusterPlane has no revisions yet, so the infraProvisioning renderer
 	// rejects a non-empty ref.revision rather than ignoring it.
 	Ref BlueprintReference `json:"ref"`
+
+	// Phase is the lifecycle stage the plane belongs to on the spoke. Stages run
+	// in order clusterInit, planeProvisioning, healthValidation; a plane that
+	// names none is plane provisioning.
+	// +kubebuilder:validation:Enum=clusterInit;planeProvisioning;healthValidation
+	// +kubebuilder:default=planeProvisioning
+	// +optional
+	Phase LifecyclePhase `json:"phase,omitempty"`
 
 	// DependsOn names planes of the same blueprint that must be healthy first.
 	// Not read by the infraProvisioning renderer yet; it rejects blueprints that set it.

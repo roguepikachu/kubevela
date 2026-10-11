@@ -52,12 +52,13 @@ func splitYAMLDocuments(t GinkgoTInterface, path string) []string {
 	return docs
 }
 
-// Both envtest specs share one control plane. Starting a kube-apiserver and etcd
-// takes the better part of a minute, and nothing either spec does needs isolation
-// from the other: they use distinct object names inside one namespace.
+// Every envtest spec in this package shares one control plane. Starting a
+// kube-apiserver and etcd takes the better part of a minute, and nothing any spec
+// does needs isolation from the others: they use distinct object names inside one
+// namespace.
 //
 // ContinueOnFailure because Ordered otherwise skips the remaining specs once one
-// fails, and these two are independent. Without it a changed example document
+// fails, and these specs are independent. Without it a changed example document
 // failing InstallAndApply would silently take the CEL rejection coverage with it.
 var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 	var (
@@ -76,7 +77,10 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 			ControlPlaneStartTimeout: 2 * time.Minute,
 			ControlPlaneStopTimeout:  time.Minute,
 			UseExistingCluster:       ptr.To(false),
-			CRDDirectoryPaths:        []string{spokeClusterCRDPath, clusterPlaneCRDPath, clusterBlueprintCRDPath},
+			CRDDirectoryPaths: []string{
+				spokeClusterCRDPath, clusterPlaneCRDPath, clusterBlueprintCRDPath,
+				clusterPlaneRevisionCRDPath, clusterBlueprintRevisionCRDPath, clusterCRDPath,
+			},
 		}
 
 		var err error
@@ -365,5 +369,136 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 		got := &SpokeCluster{}
 		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(spoke), got))
 		r.Equal(want, got.Status.Bootstrap, "status.bootstrap must round-trip through the API server")
+	})
+
+	// A spoke Cluster names one blueprint revision per lifecycle phase, and the
+	// hub reads its status back, so every status field has to survive the
+	// subresource unchanged.
+	It("ClusterAdmitsAllPhaseRefsAndRoundTripsStatus", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		cluster := &Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "spoke-cluster", Namespace: "vela-system"},
+			Spec: ClusterSpec{
+				ClusterInit:       &PhaseSpec{BlueprintRef: BlueprintReference{Name: "init-abc12345"}},
+				PlaneProvisioning: &PhaseSpec{BlueprintRef: BlueprintReference{Name: "planes-abc12345"}},
+				HealthValidation:  &PhaseSpec{BlueprintRef: BlueprintReference{Name: "health-abc12345"}},
+			},
+		}
+		r.NoError(k8sClient.Create(ctx, cluster), "a Cluster with all three phase refs must be admitted")
+
+		now := metav1.NewTime(time.Now().Truncate(time.Second))
+		wantStatus := ClusterStatus{
+			ObservedGeneration: 1,
+			Phase:              ClusterPhaseDegraded,
+			Conditions: []metav1.Condition{{
+				Type: ClusterConditionBlueprintResolved, Status: metav1.ConditionTrue,
+				Reason: "Resolved", Message: "all revisions found", LastTransitionTime: now,
+			}},
+			Planes: []PlaneStatus{
+				{Name: "network", Phase: LifecyclePhaseClusterInit, Application: "network-abc12345", Healthy: true},
+				{Name: "storage", Phase: LifecyclePhasePlaneProvisioning, Application: "storage-abc12345", Healthy: false, Message: "pvc pending"},
+			},
+			Health: &ClusterHealth{Status: "Degraded", PlanesHealthy: 1, PlanesTotal: 2, LastCheckTime: &now},
+		}
+		cluster.Status = wantStatus
+		r.NoError(k8sClient.Status().Update(ctx, cluster))
+
+		got := &Cluster{}
+		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(cluster), got))
+		r.Equal(wantStatus, got.Status, "Cluster status must round-trip through the status subresource")
+	})
+
+	// A Cluster that names no phase at all has nothing to run, so the schema
+	// refuses it even with no webhook.
+	It("ClusterRejectsSpecWithoutAnyPhaseRef", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		err := k8sClient.Create(ctx, &Cluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "spoke-cluster-empty", Namespace: "vela-system"},
+		})
+		r.Error(err, "the API server must refuse a Cluster with no phase ref")
+		r.Contains(err.Error(), "clusterInit", "the rejection has to name the phases one of which is required")
+	})
+
+	// Blueprints written before phases existed carry no phase; they keep working
+	// as plain plane provisioning. Anything outside the enum is a typo and is
+	// refused.
+	It("BlueprintPlanePhaseDefaultsAndIsClosed", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		blueprint := &ClusterBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "phase-default", Namespace: "vela-system"},
+			Spec: ClusterBlueprintSpec{Planes: []BlueprintPlane{
+				{Name: "network", Ref: BlueprintReference{Name: "network"}},
+			}},
+		}
+		r.NoError(k8sClient.Create(ctx, blueprint))
+		got := &ClusterBlueprint{}
+		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(blueprint), got))
+		r.Equal(LifecyclePhasePlaneProvisioning, got.Spec.Planes[0].Phase, "a plane without a phase is plane provisioning")
+
+		err := k8sClient.Create(ctx, &ClusterBlueprint{
+			ObjectMeta: metav1.ObjectMeta{Name: "phase-nonsense", Namespace: "vela-system"},
+			Spec: ClusterBlueprintSpec{Planes: []BlueprintPlane{
+				{Name: "network", Ref: BlueprintReference{Name: "network"}, Phase: LifecyclePhase("nonsense")},
+			}},
+		})
+		r.Error(err, "the API server must refuse a phase outside the lifecycle enum")
+		r.Contains(err.Error(), "phase", "the rejection has to name the field")
+	})
+
+	// The two revision kinds are what the hub ships to the spoke; both have to
+	// store and read back with their labels and pinned references intact.
+	It("RevisionsRoundTrip", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		planeRev := &ClusterPlaneRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "network-abc12345", Namespace: "vela-system",
+				Labels: map[string]string{LabelPlaneName: "network", LabelPlaneHash: "abc12345"},
+			},
+			Spec: ClusterPlaneRevisionSpec{
+				PlaneName: "network", Hash: "abc12345", Description: "cni and dns",
+				Components: []ClusterPlaneComponent{{Name: "cilium", Type: "helm"}},
+			},
+		}
+		r.NoError(k8sClient.Create(ctx, planeRev))
+		gotPlane := &ClusterPlaneRevision{}
+		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(planeRev), gotPlane))
+		r.Equal(planeRev.Spec, gotPlane.Spec)
+		r.Equal("network", gotPlane.Labels[LabelPlaneName])
+
+		blueprintRev := &ClusterBlueprintRevision{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "base-def67890", Namespace: "vela-system",
+				Labels: map[string]string{LabelBlueprintName: "base", LabelBlueprintHash: "def67890"},
+			},
+			Spec: ClusterBlueprintRevisionSpec{
+				BlueprintName: "base", Hash: "def67890",
+				Planes: []BlueprintPlaneRevision{
+					{Name: "network", Phase: LifecyclePhaseClusterInit, PlaneRevision: "network-abc12345"},
+					{Name: "storage", Phase: LifecyclePhasePlaneProvisioning, PlaneRevision: "storage-abc12345", DependsOn: []string{"network"}},
+				},
+			},
+		}
+		r.NoError(k8sClient.Create(ctx, blueprintRev))
+		gotBlueprint := &ClusterBlueprintRevision{}
+		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(blueprintRev), gotBlueprint))
+		r.Equal(blueprintRev.Spec, gotBlueprint.Spec)
+
+		err := k8sClient.Create(ctx, &ClusterBlueprintRevision{
+			ObjectMeta: metav1.ObjectMeta{Name: "base-nophase", Namespace: "vela-system"},
+			Spec: ClusterBlueprintRevisionSpec{
+				BlueprintName: "base", Hash: "nophase0",
+				Planes: []BlueprintPlaneRevision{{Name: "network", PlaneRevision: "network-abc12345"}},
+			},
+		})
+		r.Error(err, "a snapshot has to record each plane's phase explicitly")
+		r.Contains(err.Error(), "phase")
 	})
 })
