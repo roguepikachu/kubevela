@@ -139,7 +139,9 @@ func orderPlanes(cl *v1beta1.Cluster, revs map[string]*v1beta1.ClusterBlueprintR
 // unresolvedDependencies maps each plane to the explicit dependsOn entries that name no
 // plane in the rendered set. Implicit dependencies always resolve, so only explicit ones
 // can appear. Rendering such a plane would give it a wait step that never completes, so
-// the controller reports it instead.
+// the controller reports it instead. A skipped plane still feeds the implicit waits of the
+// next phase, so downstream planes block until the hub fixes the bundle, and the
+// BlueprintResolved condition explains why.
 func unresolvedDependencies(planes []orderedPlane) map[string][]string {
 	rendered := make(map[string]struct{}, len(planes))
 	for _, p := range planes {

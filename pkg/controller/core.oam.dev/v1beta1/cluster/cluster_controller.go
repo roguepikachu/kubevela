@@ -153,9 +153,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	if len(problems) > 0 {
-		reason := reasonDependencyUnresolved
-		if strings.HasPrefix(problems[0], messagePlaneRevisionMissing) || len(unresolved) == 0 {
-			reason = reasonPlaneRevisionMissing
+		// A dangling dependsOn is a bundle the hub has to fix, so it names the reason
+		// whenever it is present; a missing plane revision is transient and only wins when
+		// it is the sole problem.
+		reason := reasonPlaneRevisionMissing
+		if len(unresolved) > 0 {
+			reason = reasonDependencyUnresolved
 		}
 		setCondition(status, v1beta1.ClusterConditionBlueprintResolved, metav1.ConditionFalse, reason, strings.Join(problems, "; "))
 	} else {

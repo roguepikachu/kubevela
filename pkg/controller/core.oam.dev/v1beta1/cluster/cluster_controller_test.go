@@ -327,9 +327,33 @@ var _ = Describe("Cluster controller", func() {
 			cond := meta.FindStatusCondition(cl.Status.Conditions, v1beta1.ClusterConditionBlueprintResolved)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonDependencyUnresolved))
 			Expect(cond.Message).To(ContainSubstring("policy"))
 			Expect(cond.Message).To(ContainSubstring("zzz"))
 			Expect(cl.Status.Planes).To(HaveLen(2))
+		})
+
+		It("wins the condition reason over a missing plane revision reported before it", func() {
+			// A missing revision is transient and the hub re-pushes it on its own; a
+			// dangling dependsOn is a bundle the hub has to fix, so that is what the reason
+			// names even when the missing revision is listed first.
+			r := newTestReconciler(GinkgoT(),
+				clusterWithRefs("bp-1"),
+				blueprintRev("bp-1",
+					bpPlane("cni", v1beta1.LifecyclePhaseClusterInit),
+					bpPlane("policy", v1beta1.LifecyclePhaseClusterInit, "zzz"),
+				),
+				planeRev("policy"),
+			)
+			_, err := reconcile(r)
+			Expect(err).NotTo(HaveOccurred())
+
+			cond := meta.FindStatusCondition(getCluster(r).Status.Conditions, v1beta1.ClusterConditionBlueprintResolved)
+			Expect(cond).NotTo(BeNil())
+			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonDependencyUnresolved))
+			Expect(cond.Message).To(ContainSubstring("cni-rev"))
+			Expect(cond.Message).To(ContainSubstring("zzz"))
 		})
 	})
 
@@ -565,6 +589,7 @@ var _ = Describe("Cluster controller", func() {
 			cond := meta.FindStatusCondition(cl.Status.Conditions, v1beta1.ClusterConditionBlueprintResolved)
 			Expect(cond).NotTo(BeNil())
 			Expect(cond.Status).To(Equal(metav1.ConditionFalse))
+			Expect(cond.Reason).To(Equal(reasonPlaneRevisionMissing))
 			Expect(cond.Message).To(ContainSubstring("policy-rev"))
 			Expect(cl.Status.Planes).To(HaveLen(2))
 			Expect(cl.Status.Planes[1].Name).To(Equal("policy"))
