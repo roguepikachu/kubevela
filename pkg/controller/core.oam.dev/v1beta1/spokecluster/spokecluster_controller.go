@@ -143,6 +143,10 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 	if sc.Spec.Bootstrap == nil {
 		r.forgetBootstrap(ctx, sc, status)
 	}
+	// Same reasoning for a removed spec.blueprintRef and its dispatch Application.
+	if sc.Spec.BlueprintRef == nil {
+		r.forgetDispatch(ctx, sc, status)
+	}
 
 	// Re-check admission rules even when the validating webhook is Ignore (job-patch
 	// bootstrap window) or disabled. A stored adopt, local or azure object must not
@@ -314,6 +318,11 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 	// observed the spoke Connected: the runtime is rendered at a spoke the hub can reach,
 	// never ahead. The forget arm ran at the top of this function instead.
 	r.reconcileBootstrap(ctx, sc, status)
+	// The dispatch arm follows the same rule and additionally waits for Bootstrapped when
+	// a bootstrap block is present. The pull then reports whatever Cluster the spoke has,
+	// dispatched or not. None of the three returns an error or changes the requeue.
+	r.reconcileDispatch(ctx, sc, status)
+	r.pullSpokeStatus(ctx, sc, status)
 
 	return r.finish(ctx, sc, status, nextRequeue(sc, materialized), nil)
 }
@@ -380,8 +389,9 @@ func (r *Reconciler) updateStatus(ctx context.Context, sc *v1beta1.SpokeCluster,
 }
 
 // statusNeedsWrite reports whether next differs from prev in any operator-facing
-// field. latencyMillis and lastSyncedTime still move on every healthy pass and
-// are stripped from the compare so they do not force a write alone. lastProbeTime
+// field. latencyMillis, lastSyncedTime and health.lastPulledAt still move on every
+// healthy pass and are stripped from the compare so they do not force a write alone.
+// lastProbeTime
 // is written on the first probe and then at most once per probeHeartbeatInterval
 // while Connected stays True, so LAST PROBE stays recent without ~2 etcd writes
 // per spoke per interval. Connection flips always write. Repeated probe failures
@@ -417,6 +427,11 @@ func statusForCompare(in v1beta1.SpokeClusterStatus) *v1beta1.SpokeClusterStatus
 	if out.ClusterInfo != nil {
 		out.ClusterInfo.LastSyncedTime = nil
 		out.ClusterInfo.LatencyMillis = 0
+	}
+	// health.lastPulledAt moves on every Connected pass like lastSyncedTime does, and
+	// is written alongside any real change or the probe heartbeat.
+	if out.Health != nil {
+		out.Health.LastPulledAt = nil
 	}
 	return out
 }

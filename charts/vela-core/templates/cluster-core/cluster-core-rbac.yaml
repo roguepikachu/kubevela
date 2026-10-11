@@ -46,6 +46,27 @@ rules:
   - apiGroups: ["core.oam.dev"]
     resources: ["clusterblueprints", "clusterplanes"]
     verbs: ["get", "list", "watch"]
+  # spec.blueprintRef: the hub snapshots the blueprint and its planes into immutable
+  # revisions (create only; update/patch cover owner-reference and label repair) and
+  # ships the custom ComponentDefinitions the planes use, read by name.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["clusterblueprintrevisions", "clusterplanerevisions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["core.oam.dev"]
+    resources: ["componentdefinitions"]
+    verbs: ["get", "list", "watch"]
+  # Cluster: on the hub, pullSpokeStatus reads the spoke's Cluster through the gateway
+  # proxy; on a spoke, the same ClusterRole backs the spoke-side Cluster controller,
+  # which owns the object's status and finalizers.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["core.oam.dev"]
+    resources: ["clusters/status"]
+    verbs: ["update", "patch"]
+  - apiGroups: ["core.oam.dev"]
+    resources: ["clusters/finalizers"]
+    verbs: ["update"]
   # Direct Get of a same-namespace or allowlisted kubeconfig Secret (source credential).
   # list/watch stay off the ClusterRole so the manager never starts a
   # cluster-wide Secret informer; gateway-ns informer verbs live on the Role

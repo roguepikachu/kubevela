@@ -18,14 +18,12 @@ package spokecluster
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -207,9 +205,8 @@ func (r *Reconciler) ensureBootstrapApplication(ctx context.Context, sc *v1beta1
 	return r.ensureOwnedApplication(ctx, sc, bootstrapAppName(sc), roleBootstrap, comps, policies)
 }
 
-// bootstrapPolicies targets the Application at the spoke and keeps the runtime there. The
-// topology policy names the spoke by its SpokeCluster name, which is the name registration
-// gave its cluster-gateway Secret.
+// bootstrapPolicies targets the Application at the spoke and keeps the runtime there; the
+// shape is targetedPolicies, shared with the dispatch Application.
 //
 // The garbage-collect never rule is what keeps the runtime when the bootstrap Application
 // is deleted on a live spoke (spec.bootstrap removed, see forgetBootstrap): vela-core
@@ -219,22 +216,6 @@ func (r *Reconciler) ensureBootstrapApplication(ctx context.Context, sc *v1beta1
 // removeClusterFromResourceTrackers strips this spoke's entries from every ResourceTracker
 // before the finalizer is released; the owner-referenced Application is then collected
 // with nothing left to reach on the spoke, so the runtime keeps even its labels.
-//
-// No apply-once: each pass re-applies the hub Application (a no-op while unchanged), and
-// spoke objects are kept in shape by vela-core's periodic state-keep, so drift is corrected
-// rather than tolerated. No take-over: a runtime someone else installed is not the hub's
-// to claim.
 func bootstrapPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent) ([]v1beta1.AppPolicy, error) {
-	topology, err := json.Marshal(map[string]any{"clusters": []string{sc.Name}})
-	if err != nil {
-		return nil, err
-	}
-	retain, err := retainPolicy("retain-runtime", comps)
-	if err != nil {
-		return nil, err
-	}
-	return []v1beta1.AppPolicy{
-		{Name: "target-spoke", Type: "topology", Properties: &runtime.RawExtension{Raw: topology}},
-		retain,
-	}, nil
+	return targetedPolicies(sc, "retain-runtime", comps)
 }

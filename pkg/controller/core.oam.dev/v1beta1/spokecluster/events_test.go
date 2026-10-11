@@ -229,3 +229,91 @@ var _ = It("EmitStatusEventsBootstrapped", func() {
 		Expect(string(rec.events[0].Reason)).To(Equal(reasonBootstrapFailed))
 	})
 })
+
+// Dispatched follows the Bootstrapped model: reaching True and the in-flight reasons
+// (Dispatching, WaitingForBootstrap) are progress, every other False reason is a fault.
+var _ = It("EmitStatusEventsDispatched", func() {
+	resetSpokeMetrics()
+	rec := &recordingRecorder{}
+	r := &Reconciler{record: rec}
+	sc := metricSpoke("tenant-a", "spoke-dispatch")
+	connected := &v1beta1.SpokeClusterStatus{Connection: v1beta1.ConnectionStateConnected}
+
+	By("warning once when the blueprint cannot be resolved", func() {
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse,
+			reasonBlueprintUnresolved, "reading ClusterBlueprint tenant-a/platform: not found")
+		r.emitStatusEvents(sc, connected, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeWarning))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonBlueprintUnresolved))
+
+		rec.events = nil
+		r.emitStatusEvents(sc, next, next)
+		Expect(rec.events).To(BeEmpty(), "a persistent misconfiguration reports once")
+	})
+
+	By("reporting progress while the bundle ships", func() {
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse,
+			reasonDispatching, "revision platform-1a2b3c4d: 1/3 components healthy")
+		rec.events = nil
+		r.emitStatusEvents(sc, connected, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeNormal))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonDispatching))
+	})
+
+	By("reporting Dispatched when the bundle lands", func() {
+		prev := connected.DeepCopy()
+		setCondition(prev, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse, reasonDispatching, "shipping")
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionTrue, reasonDispatched, "landed")
+		rec.events = nil
+		r.emitStatusEvents(sc, prev, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeNormal))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonDispatched))
+	})
+
+	By("warning when a shipped bundle fails", func() {
+		prev := connected.DeepCopy()
+		setCondition(prev, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionTrue, reasonDispatched, "landed")
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse, reasonDispatchFailed, "workflowFailed")
+		rec.events = nil
+		r.emitStatusEvents(sc, prev, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeWarning))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonDispatchFailed))
+	})
+})
+
+// SpokeReady reports only the arrival at True. Not-ready is the normal state of a spoke
+// still provisioning, and ClusterAbsent is the steady state of every connect-only spoke,
+// so neither may generate events.
+var _ = It("EmitStatusEventsSpokeReady", func() {
+	rec := &recordingRecorder{}
+	r := &Reconciler{record: rec}
+	sc := metricSpoke("tenant-a", "spoke-ready")
+	connected := &v1beta1.SpokeClusterStatus{Connection: v1beta1.ConnectionStateConnected}
+
+	notReady := connected.DeepCopy()
+	setCondition(notReady, v1beta1.SpokeClusterConditionSpokeReady, metav1.ConditionFalse, reasonSpokeNotReady, "phase Provisioning")
+	r.emitStatusEvents(sc, connected, notReady)
+	absent := connected.DeepCopy()
+	setCondition(absent, v1beta1.SpokeClusterConditionSpokeReady, metav1.ConditionFalse, reasonClusterAbsent, "no Cluster")
+	r.emitStatusEvents(sc, connected, absent)
+	Expect(rec.events).To(BeEmpty())
+
+	ready := connected.DeepCopy()
+	setCondition(ready, v1beta1.SpokeClusterConditionSpokeReady, metav1.ConditionTrue, reasonSpokeReady, "phase Ready, 2/2 planes healthy")
+	r.emitStatusEvents(sc, notReady, ready)
+	Expect(rec.events).To(HaveLen(1))
+	Expect(rec.events[0].Type).To(Equal(event.TypeNormal))
+	Expect(string(rec.events[0].Reason)).To(Equal(reasonSpokeReady))
+
+	rec.events = nil
+	r.emitStatusEvents(sc, ready, ready)
+	Expect(rec.events).To(BeEmpty(), "steady Ready does not re-emit")
+})

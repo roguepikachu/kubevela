@@ -65,6 +65,18 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //     BootstrapPlaneUnresolved
 //   - Bootstrapped removed after spec.bootstrap was dropped: Normal BootstrapReleased,
 //     emitted from forgetBootstrap itself for the same reason as InfraReleased
+//   - Dispatched True, or False/Dispatching or False/WaitingForBootstrap (new): Normal
+//     Dispatched / Dispatching / WaitingForBootstrap
+//   - Dispatched False, any other reason (new): Warning DispatchFailed /
+//     BlueprintUnresolved
+//   - Dispatched removed after spec.blueprintRef was dropped: Normal DispatchReleased,
+//     emitted from forgetDispatch itself
+//   - SpokeReady -> True: Normal SpokeReady. Its False reasons are silent: not-ready is
+//     the normal state of a spoke still provisioning, and ClusterAbsent is the steady
+//     state of every connect-only spoke
+//   - A pull that failed for any reason other than NotFound: Warning
+//     SpokeStatusPullFailed, emitted from pullSpokeStatus itself on every such pass
+//     because the condition is deliberately left unchanged
 //
 // Connection -> Unknown deliberately has no event of its own. It is always the
 // consequence of a credential or registration failure that already emitted, so a second
@@ -94,6 +106,8 @@ func (r *Reconciler) emitStatusEvents(sc *v1beta1.SpokeCluster, prev, next *v1be
 	emitWarningOnConditionFalse(r, sc, prev, next, v1beta1.SpokeClusterConditionInfoSynced)
 	emitInfraProvisionedEvent(r, sc, prev, next)
 	emitBootstrappedEvent(r, sc, prev, next)
+	emitDispatchedEvent(r, sc, prev, next)
+	emitSpokeReadyEvent(r, sc, prev, next)
 }
 
 // emitBootstrappedEvent reports runtime installation progress and failures, on the same
@@ -102,24 +116,7 @@ func (r *Reconciler) emitStatusEvents(sc *v1beta1.SpokeCluster, prev, next *v1be
 // are Warnings and count as condition failures. Each transition reports once, so a
 // runtime stuck installing on a 30s probe interval does not flood the Events API.
 func emitBootstrappedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
-	nextCond := meta.FindStatusCondition(next.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
-	if nextCond == nil {
-		return
-	}
-	var prevCond *metav1.Condition
-	if prev != nil {
-		prevCond = meta.FindStatusCondition(prev.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
-	}
-	if prevCond != nil && prevCond.Status == nextCond.Status && prevCond.Reason == nextCond.Reason {
-		return
-	}
-	switch {
-	case nextCond.Status == metav1.ConditionTrue, nextCond.Reason == reasonBootstrapping:
-		r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
-	default:
-		r.emit(sc, event.Warning(event.Reason(nextCond.Reason), fmt.Errorf("%s", nextCond.Message)))
-		spokeConditionFailures.WithLabelValues(sc.Namespace, sc.Name, v1beta1.SpokeClusterConditionBootstrapped, nextCond.Reason).Inc()
-	}
+	emitProgressOrFault(r, sc, prev, next, v1beta1.SpokeClusterConditionBootstrapped, reasonBootstrapping)
 }
 
 // emitInfraProvisionedEvent reports provisioning progress and failures. Provisioning
@@ -129,24 +126,62 @@ func emitBootstrappedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *
 // condition failure, so a permanent misconfiguration is visible in events and metrics
 // rather than only in the condition.
 func emitInfraProvisionedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
-	nextCond := meta.FindStatusCondition(next.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
-	if nextCond == nil {
+	emitProgressOrFault(r, sc, prev, next, v1beta1.SpokeClusterConditionInfraProvisioned, reasonProvisioning, reasonReleasing)
+}
+
+// emitDispatchedEvent reports bundle shipping on the same model: Dispatching and
+// WaitingForBootstrap are in flight, True is progress, DispatchFailed and
+// BlueprintUnresolved are faults.
+func emitDispatchedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
+	emitProgressOrFault(r, sc, prev, next, v1beta1.SpokeClusterConditionDispatched, reasonDispatching, reasonWaitingForBootstrap)
+}
+
+// emitSpokeReadyEvent reports only the arrival at True. See emitStatusEvents for why the
+// False reasons stay silent.
+func emitSpokeReadyEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
+	nextCond, changed := conditionTransition(prev, next, v1beta1.SpokeClusterConditionSpokeReady)
+	if !changed || nextCond.Status != metav1.ConditionTrue {
 		return
+	}
+	r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
+}
+
+// emitProgressOrFault is the shared transition model for the render conditions: a new
+// True, or a new False carrying one of inFlight, is a Normal event; any other new False
+// is a Warning and counts as a condition failure. An unchanged status and reason emits
+// nothing, so a condition stuck on a 30s probe interval reports once.
+func emitProgressOrFault(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus, condType string, inFlight ...string) {
+	nextCond, changed := conditionTransition(prev, next, condType)
+	if !changed {
+		return
+	}
+	normal := nextCond.Status == metav1.ConditionTrue
+	for _, reason := range inFlight {
+		normal = normal || nextCond.Reason == reason
+	}
+	if normal {
+		r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
+		return
+	}
+	r.emit(sc, event.Warning(event.Reason(nextCond.Reason), fmt.Errorf("%s", nextCond.Message)))
+	spokeConditionFailures.WithLabelValues(sc.Namespace, sc.Name, condType, nextCond.Reason).Inc()
+}
+
+// conditionTransition returns next's condition of condType and whether its status or
+// reason differs from prev's. A condition absent from next is never a transition.
+func conditionTransition(prev, next *v1beta1.SpokeClusterStatus, condType string) (*metav1.Condition, bool) {
+	nextCond := meta.FindStatusCondition(next.Conditions, condType)
+	if nextCond == nil {
+		return nil, false
 	}
 	var prevCond *metav1.Condition
 	if prev != nil {
-		prevCond = meta.FindStatusCondition(prev.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
+		prevCond = meta.FindStatusCondition(prev.Conditions, condType)
 	}
 	if prevCond != nil && prevCond.Status == nextCond.Status && prevCond.Reason == nextCond.Reason {
-		return
+		return nextCond, false
 	}
-	switch {
-	case nextCond.Status == metav1.ConditionTrue, nextCond.Reason == reasonProvisioning, nextCond.Reason == reasonReleasing:
-		r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
-	default:
-		r.emit(sc, event.Warning(event.Reason(nextCond.Reason), fmt.Errorf("%s", nextCond.Message)))
-		spokeConditionFailures.WithLabelValues(sc.Namespace, sc.Name, v1beta1.SpokeClusterConditionInfraProvisioned, nextCond.Reason).Inc()
-	}
+	return nextCond, true
 }
 
 func countConnectionTransition(sc *v1beta1.SpokeCluster, to v1beta1.ConnectionState) {
