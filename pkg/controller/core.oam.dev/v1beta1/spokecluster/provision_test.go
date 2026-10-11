@@ -19,6 +19,7 @@ package spokecluster
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -100,10 +101,34 @@ var _ = It("InfraAppNameIsPerIncarnation", func() {
 		Expect(validation.IsDNS1123Label(infraAppName(sc))).To(BeEmpty())
 	}
 
+	third := provisionSpoke("cpspoke1")
+	third.UID = first.UID
+	third.Status.InfraIncarnation = 2
+	Expect(infraAppName(third)).To(Equal("sc-cpspoke1-infra-0f6e2a1c-2"), "the release counter joins the UID in the name")
+	Expect(validation.IsDNS1123Label(infraAppName(third))).To(BeEmpty())
+
 	long := provisionSpoke("a-very-long-spoke-name-that-pushes-the-application-name-past-the-limit")
 	long.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
 	Expect(validation.IsDNS1123Label(infraAppName(long))).To(BeEmpty())
 	Expect(infraAppName(long)).To(HaveSuffix("-0f6e2a1c"), "truncation keeps the incarnation suffix")
+
+	// A 60-character spoke name with a two-digit counter: the whole suffix survives, the
+	// result fills the label exactly, and the truncated base keeps no trailing hyphen.
+	sixty := provisionSpoke(strings.Repeat("longspoke", 6) + "name00")
+	Expect(sixty.Name).To(HaveLen(60))
+	sixty.UID = types.UID("0f6e2a1c-aaaa-4bbb-8ccc-000000000001")
+	sixty.Status.InfraIncarnation = 12
+	got := infraAppName(sixty)
+	Expect(got).To(HaveLen(dnsLabelMaxLen))
+	Expect(got).To(HaveSuffix("-0f6e2a1c-12"))
+	Expect(strings.TrimSuffix(got, "-0f6e2a1c-12")).NotTo(HaveSuffix("-"))
+	Expect(validation.IsDNS1123Label(got)).To(BeEmpty())
+
+	// When the cut lands on a hyphen in the spoke name, that hyphen goes too.
+	long.Status.InfraIncarnation = 12
+	Expect(validation.IsDNS1123Label(infraAppName(long))).To(BeEmpty())
+	Expect(strings.TrimSuffix(infraAppName(long), "-0f6e2a1c-12")).NotTo(HaveSuffix("-"))
+	Expect(infraAppName(long)).To(HaveSuffix("-0f6e2a1c-12"))
 
 	bare := connectableSpoke("cpspoke1")
 	bare.UID = ""

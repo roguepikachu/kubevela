@@ -98,6 +98,9 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	// starts from sc.Status, and it must see the projection gone or a no-op connect pass
 	// would carry the stale provisioning fields forward.
 	status.Provisioning = nil
+	// The Application is already gone under the old name, so bumping the counter here
+	// cannot strand it; the next provision or adopt renders under a new name instead.
+	status.InfraIncarnation++
 	meta.RemoveStatusCondition(&status.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
 	if err := r.updateStatus(ctx, sc, status); err != nil {
 		return ctrl.Result{}, err

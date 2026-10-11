@@ -400,6 +400,13 @@ type SpokeClusterStatus struct {
 	// +optional
 	Provisioning *ProvisioningStatus `json:"provisioning,omitempty"`
 
+	// InfraIncarnation counts how many times this SpokeCluster has started managing
+	// infrastructure (provision or adopt). Release increments it, so the next adopt renders
+	// its Application under a new name and vela-core applies the retained objects instead of
+	// skipping them on their stale revision markers. Zero for the first incarnation.
+	// +optional
+	InfraIncarnation int32 `json:"infraIncarnation,omitempty"`
+
 	// DispatchedRevision is the blueprint revision the hub last dispatched to the
 	// spoke. The dispatch controller advances a spoke when this differs from
 	// spec.blueprintRef.revision.

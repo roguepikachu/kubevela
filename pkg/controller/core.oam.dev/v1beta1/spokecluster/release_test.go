@@ -150,7 +150,55 @@ var _ = It("ReleaseDeletesInfraApplicationThenConnects", func() {
 		wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
 		Expect(latest.Status.Connection).To(Equal(v1beta1.ConnectionStateConnected))
 		Expect(secretExists(t, r.Client, "cpspoke1")).To(BeTrue(), "connect path registered the gateway secret")
+		Expect(latest.Status.InfraIncarnation).To(Equal(int32(1)), "release counts the incarnation so the next adopt renders under a new name")
 	})
+
+	By("a plain connect pass carrying the counter forward", func() {
+		_, err := reconcileOnce(t, r, sc)
+		Expect(err).NotTo(HaveOccurred())
+		latest := readSpoke(t, r, sc)
+		Expect(latest.Status.InfraIncarnation).To(Equal(int32(1)))
+		Expect(latest.Status.Provisioning).To(BeNil())
+	})
+})
+
+var _ = It("ReAdoptAfterReleaseRendersUnderNewName", func() {
+	t := GinkgoT()
+	ctx := context.Background()
+	sc := releasingSpoke("cpspoke1")
+	bp, plane := infraBlueprint(sc.Namespace)
+	r := newTestReconciler(t, sc, ownedBy(retainedInfraApp(sc), sc), bp, plane)
+	wireHealthySpoke(r)
+	oldName := infraAppName(sc)
+
+	By("releasing the infrastructure over two passes", func() {
+		_, err := reconcileOnce(t, r, sc)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconcileOnce(t, r, sc)
+		Expect(err).NotTo(HaveOccurred())
+		released := readSpoke(t, r, sc)
+		Expect(released.Status.Provisioning).To(BeNil())
+		Expect(released.Status.InfraIncarnation).To(Equal(int32(1)))
+	})
+
+	By("switching the same SpokeCluster back to adopt", func() {
+		released := readSpoke(t, r, sc)
+		released.Spec.Mode = v1beta1.SpokeClusterModeAdopt
+		released.Spec.InfraProvisioning = &v1beta1.InfraProvisioning{BlueprintRef: &v1beta1.BlueprintReference{Name: "eks"}}
+		Expect(r.Update(ctx, released)).To(Succeed())
+		_, err := reconcileOnce(t, r, sc)
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	latest := readSpoke(t, r, sc)
+	newName := infraAppName(latest)
+	Expect(newName).To(Equal(oldName+"-1"), "the second incarnation renders under a new name")
+	Expect(r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: newName}, &v1beta1.Application{})).To(Succeed(),
+		"the new Application exists so vela-core applies the retained objects under a fresh revision")
+	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: oldName}, &v1beta1.Application{})
+	Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the released Application stays gone")
+	Expect(latest.Status.Provisioning).NotTo(BeNil())
+	Expect(latest.Status.Provisioning.ApplicationName).To(Equal(newName))
 })
 
 var _ = It("ReleaseRefusedWithoutRetainRule", func() {

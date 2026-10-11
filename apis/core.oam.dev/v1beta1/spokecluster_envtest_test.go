@@ -274,4 +274,30 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 			r.NoError(k8sClient.Update(ctx, spoke), "connect to adopt is an allowed mode transition")
 		})
 	})
+
+	// The stored CRD has to carry the release counter through the status subresource,
+	// otherwise the controller's per-incarnation Application name resets on every pass.
+	It("StatusRoundTripsInfraIncarnation", func() {
+		t := GinkgoT()
+		r := require.New(t)
+		ctx := context.Background()
+
+		spoke := &SpokeCluster{
+			ObjectMeta: metav1.ObjectMeta{Name: "incarnation-counter", Namespace: "vela-system"},
+			Spec: SpokeClusterSpec{
+				Mode: SpokeClusterModeConnect,
+				Credential: CredentialSpec{
+					Type:       CredentialTypeKubeconfig,
+					Kubeconfig: &KubeconfigCredential{SecretRef: SecretKeyRef{Name: "some-kubeconfig"}},
+				},
+			},
+		}
+		r.NoError(k8sClient.Create(ctx, spoke))
+		spoke.Status.InfraIncarnation = 3
+		r.NoError(k8sClient.Status().Update(ctx, spoke))
+
+		got := &SpokeCluster{}
+		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(spoke), got))
+		r.Equal(int32(3), got.Status.InfraIncarnation, "status.infraIncarnation must round-trip through the API server")
+	})
 })

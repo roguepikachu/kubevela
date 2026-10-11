@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,14 +66,18 @@ const (
 	dnsLabelMaxLen = 63
 )
 
-// infraAppName is deterministic per SpokeCluster incarnation, keyed by UID, so a controller
-// restart mid-provision resumes the same Application instead of rendering a second cluster,
-// while a SpokeCluster re-created after a release or a retained delete renders under a new
-// name and therefore a new revision. That defeats vela-core's skip-unchanged check, which
-// otherwise sees the retained objects' stale app.oam.dev/appRevision and oam.dev/render-hash
-// markers as already applied and never restores app.oam.dev/name. An object without a UID
-// (built directly in a test) falls back to the plain name. The base is truncated when needed
-// so the whole stays a valid DNS-1123 label with the suffix intact.
+// infraAppName is deterministic per provisioning incarnation: the SpokeCluster UID plus the
+// release counter in status.infraIncarnation. A fresh SpokeCluster, or one released and then
+// set back to adopt, therefore renders under a name vela-core has never seen, and so under a
+// new appRevision. That defeats vela-core's skip-unchanged check, which otherwise sees the
+// retained objects' stale app.oam.dev/appRevision and oam.dev/render-hash markers as already
+// applied and never restores app.oam.dev/name. A controller restart mid-provision still
+// resumes the same Application rather than rendering a second cluster, because both inputs
+// are persisted on the object: the UID by the API server and the counter in status. The
+// counter is omitted from the name while it is zero, so first-incarnation names are
+// unchanged. An object without a UID (built directly in a test) falls back to the plain
+// name. The base is truncated when needed so the whole stays a valid DNS-1123 label with
+// the suffix intact and no hyphen left dangling at the cut.
 func infraAppName(sc *v1beta1.SpokeCluster) string {
 	base := "sc-" + sc.Name + "-infra"
 	uid := string(sc.UID)
@@ -83,6 +88,9 @@ func infraAppName(sc *v1beta1.SpokeCluster) string {
 		uid = uid[:infraAppUIDChars]
 	}
 	suffix := "-" + uid
+	if sc.Status.InfraIncarnation != 0 {
+		suffix += "-" + strconv.FormatInt(int64(sc.Status.InfraIncarnation), 10)
+	}
 	if len(base)+len(suffix) > dnsLabelMaxLen {
 		base = strings.TrimRight(base[:dnsLabelMaxLen-len(suffix)], "-")
 	}

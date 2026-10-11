@@ -500,6 +500,14 @@ spec:
                       or Degraded).
                     type: string
                 type: object
+              infraIncarnation:
+                description: |-
+                  InfraIncarnation counts how many times this SpokeCluster has started managing
+                  infrastructure (provision or adopt). Release increments it, so the next adopt renders
+                  its Application under a new name and vela-core applies the retained objects instead of
+                  skipping them on their stale revision markers. Zero for the first incarnation.
+                format: int32
+                type: integer
               lastProbeTime:
                 description: |-
                   LastProbeTime is when the hub last wrote a probe observation into status.
