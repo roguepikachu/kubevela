@@ -91,6 +91,24 @@ spec:
                       description: Properties are the ComponentDefinition parameters.
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
+                    traits:
+                      description: |-
+                        Traits are applied to the component exactly as Application traits are: a
+                        platform engineer edits the plane once and every spoke rendered from it picks
+                        the trait up on its next revision. Any TraitDefinition on the rendering
+                        cluster works.
+                      items:
+                        description: ApplicationTrait defines the trait of application
+                        properties:
+                          properties:
+                            type: object
+                            x-kubernetes-preserve-unknown-fields: true
+                          type:
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      type: array
                     type:
                       description: Type is the ComponentDefinition that renders this
                         component.

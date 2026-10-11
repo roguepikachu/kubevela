@@ -17,6 +17,7 @@ limitations under the License.
 package v1beta1
 
 import (
+	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -50,6 +51,12 @@ type ClusterPlaneComponent struct {
 	// renderer keeps them as they are.
 	// +optional
 	DependsOn []string `json:"dependsOn,omitempty"`
+	// Traits are applied to the component exactly as Application traits are: a
+	// platform engineer edits the plane once and every spoke rendered from it picks
+	// the trait up on its next revision. Any TraitDefinition on the rendering
+	// cluster works.
+	// +optional
+	Traits []common.ApplicationTrait `json:"traits,omitempty"`
 }
 
 // ClusterPlaneSpec is a composable infrastructure layer owned by one team.

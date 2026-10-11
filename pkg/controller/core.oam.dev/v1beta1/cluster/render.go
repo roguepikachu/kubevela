@@ -176,12 +176,16 @@ func applicationName(plane string) string {
 func planeApplication(cl *v1beta1.Cluster, plane v1beta1.BlueprintPlaneRevision, planeRev *v1beta1.ClusterPlaneRevision, deps []string) *v1beta1.Application {
 	comps := make([]common.ApplicationComponent, 0, len(planeRev.Spec.Components))
 	for _, c := range planeRev.Spec.Components {
-		comps = append(comps, common.ApplicationComponent{
+		comp := common.ApplicationComponent{
 			Name:       c.Name,
 			Type:       c.Type,
 			Properties: c.Properties.DeepCopy(),
 			DependsOn:  slices.Clone(c.DependsOn),
-		})
+		}
+		for _, t := range c.Traits {
+			comp.Traits = append(comp.Traits, *t.DeepCopy())
+		}
+		comps = append(comps, comp)
 	}
 
 	steps := make([]wfTypesv1alpha1.WorkflowStep, 0, len(deps)+1)

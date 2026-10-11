@@ -186,6 +186,9 @@ func planeComponents(plane *v1beta1.ClusterPlane, prefix string) []common.Applic
 			Type:       c.Type,
 			Properties: c.Properties.DeepCopy(),
 		}
+		for _, t := range c.Traits {
+			comp.Traits = append(comp.Traits, *t.DeepCopy())
+		}
 		for _, d := range c.DependsOn {
 			comp.DependsOn = append(comp.DependsOn, prefix+d)
 		}
