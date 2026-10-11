@@ -408,3 +408,34 @@ func TestApplyComponentsIO(t *testing.T) {
 
 	})
 }
+
+// TestApplyComponentsReappliesWhenPrecheckUnhealthy pins the contract the application controller's
+// stale-revision health check relies on: a task whose pre-check reports not healthy is applied,
+// and a task whose pre-check reports healthy is skipped.
+func TestApplyComponentsReappliesWhenPrecheckUnhealthy(t *testing.T) {
+	r := require.New(t)
+	components := []apicommon.ApplicationComponent{{Name: "stale"}, {Name: "fresh"}}
+	placements := []v1alpha1.PlacementDecision{{Cluster: "c1"}, {Cluster: "c2"}}
+
+	applied := &sync.Map{}
+	apply := func(_ context.Context, comp apicommon.ApplicationComponent, _ *cue.Value, clusterName string, _ string) (*unstructured.Unstructured, []*unstructured.Unstructured, bool, error) {
+		applied.Store(fmt.Sprintf("%s/%s", clusterName, comp.Name), true)
+		return nil, nil, true, nil
+	}
+	healthCheck := func(_ context.Context, comp apicommon.ApplicationComponent, _ *cue.Value, _ string, _ string) (bool, *apicommon.ApplicationComponentStatus, *unstructured.Unstructured, []*unstructured.Unstructured, error) {
+		if comp.Name == "stale" {
+			return false, &apicommon.ApplicationComponentStatus{Name: comp.Name, Healthy: false, Message: "pending re-apply"}, nil, nil, nil
+		}
+		return true, &apicommon.ApplicationComponentStatus{Name: comp.Name, Healthy: true}, nil, nil, nil
+	}
+
+	healthy, _, err := applyComponents(context.Background(), apply, healthCheck, components, placements, 2)
+	r.NoError(err)
+	r.True(healthy, "apply reported healthy, so the step is healthy after re-applying")
+	for _, cluster := range []string{"c1", "c2"} {
+		_, found := applied.Load(cluster + "/stale")
+		r.True(found, "unhealthy pre-check must lead to an apply on %s", cluster)
+		_, found = applied.Load(cluster + "/fresh")
+		r.False(found, "healthy pre-check must skip the apply on %s", cluster)
+	}
+}

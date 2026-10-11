@@ -304,16 +304,21 @@ func (h *AppHandler) checkComponentHealth(appParser *appfile.Parser, af *appfile
 		// A resource recorded in the root ResourceTracker (garbage-collect strategy never or
 		// onAppDelete) stays "contained" across Application revisions, so a healthy live object
 		// left behind by the previous revision would otherwise keep a new revision from ever
-		// reaching the cluster. Treat such an object as not yet applied. Re-applying an object
-		// whose render hash did not change is a no-op (apply.NotUpdateRenderHashEqual), so the
-		// extra apply is cheap.
+		// reaching the cluster. Treat such an object as not yet applied. The render hash covers
+		// the whole object including the appRevision label, so a new revision never matches it;
+		// when the spec is unchanged the apply then changes only metadata, which is cheap.
 		if isHealth {
 			liveObjects := append([]*unstructured.Unstructured{output}, outputs...)
-			if stale, found := appliedByOtherRevision(h.currentAppRev.Name, liveObjects...); found {
+			if stale, found := h.staleRevisionResource(liveObjects...); found {
 				isHealth = false
 				status.Healthy = false
-				status.Message = fmt.Sprintf("%s %s applied by revision %s, current revision is %s; pending re-apply",
+				note := fmt.Sprintf("%s %s applied by revision %s, current revision is %s; pending re-apply",
 					stale.GetKind(), stale.GetName(), stale.GetLabels()[oam.LabelAppRevision], h.currentAppRev.Name)
+				if status.Message == "" {
+					status.Message = note
+				} else {
+					status.Message = status.Message + "; " + note
+				}
 			}
 		}
 
@@ -321,20 +326,33 @@ func (h *AppHandler) checkComponentHealth(appParser *appfile.Parser, af *appfile
 	}
 }
 
-// appliedByOtherRevision returns the first live object whose app.oam.dev/appRevision label is set
-// and names a revision other than currentRev. Objects without the label (for example adopted via
-// take-over) are ignored, as is an empty currentRev.
-func appliedByOtherRevision(currentRev string, liveObjects ...*unstructured.Unstructured) (*unstructured.Unstructured, bool) {
+// staleRevisionResource returns the first live object that this Application controls, that the
+// resource keeper would relabel on apply, and whose app.oam.dev/appRevision label names a revision
+// other than the current one. Skipped: nil objects, objects without the label (for example adopted
+// via take-over), objects controlled by another Application (a shared-resource non-owner only
+// patches the shared-by annotation, so the owner's revision label stays), and objects an apply-once
+// "*" rule or a read-only rule keeps as they are (their labels are frozen at creation).
+func (h *AppHandler) staleRevisionResource(liveObjects ...*unstructured.Unstructured) (*unstructured.Unstructured, bool) {
+	currentRev := h.currentAppRev.Name
 	if currentRev == "" {
 		return nil, false
 	}
+	appKey := apply.GetAppKey(h.app)
 	for _, obj := range liveObjects {
 		if obj == nil {
 			continue
 		}
-		if rev := obj.GetLabels()[oam.LabelAppRevision]; rev != "" && rev != currentRev {
-			return obj, true
+		rev := obj.GetLabels()[oam.LabelAppRevision]
+		if rev == "" || rev == currentRev {
+			continue
 		}
+		if apply.GetControlledBy(obj) != appKey {
+			continue
+		}
+		if h.resourceKeeper.IsReadOnly(obj) || h.resourceKeeper.IsApplyOnceAll(obj) {
+			continue
+		}
+		return obj, true
 	}
 	return nil, false
 }

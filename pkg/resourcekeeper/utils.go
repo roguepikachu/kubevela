@@ -56,6 +56,26 @@ func (h *resourceKeeper) isReadOnly(manifest *unstructured.Unstructured) bool {
 	return h.readOnlyPolicy.FindStrategy(manifest)
 }
 
+// IsReadOnly reports whether a read-only policy rule matches the resource.
+func (h *resourceKeeper) IsReadOnly(manifest *unstructured.Unstructured) bool {
+	return h.isReadOnly(manifest)
+}
+
+// IsApplyOnceAll reports whether an apply-once rule with path "*" matches the resource and takes
+// effect on application update. Such a rule keeps the whole live object, metadata included, so
+// its labels are frozen at creation. An apply-once policy without rules does not count: it still
+// updates metadata.
+func (h *resourceKeeper) IsApplyOnceAll(manifest *unstructured.Unstructured) bool {
+	if h.applyOncePolicy == nil {
+		return false
+	}
+	strategy := h.applyOncePolicy.FindStrategy(manifest)
+	if strategy == nil || !shouldMerge(strategy.ApplyOnceAffectStrategy, v1alpha1.ApplyOnceStrategyOnAppUpdate) {
+		return false
+	}
+	return slices.Contains(strategy.Path, "*")
+}
+
 func (h *resourceKeeper) getUpdateStrategy(manifest *unstructured.Unstructured) *v1alpha1.ResourceUpdateStrategy {
 	if h.resourceUpdatePolicy == nil {
 		return nil

@@ -43,6 +43,11 @@ type ResourceKeeper interface {
 	GarbageCollect(context.Context, ...GCOption) (bool, []v1beta1.ManagedResource, error)
 	StateKeep(context.Context) error
 	ContainsResources([]*unstructured.Unstructured) bool
+	// IsApplyOnceAll reports whether an apply-once rule with path "*" keeps the whole live object,
+	// metadata included, on application update.
+	IsApplyOnceAll(*unstructured.Unstructured) bool
+	// IsReadOnly reports whether a read-only policy rule matches the resource.
+	IsReadOnly(*unstructured.Unstructured) bool
 
 	DispatchComponentRevision(context.Context, *appsv1.ControllerRevision) error
 	DeleteComponentRevision(context.Context, *appsv1.ControllerRevision) error
