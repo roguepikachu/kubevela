@@ -18,19 +18,14 @@ package spokecluster
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
@@ -42,72 +37,22 @@ const (
 	reasonBlueprintUnresolved  = "BlueprintUnresolved"
 	reasonInfraRenderFailed    = "InfraRenderFailed"
 	reasonProvisioning         = "Provisioning"
-	reasonInfraUnhealthy       = "InfraUnhealthy"
+	reasonInfraFailed          = "InfraFailed"
 	reasonInfraUnmanagedExists = "InfraUnmanagedExists"
 	reasonInfraReady           = "InfraReady"
 )
 
-const (
-	// provisionRequeue is how often a provisioning spoke re-reads its infra Application.
-	// EKS takes ten to twenty minutes; the Owns watch wakes the loop sooner on status
-	// changes, so this is a backstop rather than the cadence.
-	provisionRequeue = 30 * time.Second
+// provisionRequeue is how often a provisioning spoke re-reads its Application. EKS takes
+// ten to twenty minutes; the Owns watch wakes the loop sooner on status changes, so this
+// is a backstop rather than the cadence.
+const provisionRequeue = 30 * time.Second
 
-	labelSpokeName = "spokecluster.core.oam.dev/name"
-	labelSpokeRole = "spokecluster.core.oam.dev/role"
-	labelSpokeUID  = "spokecluster.core.oam.dev/uid"
-	roleInfra      = "infra"
-
-	// infraAppUIDChars is how much of the SpokeCluster UID goes into the Application name.
-	// Eight hex characters separate same-named SpokeCluster objects comfortably while
-	// leaving room for the spoke name inside a DNS-1123 label; the incarnation counter,
-	// not the UID, separates incarnations within one object.
-	infraAppUIDChars = 8
-	// dnsLabelMaxLen is the longest a DNS-1123 label, and so an Application name, may be.
-	dnsLabelMaxLen = 63
-)
-
-// infraAppName is deterministic per provisioning incarnation: the SpokeCluster UID plus the
-// release counter in status.infraIncarnation. A fresh SpokeCluster, or one released and then
-// set back to adopt, therefore renders under a name vela-core has never seen, and so under a
-// new appRevision. That defeats vela-core's skip-unchanged check, which otherwise sees the
-// retained objects' stale app.oam.dev/appRevision and oam.dev/render-hash markers as already
-// applied and never restores app.oam.dev/name. A controller restart mid-provision still
-// resumes the same Application rather than rendering a second cluster, because both inputs
-// are persisted on the object: the UID by the API server and the counter in status. The
-// counter is omitted from the name while it is zero, so first-incarnation names are
-// unchanged. An object without a UID (built directly in a test) falls back to the plain
-// name. See dnsLabel for how a long spoke name is cut.
-func infraAppName(sc *v1beta1.SpokeCluster) string {
-	base := "sc-" + sc.Name + "-infra"
-	uid := string(sc.UID)
-	if uid == "" {
-		return base
-	}
-	if len(uid) > infraAppUIDChars {
-		uid = uid[:infraAppUIDChars]
-	}
-	suffix := "-" + uid
-	if sc.Status.InfraIncarnation != 0 {
-		suffix += "-" + strconv.Itoa(int(sc.Status.InfraIncarnation))
-	}
-	return dnsLabel(base, suffix)
-}
-
-// dnsLabel joins base and suffix into a DNS-1123 label. The suffix is kept whole, because
-// it is what tells same-named Applications apart; the base is truncated when needed, and
-// a hyphen left dangling at the cut is trimmed so the result stays a valid label.
-func dnsLabel(base, suffix string) string {
-	if len(base)+len(suffix) > dnsLabelMaxLen {
-		base = strings.TrimRight(base[:dnsLabelMaxLen-len(suffix)], "-")
-	}
-	return base + suffix
-}
-
-// reconcileProvision renders the infraProvisioning blueprint into one Application on the
-// hub, reads its health back, and hands over to the connect sequence only once every
-// substrate component is healthy. Before that the cluster does not exist, so a connect
-// pass would spend an sts:AssumeRole and an eks:DescribeCluster to learn nothing.
+// reconcileProvision renders the whole Application (infra plane, and the bootstrap plane
+// and platform step when the spec asks for them), reads the infra plane's health back,
+// and hands over to the connect sequence only once every substrate component is healthy.
+// Before that the cluster does not exist, so a connect pass would spend an sts:AssumeRole
+// and an eks:DescribeCluster to learn nothing. The later workflow steps wait on the
+// Connected condition inside vela-core, so rendering them up front costs nothing.
 func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
 	status := sc.Status.DeepCopy()
 	status.ObservedGeneration = sc.Generation
@@ -125,21 +70,31 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		return r.finish(ctx, sc, status, probeInterval(sc), nil)
 	}
 
-	comps, err := r.resolveInfraComponents(ctx, sc)
+	render, err := r.renderApplication(ctx, sc)
 	if err != nil {
 		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonBlueprintUnresolved, err.Error())
 		markConnectionUnobserved(status, reasonBlueprintUnresolved, err.Error())
 		return r.finish(ctx, sc, status, provisionRequeue, nil)
 	}
-
-	app, err := r.ensureInfraApplication(ctx, sc, comps)
+	spec, err := render.spec(sc)
+	if err != nil {
+		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraRenderFailed, err.Error())
+		markConnectionUnobserved(status, reasonInfraRenderFailed, err.Error())
+		return r.finish(ctx, sc, status, 0, err)
+	}
+	app, err := r.ensureApplication(ctx, sc, spec)
+	if errors.Is(err, errApplicationTerminating) {
+		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonProvisioning, err.Error())
+		markConnectionUnobserved(status, reasonProvisioning, err.Error())
+		return r.finish(ctx, sc, status, provisionRequeue, nil)
+	}
 	if err != nil {
 		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reasonInfraRenderFailed, err.Error())
 		markConnectionUnobserved(status, reasonInfraRenderFailed, err.Error())
 		return r.finish(ctx, sc, status, 0, err)
 	}
 
-	healthy, summary := summarizeAppHealth(app, comps)
+	healthy, summary := componentsHealthy(app, render.infraNames(), localCluster)
 	status.Provisioning = &v1beta1.ProvisioningStatus{
 		ApplicationName: app.Name,
 		Phase:           string(app.Status.Phase),
@@ -147,25 +102,25 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		Message:         summary,
 	}
 	if !healthy {
-		// An Application still working through its workflow is the normal in-flight
-		// state. One whose workflow failed or terminated, or that applied everything and
-		// still reports unhealthy, will not recover on its own, so it gets a reason an
-		// operator can alert on without parsing the message.
+		// A provision step still running is the normal in-flight state. One that failed
+		// will not recover on its own, so it gets a reason an operator can alert on
+		// without parsing the message.
 		reason, connMsg := reasonProvisioning, "cluster is still being provisioned"
-		if appPhaseFailed(app.Status.Phase) {
-			reason, connMsg = reasonInfraUnhealthy, "infrastructure Application is unhealthy"
+		if step := workflowStep(app, stepProvision); stepFailed(step) {
+			reason, connMsg = reasonInfraFailed, "infrastructure provisioning failed"
+			summary = stepMessage(summary, step)
 		}
-		// Provision renders without take-over, so a cluster that already exists outside
-		// any application fails the dispatch dry run. Retrying cannot fix that; naming
-		// the mode that can is the whole value of the distinct reason. Checked on any
-		// phase rather than only after appPhaseFailed: the step message is set the moment
-		// the dry run refuses, while the Application may sit in runningWorkflow for a
-		// while before vela-core gives up on the step.
+		// A cluster that already exists outside any application fails the dispatch dry
+		// run unless take-over is on. Retrying cannot fix that; naming the mode that can
+		// is the whole value of the distinct reason. Checked on any phase rather than only
+		// after the step failed: the step message is set the moment the dry run refuses,
+		// while the Application may sit in runningWorkflow for a while before vela-core
+		// gives up on the step.
 		if sc.Spec.Mode == v1beta1.SpokeClusterModeProvision && unmanagedObjectsExist(app) {
 			reason, connMsg = reasonInfraUnmanagedExists, "substrate objects already exist and belong to no application"
 			summary += "; the cluster's substrate objects already exist and belong to no application: use mode adopt to claim them"
-			status.Provisioning.Message = summary
 		}
+		status.Provisioning.Message = summary
 		setCondition(status, v1beta1.SpokeClusterConditionInfraProvisioned, metav1.ConditionFalse, reason, summary)
 		markConnectionUnobserved(status, reason, connMsg)
 		return r.finish(ctx, sc, status, provisionRequeue, nil)
@@ -181,7 +136,7 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		}
 		sc.Status = *status
 	}
-	return r.reconcileConnect(ctx, sc)
+	return r.reconcileConnect(ctx, sc, app, render)
 }
 
 // resolveInfraComponents turns the blueprint and its planes into Application components.
@@ -239,113 +194,12 @@ func planeComponents(plane *v1beta1.ClusterPlane, prefix string) []common.Applic
 	return comps
 }
 
-// ensureInfraApplication creates or updates the owner-referenced infra Application. The
-// owner reference is what deletes the Application when the SpokeCluster goes; the
-// garbage-collect policy inside it is what decides whether the cluster survives that.
-func (r *Reconciler) ensureInfraApplication(ctx context.Context, sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent) (*v1beta1.Application, error) {
-	policies, err := infraPolicies(sc, comps)
-	if err != nil {
-		return nil, err
-	}
-	return r.ensureOwnedApplication(ctx, sc, infraAppName(sc), roleInfra, comps, policies)
-}
-
-// ensureOwnedApplication creates or updates one Application the SpokeCluster controls:
-// labelled back to the spoke by name, role and UID, carrying exactly comps and policies,
-// with sc as its controller reference. The UID label is what ties an Application back to
-// one SpokeCluster object when the name carries at most a prefix of the UID, or none at
-// all. SetControllerReference refuses an Application another controller already owns, so
-// a same-named foreign Application surfaces as an error rather than being taken over.
-func (r *Reconciler) ensureOwnedApplication(ctx context.Context, sc *v1beta1.SpokeCluster, name, role string,
-	comps []common.ApplicationComponent, policies []v1beta1.AppPolicy) (*v1beta1.Application, error) {
-	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: sc.Namespace}}
-	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, app, func() error {
-		if app.Labels == nil {
-			app.Labels = map[string]string{}
-		}
-		app.Labels[labelSpokeName] = sc.Name
-		app.Labels[labelSpokeRole] = role
-		app.Labels[labelSpokeUID] = string(sc.UID)
-		app.Spec.Components = comps
-		app.Spec.Policies = policies
-		return controllerutil.SetControllerReference(sc, app, r.Scheme)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("applying %s Application %s/%s: %w", role, sc.Namespace, name, err)
-	}
-	if op != controllerutil.OperationResultNone {
-		klog.InfoS("Application reconciled", "spokecluster", klog.KObj(sc), "application", app.Name, "role", role, "op", op)
-	}
-	return app, nil
-}
-
-// infraPolicies is always apply-once, because substrates write defaults back into their
-// own spec and vela-core must not fight them. take-over is added in mode adopt only: a
-// retained cluster's substrate objects lose their application labels when the owning
-// SpokeCluster is deleted, and vela-core's pre-dispatch dry run refuses to adopt unmanaged
-// objects unless told to, so adopt has to say so. Provision must never claim objects it
-// did not create, so it renders without the policy and lets the dry run refuse (see
-// unmanagedObjectsExist). Unless infraDeletionPolicy is delete, a garbage-collect rule
-// that never recycles the substrate objects completes the set.
-func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent) ([]v1beta1.AppPolicy, error) {
-	names := make([]string, 0, len(comps))
-	for _, c := range comps {
-		names = append(names, c.Name)
-	}
-	applyOnce, err := json.Marshal(map[string]any{"enable": true})
-	if err != nil {
-		return nil, err
-	}
-	takeOver, err := json.Marshal(map[string]any{
-		"rules": []map[string]any{{
-			"selector": map[string]any{"componentNames": names},
-		}},
-	})
-	if err != nil {
-		return nil, err
-	}
-	policies := []v1beta1.AppPolicy{
-		{Name: "apply-once", Type: "apply-once", Properties: &runtime.RawExtension{Raw: applyOnce}},
-	}
-	if sc.Spec.Mode == v1beta1.SpokeClusterModeAdopt {
-		policies = append(policies, v1beta1.AppPolicy{
-			Name: "take-over-existing", Type: "take-over", Properties: &runtime.RawExtension{Raw: takeOver},
-		})
-	}
-	if sc.Spec.InfraDeletionPolicy == v1beta1.InfraDeletionPolicyDelete {
-		return policies, nil
-	}
-	retain, err := retainPolicy("retain-infra", comps)
-	if err != nil {
-		return nil, err
-	}
-	return append(policies, retain), nil
-}
-
-// retainPolicy is a garbage-collect policy whose single rule never recycles any of comps:
-// when the Application goes, vela-core strips its labels from the objects those components
-// rendered and deletes nothing. hasRetainRule in release.go is the reader for this shape.
-func retainPolicy(name string, comps []common.ApplicationComponent) (v1beta1.AppPolicy, error) {
-	names := make([]string, 0, len(comps))
-	for _, c := range comps {
-		names = append(names, c.Name)
-	}
-	gc, err := json.Marshal(map[string]any{
-		"rules": []map[string]any{{
-			"selector": map[string]any{"componentNames": names},
-			"strategy": "never",
-		}},
-	})
-	if err != nil {
-		return v1beta1.AppPolicy{}, err
-	}
-	return v1beta1.AppPolicy{Name: name, Type: "garbage-collect", Properties: &runtime.RawExtension{Raw: gc}}, nil
-}
-
 // unmanagedObjectsExist reports whether vela-core refused the dispatch because the
 // substrate objects already exist and belong to no application. Claiming them is
 // adoption's job, so provision mode names the fix instead of retrying forever. Sub-steps
-// are checked too because a step group reports the failing apply in its children.
+// are checked too because a step group reports the failing apply in its children. While
+// the POC keeps the adopt policy on in every mode this cannot trigger; it stays for when
+// that shortcut goes.
 func unmanagedObjectsExist(app *v1beta1.Application) bool {
 	if app.Status.Workflow == nil {
 		return false
@@ -362,48 +216,4 @@ func unmanagedObjectsExist(app *v1beta1.Application) bool {
 		}
 	}
 	return false
-}
-
-// appPhaseFailed reports whether the Application has reached a phase it will not leave
-// without intervention, as opposed to one it is still working through. workflowSuspending
-// counts as failed because vela-core's EnableSuspendOnFailure gate parks a failed workflow
-// in suspending instead of workflowFailed, and nobody suspends an infra or bootstrap
-// workflow on purpose.
-func appPhaseFailed(phase common.ApplicationPhase) bool {
-	switch phase {
-	case common.ApplicationWorkflowFailed, common.ApplicationWorkflowTerminated, common.ApplicationWorkflowSuspending, common.ApplicationUnhealthy:
-		return true
-	}
-	return false
-}
-
-// summarizeAppHealth reports whether every expected component is healthy and the
-// Application is running, with a one-line summary for the condition message. Services
-// are matched by the component names this pass rendered, so a stale entry left behind
-// by a component that was since removed from the plane cannot make the count add up.
-func summarizeAppHealth(app *v1beta1.Application, comps []common.ApplicationComponent) (bool, string) {
-	expected := make(map[string]struct{}, len(comps))
-	for _, c := range comps {
-		expected[c.Name] = struct{}{}
-	}
-	healthy := 0
-	var msgs []string
-	for _, s := range app.Status.Services {
-		if _, ok := expected[s.Name]; !ok {
-			continue
-		}
-		if s.Healthy {
-			healthy++
-		}
-		if s.Message != "" {
-			msgs = append(msgs, s.Name+": "+s.Message)
-		}
-	}
-	sort.Strings(msgs)
-	summary := fmt.Sprintf("%d/%d components healthy, application phase %q", healthy, len(expected), app.Status.Phase)
-	if len(msgs) > 0 {
-		summary += "; " + strings.Join(msgs, "; ")
-	}
-	all := len(expected) > 0 && healthy == len(expected) && app.Status.Phase == common.ApplicationRunning
-	return all, summary
 }

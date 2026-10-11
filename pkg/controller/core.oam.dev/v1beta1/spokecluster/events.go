@@ -56,21 +56,19 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //   - InfraProvisioned True, or False/Provisioning or False/Releasing (new): Normal
 //     InfraReady / Provisioning / Releasing
 //   - InfraProvisioned False, any other reason (new): Warning BlueprintUnresolved /
-//     InfraRenderFailed / InfraUnhealthy / InfraUnmanagedExists / ReleaseRefused /
+//     InfraRenderFailed / InfraFailed / InfraUnmanagedExists / ReleaseRefused /
 //     SpecInvalid
 //   - InfraProvisioned removed after a release: Normal InfraReleased, emitted from
 //     releaseInfra itself because there is no condition left to compare
 //   - Bootstrapped True, or False/Bootstrapping (new): Normal Bootstrapped / Bootstrapping
 //   - Bootstrapped False, any other reason (new): Warning BootstrapFailed /
 //     BootstrapPlaneUnresolved
-//   - Bootstrapped removed after spec.bootstrap was dropped: Normal BootstrapReleased,
-//     emitted from forgetBootstrap itself for the same reason as InfraReleased
-//   - Dispatched True, or False/Dispatching or False/WaitingForBootstrap (new): Normal
-//     Dispatched / Dispatching / WaitingForBootstrap
+//   - Dispatched True, or False/Dispatching (new): Normal Dispatched / Dispatching
 //   - Dispatched False, any other reason (new): Warning DispatchFailed /
 //     BlueprintUnresolved
-//   - Dispatched removed after spec.blueprintRef was dropped: Normal DispatchReleased,
-//     emitted from forgetDispatch itself
+//   - Bootstrapped and Dispatched removed together once a connect spoke has neither
+//     spec.bootstrap nor spec.blueprintRef: Normal ApplicationReleased, emitted from
+//     forgetApplication itself for the same reason as InfraReleased
 //   - SpokeReady -> True: Normal SpokeReady. Its False reasons are silent: not-ready is
 //     the normal state of a spoke still provisioning, and ClusterAbsent is the steady
 //     state of every connect-only spoke
@@ -129,11 +127,10 @@ func emitInfraProvisionedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, ne
 	emitProgressOrFault(r, sc, prev, next, v1beta1.SpokeClusterConditionInfraProvisioned, reasonProvisioning, reasonReleasing)
 }
 
-// emitDispatchedEvent reports bundle shipping on the same model: Dispatching and
-// WaitingForBootstrap are in flight, True is progress, DispatchFailed and
-// BlueprintUnresolved are faults.
+// emitDispatchedEvent reports bundle shipping on the same model: Dispatching is in
+// flight, True is progress, DispatchFailed and BlueprintUnresolved are faults.
 func emitDispatchedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
-	emitProgressOrFault(r, sc, prev, next, v1beta1.SpokeClusterConditionDispatched, reasonDispatching, reasonWaitingForBootstrap)
+	emitProgressOrFault(r, sc, prev, next, v1beta1.SpokeClusterConditionDispatched, reasonDispatching)
 }
 
 // emitSpokeReadyEvent reports only the arrival at True. See emitStatusEvents for why the

@@ -112,6 +112,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		}
 	}
 
+	// Migration from the per-role Applications: they must be gone before the one
+	// Application renders, because take-over only claims objects that belong to no
+	// application. The Owns watch wakes the loop as each one disappears.
+	pending, err := r.deleteLegacyApplications(ctx, sc)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if pending {
+		klog.InfoS("Waiting for legacy Applications to finish deleting before rendering", "spokecluster", klog.KObj(sc))
+		return ctrl.Result{RequeueAfter: provisionRequeue}, nil
+	}
+
 	switch sc.Spec.Mode {
 	case v1beta1.SpokeClusterModeProvision, v1beta1.SpokeClusterModeAdopt:
 		return r.reconcileProvision(ctx, sc)
@@ -122,7 +134,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		if sc.Status.Provisioning != nil {
 			return r.releaseInfra(ctx, sc)
 		}
-		return r.reconcileConnect(ctx, sc)
+		return r.reconcileConnect(ctx, sc, nil, nil)
 	}
 }
 
@@ -133,19 +145,18 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 //
 // The status copy starts from the object's current status, which is what lets a discovery
 // failure keep the last known good clusterInfo instead of blanking it.
-func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
+//
+// app and render are the Application this pass already applied, when the caller is the
+// provision path; a connect spoke passes nil for both and the Application is rendered
+// here, before anything that can fail, so that removing spec.bootstrap or
+// spec.blueprintRef takes effect on a spoke that is down rather than leaving a stale
+// Bootstrapped=True until it came back.
+func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeCluster, app *v1beta1.Application, render *appRender) (ctrl.Result, error) {
 	status := sc.Status.DeepCopy()
 	status.ObservedGeneration = sc.Generation
 
-	// Before anything that can fail: a spoke whose spec.bootstrap was removed must drop its
-	// bootstrap Application and projection whether or not this pass can reach it, or a
-	// spoke that is down would keep a stale Bootstrapped=True until it came back.
-	if sc.Spec.Bootstrap == nil {
-		r.forgetBootstrap(ctx, sc, status)
-	}
-	// Same reasoning for a removed spec.blueprintRef and its dispatch Application.
-	if sc.Spec.BlueprintRef == nil {
-		r.forgetDispatch(ctx, sc, status)
+	if render == nil {
+		app, render = r.ensureConnectApplication(ctx, sc, status)
 	}
 
 	// Re-check admission rules even when the validating webhook is Ignore (job-patch
@@ -314,17 +325,45 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 		observeInventory(sc, info)
 	}
 
-	// Every failure path above returned already, so the render arm runs only on a pass that
-	// observed the spoke Connected: the runtime is rendered at a spoke the hub can reach,
-	// never ahead. The forget arm ran at the top of this function instead.
-	r.reconcileBootstrap(ctx, sc, status)
-	// The dispatch arm follows the same rule and additionally waits for Bootstrapped when
-	// a bootstrap block is present. The pull then reports whatever Cluster the spoke has,
-	// dispatched or not. None of the three returns an error or changes the requeue.
-	r.reconcileDispatch(ctx, sc, status)
+	// Every failure path above returned already, so the projections run only on a pass that
+	// observed the spoke Connected. vela-core orders the steps itself (the connected step
+	// waits on this very condition), so the hub only reads back how far the workflow got.
+	// The pull then reports whatever Cluster the spoke has, dispatched or not. None of the
+	// three returns an error or changes the requeue.
+	projectBootstrapped(sc, status, app, render)
+	projectDispatched(sc, status, app, render)
 	r.pullSpokeStatus(ctx, sc, status)
 
 	return r.finish(ctx, sc, status, nextRequeue(sc, materialized), nil)
+}
+
+// ensureConnectApplication renders and applies the Application for a connect spoke. With
+// neither spec.bootstrap nor spec.blueprintRef there is nothing to render and any owned
+// Application is deleted instead. A failure to apply is projected on the conditions the
+// spec asks for and the pass goes on to probe: the spoke is as reachable as it was.
+// The returned app is nil when nothing was applied; render is never nil.
+func (r *Reconciler) ensureConnectApplication(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus) (*v1beta1.Application, *appRender) {
+	render, err := r.renderApplication(ctx, sc)
+	if err != nil {
+		// Only the infra part can fail the render, and a connect spoke has none.
+		render = &appRender{}
+	}
+	if render.empty() {
+		r.forgetApplication(ctx, sc, status)
+		return nil, render
+	}
+	spec, err := render.spec(sc)
+	if err != nil {
+		projectApplicationError(sc, status, err.Error())
+		return nil, render
+	}
+	app, err := r.ensureApplication(ctx, sc, spec)
+	if err != nil {
+		klog.ErrorS(err, "Application could not be applied", "spokecluster", klog.KObj(sc))
+		projectApplicationError(sc, status, err.Error())
+		return nil, render
+	}
+	return app, render
 }
 
 // probeSpoke dispatches to the probe seam when a test set one, and to the real probe
@@ -529,8 +568,9 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 			MaxConcurrentReconciles: r.concurrentReconciles,
 		}).
 		For(&v1beta1.SpokeCluster{}, builder.WithPredicates(ignoreOwnStatusWrites)).
-		// The infra Application's status moves while the substrate creates the cluster;
-		// owning it wakes a provisioning spoke on every change instead of on the backstop.
+		// The Application's status moves while the substrate creates the cluster and the
+		// workflow steps run; owning it wakes the spoke on every change instead of on the
+		// backstop, and on the deletion of a legacy or released Application.
 		Owns(&v1beta1.Application{}).
 		// Source kubeconfig Secrets in the gateway namespace already sit in the
 		// RBAC-01 informer. A cluster-wide Secret watch would need ClusterRole

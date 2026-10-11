@@ -39,11 +39,15 @@ const (
 )
 
 // releaseInfra runs when a SpokeCluster that used to manage infrastructure (status.provisioning
-// is set) is now in mode connect. It deletes the infra Application so vela-core, following the
-// Application's retain rule, strips its labels from the substrate objects instead of deleting
+// is set) is now in mode connect. It deletes the Application so vela-core, following the
+// Application's keep rule, strips its labels from the substrate objects instead of deleting
 // them, then forgets the infrastructure and continues as a plain connect spoke. Without the
-// retain rule the deletion would destroy the cluster, so release is refused until the user
+// keep rule the deletion would destroy the cluster, so release is refused until the user
 // sets infraDeletionPolicy retain in the previous mode.
+//
+// The one Application also carries the bootstrap components and the platform step. They
+// go with it, under the same keep rule, and the connect pass that follows renders a new
+// Application without the infra plane, which takes the spoke objects back over.
 func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster) (ctrl.Result, error) {
 	status := sc.Status.DeepCopy()
 	status.ObservedGeneration = sc.Generation
@@ -55,7 +59,7 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 		name = sc.Status.Provisioning.ApplicationName
 	}
 	if name == "" {
-		name = infraAppName(sc)
+		name = applicationName(sc)
 	}
 	app := &v1beta1.Application{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: name}, app)
@@ -107,8 +111,13 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	// starts from sc.Status, and it must see the projection gone or a no-op connect pass
 	// would carry the stale provisioning fields forward.
 	status.Provisioning = nil
-	// The recorded Application is already gone, so bumping the counter here cannot strand
-	// it; the next provision or adopt renders under a new name instead.
+	// The counter still counts releases, but the Application name no longer carries it:
+	// one SpokeCluster owns one fixed-name Application. It used to give a re-adopted
+	// cluster a name vela-core had never seen, so the retained substrate objects' stale
+	// app.oam.dev/appRevision and render-hash markers could not make vela-core skip them.
+	// With a fixed name a re-adoption after release relies on the deleted Application's
+	// revisions being gone too; the field is kept so the API and the release history stay
+	// intact until that path is revisited.
 	status.InfraIncarnation++
 	meta.RemoveStatusCondition(&status.Conditions, v1beta1.SpokeClusterConditionInfraProvisioned)
 	if err := r.updateStatus(ctx, sc, status); err != nil {
@@ -116,26 +125,29 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	}
 	sc.Status = *status
 	r.emit(sc, event.Normal(reasonInfraReleased, "substrate objects released; the hub no longer manages this cluster's infrastructure"))
-	return r.reconcileConnect(ctx, sc)
+	return r.reconcileConnect(ctx, sc, nil, nil)
 }
 
 // gcPolicyProperties is the shape of a garbage-collect policy's properties that release
 // cares about: which components each rule selects and what it does with their resources.
-// retainPolicy in provision.go is the writer of this shape.
+// keepRules in application.go is the writer of this shape.
 type gcPolicyProperties struct {
 	Rules []struct {
 		Strategy string `json:"strategy"`
 		Selector struct {
 			ComponentNames []string `json:"componentNames"`
+			ResourceTypes  []string `json:"resourceTypes"`
 		} `json:"selector"`
 	} `json:"rules"`
 }
 
-// hasRetainRule reports whether every component of the infra Application is covered by a
+// hasRetainRule reports whether every component of the Application is covered by a
 // garbage-collect rule with strategy never, which is what makes deleting the Application
-// safe for the cluster. A rule with no componentNames selects every component. The policy
-// is parsed rather than string-matched so a rule that retains only some of the substrate
-// objects, or one written by hand with different spacing, is judged on what it means.
+// safe for the cluster. A rule with no componentNames and no resourceTypes selects every
+// component; one that names only resourceTypes (the keep rule for the dispatched kinds)
+// covers no component. The policy is parsed rather than string-matched so a rule that
+// retains only some of the substrate objects, or one written by hand with different
+// spacing, is judged on what it means.
 func hasRetainRule(app *v1beta1.Application) bool {
 	retained := map[string]bool{}
 	for _, p := range app.Spec.Policies {
@@ -151,6 +163,9 @@ func hasRetainRule(app *v1beta1.Application) bool {
 				continue
 			}
 			if len(rule.Selector.ComponentNames) == 0 {
+				if len(rule.Selector.ResourceTypes) > 0 {
+					continue
+				}
 				return len(app.Spec.Components) > 0
 			}
 			for _, name := range rule.Selector.ComponentNames {

@@ -73,7 +73,7 @@ func interceptedSpokeReader(t GinkgoTInterface, funcs interceptor.Funcs, objs ..
 var _ = It("PullSpokeStatusProjectsReadyCluster", func() {
 	t := GinkgoT()
 	sc := dispatchSpoke("cpspoke1")
-	r := connectedReconciler(t, sc, dispatchFixtures(sc.Namespace)...)
+	r := connectedReconciler(t, sc, append([]client.Object{dispatchBlueprint(sc.Namespace)}, dispatchPlanes(sc.Namespace)...)...)
 	var seenCluster string
 	r.SpokeReader = interceptedSpokeReader(t, interceptor.Funcs{
 		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -107,7 +107,7 @@ var _ = It("PullSpokeStatusProjectsReadyCluster", func() {
 var _ = It("PullSpokeStatusReportsNotReadyWithPhaseAndCounts", func() {
 	t := GinkgoT()
 	sc := dispatchSpoke("cpspoke1")
-	r := connectedReconciler(t, sc, dispatchFixtures(sc.Namespace)...)
+	r := connectedReconciler(t, sc, append([]client.Object{dispatchBlueprint(sc.Namespace)}, dispatchPlanes(sc.Namespace)...)...)
 	seedSpokeCluster(r, spokeCluster(sc, v1beta1.ClusterPhaseProvisioning, false))
 
 	_, err := reconcileOnce(t, r, sc)
