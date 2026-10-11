@@ -20,6 +20,7 @@ package spokecluster
 
 import (
 	"fmt"
+	"slices"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
@@ -81,11 +82,8 @@ func Validate(sc *v1beta1.SpokeCluster) field.ErrorList {
 		}
 	}
 
-	// bootstrap is valid in every mode: it names the ClusterPlane the hub renders
-	// into the spoke's runtime once the spoke is Connected, and that holds whether
-	// the hub created the cluster or merely reached it. The only rule is that a
-	// bootstrap block has to say which plane, which the CRD also enforces through
-	// required plus minLength so it holds with the webhook off.
+	// bootstrap is valid in every mode; its only rule is that it names a plane, which
+	// the CRD also enforces (required plus minLength) so it holds with the webhook off.
 	if sc.Spec.Bootstrap != nil && sc.Spec.Bootstrap.PlaneRef.Name == "" {
 		errs = append(errs, field.Required(field.NewPath("spec", "bootstrap", "planeRef", "name"),
 			"bootstrap requires the ClusterPlane to render"))
@@ -109,10 +107,8 @@ func ValidateTransition(old, cur *v1beta1.SpokeCluster) field.ErrorList {
 		v1beta1.SpokeClusterModeProvision: {v1beta1.SpokeClusterModeAdopt, v1beta1.SpokeClusterModeConnect},
 		v1beta1.SpokeClusterModeAdopt:     {v1beta1.SpokeClusterModeConnect},
 	}
-	for _, m := range allowed[old.Spec.Mode] {
-		if m == cur.Spec.Mode {
-			return nil
-		}
+	if slices.Contains(allowed[old.Spec.Mode], cur.Spec.Mode) {
+		return nil
 	}
 	return field.ErrorList{field.Forbidden(field.NewPath("spec", "mode"),
 		fmt.Sprintf("mode may not change from %q to %q; allowed: connect to adopt, provision to adopt, provision or adopt to connect (release)", old.Spec.Mode, cur.Spec.Mode))}

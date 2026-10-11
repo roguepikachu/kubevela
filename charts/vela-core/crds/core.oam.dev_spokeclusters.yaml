@@ -73,6 +73,10 @@ spec:
       name: PROVISION
       priority: 1
       type: string
+    - jsonPath: .status.bootstrap.phase
+      name: BOOTSTRAP
+      priority: 1
+      type: string
     name: v1beta1
     schema:
       openAPIV3Schema:
@@ -383,8 +387,8 @@ spec:
                   projection for kubectl, not a second source of truth.
                 properties:
                   applicationName:
-                    description: ApplicationName is the hub Application carrying the
-                      substrate components.
+                    description: ApplicationName is the hub Application this field
+                      mirrors.
                     type: string
                   healthy:
                     description: Healthy is true when every component of the Application
@@ -574,8 +578,8 @@ spec:
                   It is a projection for kubectl, not a second source of truth.
                 properties:
                   applicationName:
-                    description: ApplicationName is the hub Application carrying the
-                      substrate components.
+                    description: ApplicationName is the hub Application this field
+                      mirrors.
                     type: string
                   healthy:
                     description: Healthy is true when every component of the Application

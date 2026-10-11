@@ -135,7 +135,7 @@ const (
 	// SpokeClusterConditionInfraProvisioned is true once every component of the
 	// infraProvisioning Application reports healthy (mode: provision only).
 	SpokeClusterConditionInfraProvisioned = "InfraProvisioned"
-	// SpokeClusterConditionBootstrapped is True once every component of the bootstrap
+	// SpokeClusterConditionBootstrapped is true once every component of the bootstrap
 	// plane is healthy on the spoke.
 	SpokeClusterConditionBootstrapped = "Bootstrapped"
 )
@@ -240,11 +240,15 @@ type BlueprintReference struct {
 // BootstrapSpec names the plane whose components install the spoke's runtime.
 type BootstrapSpec struct {
 	// PlaneRef is the ClusterPlane in the SpokeCluster's namespace to render.
-	// +kubebuilder:validation:Required
 	PlaneRef PlaneReference `json:"planeRef"`
 }
 
-// PlaneReference points at a ClusterPlane by name.
+// PlaneReference points at a ClusterPlane by name. It is name-only on purpose:
+// ClusterPlane has no revisions yet, and a revision pin like
+// BlueprintReference.revision would be rejected by the renderer anyway. MaxLength
+// 63 is safe here because bootstrap components keep the plane's own component
+// names with no plane prefix; the 31-character cap on ClusterBlueprint plane names
+// exists for the "<plane>-<component>" prefix the infra renderer adds.
 type PlaneReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
@@ -454,9 +458,11 @@ type SpokeClusterStatus struct {
 	Health *SpokeClusterHealth `json:"health,omitempty"`
 }
 
-// ProvisioningStatus is what the hub observed on the infraProvisioning Application.
+// ProvisioningStatus is what the hub observed on the Application this field mirrors
+// (the infraProvisioning Application under status.provisioning, the bootstrap
+// Application under status.bootstrap).
 type ProvisioningStatus struct {
-	// ApplicationName is the hub Application carrying the substrate components.
+	// ApplicationName is the hub Application this field mirrors.
 	ApplicationName string `json:"applicationName"`
 
 	// Phase is the Application phase (rendering, runningWorkflow, running, workflowFailed).
@@ -558,6 +564,7 @@ type SpokeClusterInfo struct {
 // +kubebuilder:printcolumn:name="AUTH",type=string,JSONPath=`.spec.credential.type`,priority=1
 // +kubebuilder:printcolumn:name="LAST PROBE",type=date,JSONPath=`.status.lastProbeTime`,priority=1
 // +kubebuilder:printcolumn:name="PROVISION",type=string,JSONPath=`.status.provisioning.phase`,priority=1
+// +kubebuilder:printcolumn:name="BOOTSTRAP",type=string,JSONPath=`.status.bootstrap.phase`,priority=1
 // +kubebuilder:validation:XValidation:rule="self.metadata.name != 'local'",message="name must not be the reserved local cluster name"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode in ['connect', 'provision', 'adopt']",message="mode must be 'connect', 'provision' or 'adopt'"
 // +kubebuilder:validation:XValidation:rule="self.spec.mode == 'connect' || (has(self.spec.infraProvisioning) && has(self.spec.infraProvisioning.blueprintRef))",message="modes 'provision' and 'adopt' require infraProvisioning.blueprintRef"
