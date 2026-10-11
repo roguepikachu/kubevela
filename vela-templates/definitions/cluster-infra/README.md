@@ -52,3 +52,37 @@ needs; they share this directory and its health and status conventions, nothing 
 
 Adding a substrate: copy the parameter block from `eks-capi.cue` unchanged, render that
 tool's objects, keep the health and status pattern, run `vela def vet`, and add a row here.
+
+## Workflow steps
+
+`workflowstep/` holds the steps the hub Application runs to drive one spoke. Apply them like the
+components, with `vela def apply <file> -n vela-system` (`scripts/22-oam-defs.sh` in the POC does
+this through server-side apply). Both use the `vela/kube` and `vela/builtin` providers: `kube.#Read`
+and `kube.#Apply` take the target spoke as `$params.cluster`, the cluster-gateway name, and act on
+the hub itself when it is left empty.
+
+`wait-spoke-connected` reads the SpokeCluster named in its parameters (the namespace defaults to the
+Application's) and holds the workflow with a conditional wait until a condition of type `Connected`
+has status `True`, that is until the spoke is reachable through the cluster gateway. A SpokeCluster
+with no conditions yet simply keeps the step waiting.
+
+`dispatch-blueprint` ships one blueprint revision. On the hub it reads the ClusterBlueprintRevision,
+every ClusterPlaneRevision it pins and the ComponentDefinitions named in `definitions`, trims each to
+apiVersion, kind, name, namespace, labels and spec, and applies them into the same namespace on the
+spoke. Then it applies a Cluster object there (named `clusterName`, defaulting to `cluster`) whose
+three lifecycle stages all reference that revision, reads the Cluster back from the spoke and waits
+until `status.phase` is set and no longer `Pending`. That is the spoke's own vela-cluster-core
+acknowledging the revision; whether the planes come up healthy is reported by the hub's status
+pull, not by this step.
+
+### One Application per SpokeCluster
+
+A SpokeCluster owns a single Application on the hub. Its components come from the planes the
+SpokeCluster references: the substrate components of the infra planes (an `eks-capi` cluster, for
+example) and the components of the bootstrap plane (`namespaces`, `flux`, `vela-core`). Its policies
+are `hub` and `spoke`, which place components on the hub's local cluster or on the spoke through the
+gateway, `infra` and `runtime`, which select which components each step deploys, `keep`, which
+leaves everything in place when the Application goes, and `adopt`, which takes over objects that
+already exist. Its workflow runs four steps in order: `provision` deploys the infra components on
+the hub, `connected` is `wait-spoke-connected`, `bootstrap` deploys the runtime components onto the
+spoke, and `platform` is `dispatch-blueprint`.
