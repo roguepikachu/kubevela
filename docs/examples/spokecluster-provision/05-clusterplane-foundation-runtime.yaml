@@ -1,0 +1,104 @@
+# The bootstrap plane: what the hub pushes to a spoke so the spoke can run everything else by
+# itself. Three components, applied in order because each one's dry run needs the previous one:
+#
+#   namespaces  k8s-objects  the namespaces the other two components create objects in
+#   flux        k8s-objects  Flux source-controller and helm-controller, pre-rendered and pinned
+#   vela-core   helm-flux    a Flux HelmRelease for the vela-core chart pulled from an OCI registry
+#
+# The SpokeCluster controller renders this into Application sc-<spoke>-bootstrap with a topology
+# policy naming the spoke and a garbage-collect never rule: forgetting the spoke keeps its runtime.
+# The vela version of a spoke is the chart version and image tag below; change them and the spoke
+# upgrades (or rolls back) in under a minute.
+#
+# The flux component is abbreviated here. Generate the full object list with
+#   flux install --export --components=source-controller,helm-controller --namespace=flux-system
+# (Flux v2.9.6 gives 21 objects, about 190 KB) and place every document, minus the Namespace,
+# under properties.objects. Apply the plane server-side (kubectl apply --server-side) so the
+# 256 KB last-applied annotation limit never bites.
+apiVersion: core.oam.dev/v1beta1
+kind: ClusterPlane
+metadata:
+  name: foundation-runtime
+  namespace: vela-system
+spec:
+  description: Flux helm runtime and vela-core on the spoke, pushed by the hub
+  components:
+    - name: namespaces
+      type: k8s-objects
+      properties:
+        objects:
+          - apiVersion: v1
+            kind: Namespace
+            metadata: {name: flux-system}
+          - apiVersion: v1
+            kind: Namespace
+            metadata: {name: vela-system}
+    - name: flux
+      type: k8s-objects
+      dependsOn: [namespaces]
+      properties:
+        objects:
+          # ... CustomResourceDefinitions (helmreleases, helmrepositories, helmcharts, ocirepositories,
+          #     gitrepositories, buckets, externalartifacts), ClusterRoles, ClusterRoleBindings,
+          #     ServiceAccounts, NetworkPolicies, ResourceQuota, Service ...
+          - apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: source-controller
+              namespace: flux-system
+            spec:
+              # full spec from `flux install --export`; image ghcr.io/fluxcd/source-controller:v1.9.6
+              replicas: 1
+              selector: {matchLabels: {app: source-controller}}
+              template:
+                metadata: {labels: {app: source-controller}}
+                spec:
+                  serviceAccountName: source-controller
+                  containers:
+                    - name: manager
+                      image: ghcr.io/fluxcd/source-controller:v1.9.6
+          - apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: helm-controller
+              namespace: flux-system
+            spec:
+              # full spec from `flux install --export`; image ghcr.io/fluxcd/helm-controller:v1.6.5
+              replicas: 1
+              selector: {matchLabels: {app: helm-controller}}
+              template:
+                metadata: {labels: {app: helm-controller}}
+                spec:
+                  serviceAccountName: helm-controller
+                  containers:
+                    - name: manager
+                      image: ghcr.io/fluxcd/helm-controller:v1.6.5
+    - name: vela-core
+      type: helm-flux
+      dependsOn: [flux]
+      properties:
+        # helm-flux names the HelmRepository and HelmRelease after the component: vela-core.
+        url: oci://111122223333.dkr.ecr.us-west-2.amazonaws.com/tenant-example
+        repoType: oci
+        # aws: source-controller authenticates with its pod identity. On EKS managed node groups
+        # pods cannot reach IMDS, so give flux-system/source-controller an EKS Pod Identity
+        # association to a role with AmazonEC2ContainerRegistryReadOnly.
+        provider: aws
+        chart: vela-core
+        # Pre-release versions need an exact value; "*" never matches them.
+        version: 0.1.0-cp.b13a12b9c
+        releaseName: vela-core
+        targetNamespace: vela-system
+        installTimeout: 10m
+        values:
+          image:
+            repository: 111122223333.dkr.ecr.us-west-2.amazonaws.com/tenant-example-vela
+            tag: b13a12b9c
+            pullPolicy: IfNotPresent
+          featureGates:
+            enableClusterInfrastructure: true
+          # Keep the gateway: vela-cluster-core waits for the cluster-gateway APIService at startup.
+          multicluster:
+            enabled: true
+          clusterCore:
+            replicaCount: 1

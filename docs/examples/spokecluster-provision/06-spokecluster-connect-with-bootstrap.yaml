@@ -1,0 +1,37 @@
+# Bootstrap a cluster you did not provision. spec.bootstrap is read in every mode once the spoke
+# is Connected, so a plain connect SpokeCluster can install Flux and vela-core on an existing
+# cluster the same way a provisioned one does.
+#
+# Status you will see:
+#   Bootstrapped=False (Bootstrapping)             the Application is applying or Flux is installing
+#   Bootstrapped=False (BootstrapPlaneUnresolved)  the plane is missing or has no components
+#   Bootstrapped=False (BootstrapFailed)           the Application failed, or the name is owned by
+#                                                   another SpokeCluster
+#   Bootstrapped=True  (Bootstrapped)              every plane component healthy on the spoke
+# status.bootstrap mirrors the Application (name, phase, healthy, message), and a BOOTSTRAP column
+# shows the phase with kubectl get -o wide.
+#
+# Removing spec.bootstrap later deletes the hub Application and leaves the runtime on the spoke
+# (event BootstrapReleased). Deleting the SpokeCluster also leaves it: the cluster is detached
+# from the resource trackers before the Application is garbage collected.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: existing-east
+  namespace: vela-system
+  labels:
+    provider: aws
+    region: us-west-2
+spec:
+  mode: connect
+  bootstrap:
+    planeRef:
+      name: foundation-runtime
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: existing-east
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/spokecluster-existing-east
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core

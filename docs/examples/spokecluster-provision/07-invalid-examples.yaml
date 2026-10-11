@@ -1,0 +1,65 @@
+# Shapes that admission rejects. Do not apply as a batch; each document fails on its own.
+---
+# provision without a blueprint: CRD rule "modes 'provision' and 'adopt' require
+# infraProvisioning.blueprintRef", and the webhook says the same.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: no-blueprint
+  namespace: vela-system
+spec:
+  mode: provision
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: x
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/x
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core
+---
+# connect carrying infraProvisioning: "infraProvisioning is only read in modes 'provision' and
+# 'adopt'". A connect spoke must not pretend to own infrastructure.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: connect-with-infra
+  namespace: vela-system
+spec:
+  mode: connect
+  infraProvisioning:
+    blueprintRef: {name: eks-capi}
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: x
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/x
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core
+---
+# bootstrap without a plane name: CRD requires planeRef.name (1 to 63 characters); the webhook
+# message is "bootstrap requires the ClusterPlane to render".
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: bootstrap-without-plane
+  namespace: vela-system
+spec:
+  mode: connect
+  bootstrap: {}
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: x
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/x
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core
+---
+# Not a document you can apply, but the transition you will be refused: patching an existing
+# connect SpokeCluster to mode provision fails the CEL rule on oldSelf and the webhook's
+# ValidateTransition with a message telling you to release first. The allowed moves are
+# connect -> adopt, provision -> adopt, provision -> connect, adopt -> connect.
+#   kubectl patch spokeclusters.core.oam.dev spoke-a -n vela-system --type merge \
+#     -p '{"spec":{"mode":"provision","infraProvisioning":{"blueprintRef":{"name":"eks-capi"}}}}'

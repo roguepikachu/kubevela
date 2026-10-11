@@ -1,0 +1,47 @@
+# Create an EKS cluster through the eks-capi blueprint, then connect to it, then bootstrap it.
+#
+# What the controller does with this object:
+#   1. Renders the blueprint into Application sc-spoke-a-infra-<uid8> in vela-system (owned by
+#      this SpokeCluster) with policies apply-once and garbage-collect strategy never. The
+#      Application name carries the first eight characters of this object's UID so a re-created
+#      SpokeCluster renders under a fresh name; after each release the counter
+#      status.infraIncarnation appends "-<n>" for the same reason (vela-core skips objects whose
+#      stale revision markers match).
+#   2. Reports InfraProvisioned=False (Provisioning) while the Application runs, False
+#      (InfraUnmanagedExists) if the rendered objects already exist unmanaged, False
+#      (InfraUnhealthy) if the Application fails, True (InfraReady) when every component is healthy.
+#   3. On InfraReady, runs the connect sequence with the credential below: CredentialValid,
+#      Registered, Connected, InfoSynced.
+#   4. On every Connected pass, renders spec.bootstrap.planeRef into Application sc-spoke-a-bootstrap
+#      (topology policy naming this spoke, garbage-collect never) and reports Bootstrapped.
+#
+# The credential is the desired one: clusterName, region, roleArn and externalId are chosen up
+# front and the substrate plane grants the role on the new cluster through an access entry.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: spoke-a
+  namespace: vela-system
+  labels:
+    provider: aws
+    region: us-west-2
+spec:
+  mode: provision
+  # retain (default): deleting this SpokeCluster leaves the EKS cluster and the CAPI objects in
+  # place with their ownership labels stripped. delete: the cluster goes with the SpokeCluster.
+  infraDeletionPolicy: retain
+  infraProvisioning:
+    blueprintRef:
+      name: eks-capi
+  # Optional. Installs Flux and vela-core on the new spoke once it is Connected (see 05).
+  bootstrap:
+    planeRef:
+      name: foundation-runtime
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: tenant-example-spoke-a
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/tenant-example-spoke-spoke-a
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core

@@ -1,0 +1,14 @@
+# The blueprint a SpokeCluster's infraProvisioning.blueprintRef names. For infraProvisioning the
+# blueprint is deliberately thin: one plane, no dependsOn (the renderer rejects plane-level
+# dependsOn and ref.revision for infra until plane revisions exist). Component names in the
+# rendered Application are "<plane name>-<component name>", here "foundation-cluster".
+apiVersion: core.oam.dev/v1beta1
+kind: ClusterBlueprint
+metadata:
+  name: eks-capi
+  namespace: vela-system
+spec:
+  description: One-plane blueprint, the CAPI substrate
+  planes:
+    - name: foundation
+      ref: {name: eks-capi-foundation}

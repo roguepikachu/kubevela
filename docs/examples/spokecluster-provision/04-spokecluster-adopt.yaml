@@ -1,0 +1,39 @@
+# Claim a cluster whose substrate objects already exist on the hub: either retained from a
+# deleted provision SpokeCluster, or created by hand with the same shapes.
+#
+# Differences from provision:
+#   - the infra Application gets a take-over policy over all its components, so vela-core's
+#     pre-dispatch dry run accepts objects that exist but are managed by no Application;
+#   - nothing is created in the cloud if the objects are already reconciled; the CAPI Cluster
+#     is simply relabelled with the new Application name and health is read from it.
+#
+# A provision SpokeCluster applied over the same retained objects is refused instead
+# (InfraProvisioned=False, reason InfraUnmanagedExists, with a Warning event), and keeps its
+# Application until you delete it.
+#
+# Transitions on a live object: connect to adopt and provision to adopt are allowed in place
+# (kubectl patch spec.mode). adopt back to connect releases: the Application is deleted under
+# its garbage-collect never rule, labels are stripped, the cluster stays, status.provisioning is
+# cleared and status.infraIncarnation is incremented.
+apiVersion: core.oam.dev/v1beta1
+kind: SpokeCluster
+metadata:
+  name: spoke-a
+  namespace: vela-system
+  labels:
+    provider: aws
+    region: us-west-2
+spec:
+  mode: adopt
+  infraDeletionPolicy: retain
+  infraProvisioning:
+    blueprintRef:
+      name: eks-capi
+  credential:
+    type: aws
+    aws:
+      authMode: podIdentity
+      clusterName: tenant-example-spoke-a
+      region: us-west-2
+      roleArn: arn:aws:iam::111122223333:role/tenant-example-spoke-spoke-a
+      externalId: us-west-2/111122223333/hub-cluster/vela-system/vela-core-cluster-core

@@ -1,0 +1,50 @@
+# The substrate plane. Its one component is the eks-capi ComponentDefinition
+# (vela-templates/definitions/cluster-infra/component/eks-capi.cue), which renders Cluster API
+# objects: Cluster, AWSManagedControlPlane, AWSManagedCluster, MachinePool, AWSManagedMachinePool,
+# NodeadmConfig. CAPA turns those into an EKS cluster.
+#
+# Every substrate definition (eks-capi today; eks-crossplane and eks-ack planned) takes this same
+# parameter block, so swapping substrates means changing `type` and nothing else.
+#
+# A plane is a template. Applying it creates nothing; it becomes infrastructure when a
+# ClusterBlueprint referencing it is named by a SpokeCluster's infraProvisioning.blueprintRef.
+apiVersion: core.oam.dev/v1beta1
+kind: ClusterPlane
+metadata:
+  name: eks-capi-foundation
+  namespace: vela-system
+spec:
+  description: EKS cluster in the hub VPC, created by Cluster API Provider AWS
+  components:
+    - name: cluster
+      type: eks-capi
+      properties:
+        # Name of the CAPI Cluster object on the hub; usually the SpokeCluster name.
+        name: spoke-a
+        # Name of the EKS cluster in AWS; must match SpokeCluster.spec.credential.aws.clusterName.
+        eksClusterName: tenant-example-spoke-a
+        region: us-west-2
+        version: v1.35
+        # Bring-your-own VPC: CAPA tags the subnets as shared and creates no NAT or route tables.
+        vpcId: vpc-0123456789abcdef0
+        subnetIds:
+          - subnet-0aaaaaaaaaaaaaaaa
+          - subnet-0bbbbbbbbbbbbbbbb
+          - subnet-0ccccccccccccccccc
+        # Pre-created IAM roles. CAPA never creates IAM in this setup (EKSEnableIAM off).
+        controlPlaneRoleName: tenant-example-eks-controlplane
+        nodeRoleName: tenant-example-eks-nodes
+        # The hub's spoke role. The definition emits an EKS access entry granting it
+        # AmazonEKSClusterAdminPolicy, which is what the Connect probe and the gateway use.
+        spokePrincipalArn: arn:aws:iam::111122223333:role/tenant-example-spoke-spoke-a
+        # Same-VPC hubs resolve the private endpoint; without this rule the probe times out.
+        controlPlaneIngressCidrs: ["10.0.0.0/20"]
+        # eks-pod-identity-agent matters: a spoke that later acts as a hub, or runs Flux against a
+        # private registry, needs Pod Identity.
+        addons:
+          - {name: vpc-cni, version: "v1.23.2-eksbuild.1"}
+          - {name: kube-proxy, version: "v1.35.3-eksbuild.49"}
+          - {name: coredns, version: "v1.14.7-eksbuild.11"}
+          - {name: eks-pod-identity-agent, version: "v1.4.0-eksbuild.3"}
+        nodes: {instanceType: m5.large, min: 1, max: 3, desired: 2}
+        tags: {purpose: cluster-provision-poc, owner: platform-team}

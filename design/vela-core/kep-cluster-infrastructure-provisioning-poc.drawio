@@ -1,0 +1,465 @@
+<mxfile host="app.diagrams.net" modified="2026-10-11T13:10:00.000Z" agent="poc" version="24.0.0" type="device">
+  <diagram id="p1-architecture" name="01 Architecture today">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1754" pageHeight="1240" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Cluster KEP provisioning POC: what runs today (slices 1, 1b, 2a proven 2026-10-11)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="900" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="user" value="&lt;b&gt;Fleet admin&lt;/b&gt;&lt;br&gt;kubectl apply SpokeCluster&lt;br&gt;edits ClusterPlane values" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="40" y="330" width="150" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="hub" value="Hub cluster: atmos-scratch-chub1 (EKS 1.35, Atmos scratch; deny jsPolicies on Warn; node groups scaled to zero nightly by Atmos)" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="250" y="40" width="640" height="660" as="geometry"/>
+        </mxCell>
+        <mxCell id="sc" value="&lt;b&gt;SpokeCluster cpspoke1&lt;/b&gt;&lt;br&gt;mode: connect | provision | adopt&lt;br&gt;infraProvisioning.blueprintRef: eks-capi&lt;br&gt;bootstrap.planeRef: foundation-runtime&lt;br&gt;credential.aws: spoke role + externalId&lt;br&gt;status: 6 conditions, provisioning, bootstrap, infraIncarnation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="50" width="280" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="ctrl" value="&lt;b&gt;vela-core-cluster-core (hub role)&lt;/b&gt;&lt;br&gt;SpokeCluster controller + admission webhook&lt;br&gt;provision.go, release.go, bootstrap.go, connect path&lt;br&gt;Pod Identity: tenant-gokarna-cc-hub" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="340" y="50" width="280" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="defs" value="&lt;b&gt;Definitions and planes (vela-system)&lt;/b&gt;&lt;br&gt;ComponentDefinition eks-capi (substrate contract)&lt;br&gt;ComponentDefinition helm-flux (Flux v2 HelmRelease)&lt;br&gt;ClusterPlane eks-capi-foundation, foundation-runtime&lt;br&gt;ClusterBlueprint eks-capi" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="190" width="280" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="apps" value="&lt;b&gt;Applications owned by the SpokeCluster&lt;/b&gt;&lt;br&gt;sc-cpspoke1-infra-&amp;lt;uid8&amp;gt;[-n]: substrate components; apply-once, gc never (retain), take-over in adopt&lt;br&gt;sc-cpspoke1-bootstrap: topology cpspoke1, gc never; re-applied every pass" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="340" y="190" width="280" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="velacore" value="&lt;b&gt;vela-core (Application engine)&lt;/b&gt;&lt;br&gt;render CUE, pre-dispatch dry run, deploy step, dispatch, health, state-keep&lt;br&gt;branch fix: stale-revision re-apply (b13a12b9c)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="330" width="280" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="capi" value="&lt;b&gt;CAPI v1.14.3 + CAPA v2.13.1&lt;/b&gt;&lt;br&gt;capi-system, capa-system; EKS flavour only&lt;br&gt;Pod Identity: tenant-gokarna-cp-capa-controller&lt;br&gt;reuses Atmos cert-manager" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="340" y="330" width="280" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="capicrs" value="&lt;b&gt;CAPI objects (vela-system)&lt;/b&gt;&lt;br&gt;Cluster, AWSManagedControlPlane, AWSManagedCluster, MachinePool, AWSManagedMachinePool, NodeadmConfig&lt;br&gt;labelled by the owning Application" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="460" width="280" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="gw" value="&lt;b&gt;cluster-gateway&lt;/b&gt;&lt;br&gt;registered spokes by SpokeCluster name&lt;br&gt;gateway Secret: ServiceAccountToken minted from the spoke role (re-minted about every 12.5 min)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="hub">
+          <mxGeometry x="340" y="460" width="280" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_sc_ctrl" value="watch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="sc" target="ctrl" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_defs_ctrl" value="resolve" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="defs" target="ctrl" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ctrl_apps" value="renders, owns" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="ctrl" target="apps" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_apps_vela" value="reconcile" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="apps" target="velacore" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_vela_crs" value="apply" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="velacore" target="capicrs" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_crs_capa" value="reconcile" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="capicrs" target="capi" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_vela_gw" value="bootstrap Application via topology" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="velacore" target="gw" parent="hub">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="aws" value="AWS account 776719623202, us-west-2 (hub VPC vpc-0139f39b74825bd94 shared with the spoke)" style="swimlane;startSize=30;fillColor=#ffe6cc;strokeColor=#d79b00;html=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="950" y="40" width="760" height="860" as="geometry"/>
+        </mxCell>
+        <mxCell id="iam" value="&lt;b&gt;IAM (prefix tenant-gokarna-cp-)&lt;/b&gt;&lt;br&gt;capa-controller (+2 managed policies), eks-controlplane, eks-nodes, spoke-cpspoke1 (trusted by tenant-gokarna-cc-hub with externalId), flux-ecr (Pod Identity trust)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="aws">
+          <mxGeometry x="20" y="50" width="340" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ecr" value="&lt;b&gt;ECR&lt;/b&gt;&lt;br&gt;tenant-gokarna-cp-vela: vela-core images (one tag per branch head)&lt;br&gt;tenant-gokarna-cp/vela-core: OCI charts 0.1.0-cp.&amp;lt;sha&amp;gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;align=left;spacingLeft=6;fontSize=11;boundedLbl=1;" vertex="1" parent="aws">
+          <mxGeometry x="400" y="50" width="340" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="spoke" value="Spoke EKS: tenant-gokarna-cp-cpspoke1 (created by CAPA; API_AND_CONFIG_MAP; access entry grants the spoke role cluster admin; control plane ingress from the VPC CIDR)" style="swimlane;startSize=40;fillColor=#d5e8d4;strokeColor=#82b366;html=1;fontStyle=1;" vertex="1" parent="aws">
+          <mxGeometry x="20" y="190" width="720" height="640" as="geometry"/>
+        </mxCell>
+        <mxCell id="flux" value="&lt;b&gt;flux-system&lt;/b&gt;&lt;br&gt;source-controller v1.9.6, helm-controller v1.6.5&lt;br&gt;source-controller uses Pod Identity (tenant-gokarna-cp-flux-ecr) because pods cannot reach IMDS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="60" width="330" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="hr" value="&lt;b&gt;vela-system: HelmRepository + HelmRelease vela-core&lt;/b&gt;&lt;br&gt;chart version and image tag come from the plane on the hub; a plane edit upgrades or rolls back in under a minute" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="spoke">
+          <mxGeometry x="370" y="60" width="330" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="velaspoke" value="&lt;b&gt;vela-system: spoke runtime&lt;/b&gt;&lt;br&gt;vela-core, vela-core-cluster-core (spoke role), cluster-gateway (kept: cluster-core waits for the gateway at startup)&lt;br&gt;image tenant-gokarna-cp-vela:&amp;lt;tag&amp;gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="190" width="330" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="nodes" value="&lt;b&gt;Managed node group pool-0&lt;/b&gt;&lt;br&gt;2x m5.large, AL2023, hub VPC private subnets&lt;br&gt;addons: vpc-cni, coredns, kube-proxy, eks-pod-identity-agent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="spoke">
+          <mxGeometry x="370" y="190" width="330" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="future" value="Next slices on this spoke (not yet built): dispatch bundle and spoke-side renderer; clusterInit planes Kyverno and cert-manager; observability, database and validation planes; Cluster.status pulled by the hub" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;fontSize=11;fontColor=#555555;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="340" width="680" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_flux_hr" value="installs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="flux" target="hr" parent="spoke">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_hr_vela" value="release" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="hr" target="velaspoke" parent="spoke">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_flux_ecr" value="pull OCI chart" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="flux" target="ecr" parent="aws">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_nodes_ecr" value="pull images (node role)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="nodes" target="ecr" parent="aws">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_sc" value="apply" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="user" target="sc" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_defs" value="edit plane" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="user" target="defs" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_capa_spoke" value="creates and reconciles the EKS cluster" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;" edge="1" source="capi" target="spoke" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_capa_iam" value="Pod Identity, PassRole" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="capi" target="iam" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_ctrl_iam" value="AssumeRole spoke role (externalId), presigned token" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="ctrl" target="iam" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_gw_spoke" value="probe, discovery, proxy, Application dispatch" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;" edge="1" source="gw" target="spoke" parent="1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="legend" value="&lt;b&gt;Legend&lt;/b&gt;&lt;br&gt;solid: data or control path; dashed: identity, read or optional path&lt;br&gt;blue: hub; orange: AWS; green: spoke; purple: POC controller code; yellow: vela-core engine" style="text;html=1;align=left;verticalAlign=top;fontSize=11;fillColor=#ffffff;strokeColor=#999999;rounded=1;spacingLeft=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="740" width="640" height="70" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p2-provision-flow" name="02 Provision flow (code path)">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2700" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="t" value="&lt;b&gt;What happens when a SpokeCluster with mode: provision is applied (code blocks, left to right)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="0" y="-40" width="1200" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="l0" value="Fleet admin" style="swimlane;horizontal=0;startSize=110;fillColor=#f5f5f5;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="2640" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="l1" value="Admission (CRD CEL + webhook)" style="swimlane;horizontal=0;startSize=110;fillColor=#e8f4f8;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="150" width="2640" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="l2" value="SpokeCluster controller (vela-core-cluster-core, hub role)" style="swimlane;horizontal=0;startSize=110;fillColor=#fff0e6;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="300" width="2640" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="l3" value="vela-core (hub Application engine)" style="swimlane;horizontal=0;startSize=110;fillColor=#fff9e6;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="450" width="2640" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="l4" value="CAPA and AWS" style="swimlane;horizontal=0;startSize=110;fillColor=#e8f5e9;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="600" width="2640" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="l5" value="Spoke cluster" style="swimlane;horizontal=0;startSize=110;fillColor=#fce4ec;html=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="750" width="2640" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="n0" value="kubectl apply SpokeCluster&lt;br&gt;mode provision, blueprintRef eks-capi, credential aws (spoke role, externalId)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;" vertex="1" parent="l0">
+          <mxGeometry x="120" y="35" width="140" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="n1" value="Validate(): mode in connect|provision|adopt; provision and adopt need blueprintRef; connect must not carry infraProvisioning; bootstrap needs planeRef. ValidateTransition(): connect to provision forbidden" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l1">
+          <mxGeometry x="300" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n2" value="Reconcile(): add finalizer; mode switch: provision|adopt to reconcileProvision; connect with status.provisioning to releaseInfra; else reconcileConnect" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l2">
+          <mxGeometry x="480" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n3" value="resolveInfraComponents(): ClusterBlueprint to ClusterPlanes to components (planeComponents with plane prefix); rejects plane dependsOn and ref.revision" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l2">
+          <mxGeometry x="660" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n4" value="ensureOwnedApplication(): sc-&amp;lt;name&amp;gt;-infra-&amp;lt;uid8&amp;gt;[-n]; policies apply-once, retain-infra (gc never) unless infraDeletionPolicy delete, take-over only in adopt; owner reference" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l2">
+          <mxGeometry x="840" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n5" value="render eks-capi CUE to CAPI CRs; pre-dispatch dry run on the hub: objects that exist but are managed by no Application are refused" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l3">
+          <mxGeometry x="1020" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n5b" value="refusal path: Application workflowFailed; controller sets InfraProvisioned False (InfraUnmanagedExists) with a Warning event. Adopt mode adds take-over and claims the objects instead" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="l2">
+          <mxGeometry x="1020" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n6" value="CAPA reconciles AWSManagedControlPlane and AWSManagedMachinePool: EKS cluster, node group, access entry for the spoke role, addons, control plane ingress from the VPC CIDR (about 10 min)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l4">
+          <mxGeometry x="1200" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n7" value="healthPolicy on the component: control plane ready, so Application services healthy, phase running" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l3">
+          <mxGeometry x="1380" y="35" width="140" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="n8" value="summarizeAppHealth(): InfraProvisioned True (InfraReady), status.provisioning projected, event emitted; hand over to the connect path" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l2">
+          <mxGeometry x="1560" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n9" value="reconcileConnect(): credential cache (sts AssumeRole spoke role with externalId, eks DescribeCluster), gateway Secret, authenticated probe, discovery; Connected True" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l2">
+          <mxGeometry x="1740" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n9b" value="spoke API answers the probe with the spoke role token (cluster admin through the access entry)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l5">
+          <mxGeometry x="1740" y="35" width="140" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="n10" value="reconcileBootstrap() (only on a Connected pass): ClusterPlane foundation-runtime to Application sc-&amp;lt;name&amp;gt;-bootstrap; topology cpspoke1, gc never; Bootstrapped condition and status.bootstrap" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l2">
+          <mxGeometry x="1920" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n11" value="deploy step through cluster-gateway: namespaces, then flux (k8s-objects), then vela-core (helm-flux); each component dry-run before create" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l3">
+          <mxGeometry x="2100" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n12" value="Flux source-controller pulls the OCI chart from ECR (Pod Identity), helm-controller installs vela-core; HelmRelease Ready" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;" vertex="1" parent="l5">
+          <mxGeometry x="2280" y="25" width="140" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="n13" value="Bootstrapped True; all six conditions True; every later pass re-applies the bootstrap Application (repair) and re-probes" style="rounded=1;whiteSpace=wrap;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="l2">
+          <mxGeometry x="2460" y="35" width="140" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="e01" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n0" target="n1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" value="admitted" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n1" target="n2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e23" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n2" target="n3" parent="l2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e34" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n3" target="n4" parent="l2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e45" value="Application created" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n4" target="n5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e55b" value="unmanaged objects exist" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#b85450;" edge="1" source="n5" target="n5b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e56" value="CAPI CRs applied" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n5" target="n6" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e67" value="status ready" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n6" target="n7" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e78" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n7" target="n8" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e89" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n8" target="n9" parent="l2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e99b" value="probe" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="n9" target="n9b" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e910" value="Connected" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n9" target="n10" parent="l2"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e1011" value="Application created" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n10" target="n11" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e1112" value="objects applied on the spoke" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n11" target="n12" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e1213" value="healthy" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="n12" target="n13" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="note" value="Measured: EKS ACTIVE and control plane ready about 10 minutes after apply; Connected at 11 minutes; bootstrap (Flux plus vela-core on the spoke) about 10 minutes more; a plane version change reaches the spoke in under a minute." style="text;html=1;align=left;verticalAlign=top;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="120" y="910" width="1200" height="40" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p3-modes" name="03 Modes: connect, provision, adopt">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1400" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="t" value="&lt;b&gt;SpokeCluster modes and transitions (design section 8, proven by mode-harmony runs 3 and 4)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="1000" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="connect" value="&lt;b&gt;connect&lt;/b&gt;&lt;br&gt;existing cluster; the hub only registers, probes and (optionally) bootstraps; it never touches infrastructure" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="260" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="provision" value="&lt;b&gt;provision&lt;/b&gt;&lt;br&gt;the hub creates the infrastructure through the infra Application; pre-existing unmanaged objects are refused (InfraUnmanagedExists)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="760" y="100" width="260" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="adopt" value="&lt;b&gt;adopt&lt;/b&gt;&lt;br&gt;the hub claims existing or retained objects with the take-over policy and manages them from then on" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="400" y="320" width="260" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_c_a" value="connect to adopt: allowed" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="connect" target="adopt" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_p_a" value="provision to adopt: allowed" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="provision" target="adopt" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_a_c" value="release: adopt to connect. Application deleted under its gc never rule, app.oam.dev/name stripped, infra kept, status.provisioning cleared, infraIncarnation incremented" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="adopt" target="connect" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_p_c" value="release: provision to connect (same mechanics)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="provision" target="connect" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_c_p" value="connect to provision: FORBIDDEN (CEL oldSelf rule and webhook ValidateTransition); release first, then adopt" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;fontColor=#b85450;" edge="1" source="connect" target="provision" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="del_t" value="&lt;b&gt;Deleting the SpokeCluster&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="40" y="480" width="400" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="d1" value="infraDeletionPolicy: retain (default)&lt;br&gt;Application garbage collected with the owner; gc never means vela-core strips app.oam.dev/name and namespace labels and deletes nothing; EKS cluster and CAPI objects stay" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="40" y="520" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="d2" value="re-create with mode provision over the retained objects: refused, InfraProvisioned False (InfraUnmanagedExists), Warning event; the refusing SpokeCluster keeps its Application until deleted" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="400" y="520" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="d3" value="re-create with mode adopt: take-over claims the six CAPI objects; Connected in seconds; Application rendered under a new name because the SpokeCluster UID changed" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="760" y="520" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_d12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="d1" target="d2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_d13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="d1" target="d3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="naming" value="&lt;b&gt;Why the Application name carries a suffix&lt;/b&gt;&lt;br&gt;sc-&amp;lt;spoke&amp;gt;-infra-&amp;lt;uid8&amp;gt; for the first incarnation, then -&amp;lt;n&amp;gt; from status.infraIncarnation after each release. vela-core skips re-applying objects whose stale appRevision and render-hash labels match, so a re-adopt under the old name would own nothing (found in runs 2 and 3). A new name forces a new revision and a real apply. infraDeletionPolicy: delete removes the gc never rule, so the EKS cluster goes with the SpokeCluster." style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="660" width="1020" height="90" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p4-bootstrap-gates" name="04 Bootstrap upgrade and repair (vela-core gates)">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="t" value="&lt;b&gt;How a plane edit reaches the spoke, and why two vela-core gates had to change (slice 2a, proof run 3)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="1200" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="s0" value="Admin edits ClusterPlane foundation-runtime: vela-core component version and values.image.tag" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="400" y="50" width="260" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="s1" value="SpokeCluster controller (Connected pass): planeComponents, ensureOwnedApplication sc-&amp;lt;spoke&amp;gt;-bootstrap updated in place; vela-core creates a new ApplicationRevision" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="400" y="150" width="260" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="s2" value="vela-core deploy step: applyComponents(): health pre-check for every component and placement first" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="400" y="270" width="260" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="g1" value="Gate 1 (checkComponentHealth): ContainsResources (current OR root ResourceTracker) and live object healthy?" style="rhombus;whiteSpace=wrap;html=1;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="400" y="380" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="skip1" value="healthy: task skipped, nothing applied (old behaviour: a gc never resource lives in the root tracker across revisions, so a plane change never reached the spoke)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="40" y="395" width="300" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="s3" value="not healthy: todo task, apply(component) through ComponentApply" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="400" y="530" width="260" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="g2" value="Gate 2 (dispatcher.run healthCheck): contained and healthy, properties unchanged versus the current revision, no autoUpdate?" style="rhombus;whiteSpace=wrap;html=1;fontSize=10;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="400" y="630" width="260" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="skip2" value="requiresDispatch false: no Dispatch, live object keeps its old revision label; gate 1 flags it again next pass, dependents wait forever (seen live 12:10 UTC)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="40" y="650" width="300" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="s4" value="Dispatch: record in the ResourceTracker, Apply with three-way merge (skip when the render hash is equal); HelmRelease spec updated on the spoke" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="400" y="790" width="260" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="s5" value="Spoke: helm-controller upgrades the release, vela-core pods roll to the new image; Bootstrapped True on the new version (50 s measured; roll-back 40 s)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="400" y="910" width="260" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="fix" value="&lt;b&gt;Fix on the branch (e7a78917f, f276b1d0a, b13a12b9c)&lt;/b&gt;&lt;br&gt;markStaleRevision(): when the live workload or any live output is owned by this Application, is not under a read-only or apply-once &quot;*&quot; rule, and carries an app.oam.dev/appRevision label older than the current revision, report not healthy. Used by both gates, so a stale object is re-applied; unchanged objects stay a no-op because their render hash matches. Upstream issue candidate: deploy step never re-applies a component whose resources live in the root ResourceTracker (garbage-collect never or onAppDelete) after a new Application revision." style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="740" y="380" width="420" height="200" as="geometry"/>
+        </mxCell>
+        <mxCell id="repair" value="&lt;b&gt;Repair path (independent of the gates)&lt;/b&gt;&lt;br&gt;state-keep: about every five minutes vela-core compares the ResourceTracker's stored manifests with the live objects on the spoke and re-creates missing ones. Deleting the HelmRelease on the spoke brings it back in 160 to 270 s, then Flux reinstalls vela-core. This is why repair worked before the fix while upgrades did not." style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="740" y="620" width="420" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="hubdown" value="&lt;b&gt;Hub down&lt;/b&gt;&lt;br&gt;With the hub's vela-core at zero replicas for 150 s (and with the whole hub scaled to zero overnight by Atmos) the spoke's Flux and vela-core keep running and stay Ready: the runtime is pushed once and self-contained, the hub only repairs and upgrades it." style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="740" y="800" width="420" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="e01" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s0" target="s1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s1" target="s2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2g1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s2" target="g1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eg1skip" value="yes (before the fix)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;" edge="1" source="g1" target="skip1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eg1s3" value="no, or stale revision (fix)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="g1" target="s3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es3g2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s3" target="g2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eg2skip" value="yes (before the fix)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#b85450;" edge="1" source="g2" target="skip2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eg2s4" value="no, or stale revision (fix)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="g2" target="s4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es45" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s4" target="s5" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="efixg1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#82b366;" edge="1" source="fix" target="g1" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="efixg2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;strokeColor=#82b366;" edge="1" source="fix" target="g2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p5-vision" name="05 Vision: end state">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1250" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="t" value="&lt;b&gt;Vision: substrate-agnostic provisioning, self-sufficient spokes, mixed versions, tree topology (KEP Phase 2 end state)&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="1400" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="mgmt" value="Management cluster (hub of hubs, slice 7): the same SpokeCluster mechanics, one SpokeCluster per regional hub; a hub is a spoke with a provisioner installed" style="swimlane;startSize=30;fillColor=#f5f5f5;strokeColor=#666666;html=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="50" width="700" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="mgmt_sc" value="SpokeCluster hub-a (provision) and SpokeCluster hub-b (connect): infra Applications, bootstrap of vela plus CAPI or Crossplane on each hub" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;" vertex="1" parent="mgmt">
+          <mxGeometry x="20" y="45" width="660" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="contract" value="Substrate contract (proven with CAPI): a ComponentDefinition with scope cluster, one shared parameter block, outputs: cluster name and region, spoke role access entry, ready signal" style="swimlane;startSize=50;fillColor=#fff2cc;strokeColor=#d6b656;html=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="230" width="440" height="330" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub1" value="eks-capi (CAPA)&lt;br&gt;proven: provision, adopt, release, retain" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="contract">
+          <mxGeometry x="20" y="70" width="190" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub2" value="eks-crossplane (upbound AWS providers)&lt;br&gt;slice 4; adopt via managementPolicies Observe" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;" vertex="1" parent="contract">
+          <mxGeometry x="230" y="70" width="190" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub3" value="eks-ack (ACK EKS controller)&lt;br&gt;slice 5; adopt via the adoption annotation" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;" vertex="1" parent="contract">
+          <mxGeometry x="20" y="160" width="190" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="sub4" value="eks-terraform (tofu-controller)&lt;br&gt;later; outputs through read-object and export2secret" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="contract">
+          <mxGeometry x="230" y="160" width="190" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="subnote" value="Each new substrate is one CUE file plus one controller IAM role under Pod Identity; the SpokeCluster, controller, scripts and proofs do not change. Substrates that can emit Pod Identity associations (Crossplane, ACK) also provide the Flux registry identity the bootstrap needs." style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=top;fontSize=10;" vertex="1" parent="contract">
+          <mxGeometry x="20" y="235" width="400" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="hub" value="Hub (any vela cluster with the cluster-infrastructure feature gate): the hub never runs workloads for the spoke, it renders Applications" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="230" width="700" height="560" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_sc" value="&lt;b&gt;SpokeCluster&lt;/b&gt; (connect | provision | adopt): infraProvisioning.blueprintRef, bootstrap.planeRef, blueprintRef (planes to dispatch), credential; status pulled, never pushed" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="45" width="660" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_infra" value="&lt;b&gt;1 infraProvisioning&lt;/b&gt;&lt;br&gt;Application sc-&amp;lt;spoke&amp;gt;-infra-&amp;lt;uid8&amp;gt;[-n]: substrate components (any of the four); apply-once, retain; health to InfraProvisioned; hand over to connect" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="130" width="320" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_boot" value="&lt;b&gt;2 clusterInit, stage 0 (hub push)&lt;/b&gt;&lt;br&gt;Application sc-&amp;lt;spoke&amp;gt;-bootstrap from plane foundation-runtime: Flux then vela-core (version per spoke); repair only, never state sync" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="hub">
+          <mxGeometry x="360" y="130" width="320" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_dispatch" value="&lt;b&gt;3 dispatch (next: slice 2b)&lt;/b&gt;&lt;br&gt;Application sc-&amp;lt;spoke&amp;gt;-dispatch: a self-contained bundle (ClusterBlueprintRevision, every ClusterPlaneRevision with full content, a Cluster CR) pushed through the gateway; re-applied so a tampered bundle is restored; dry-run against the spoke first (version compatibility)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#6c8ebf;dashed=1;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="260" width="660" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_gw" value="cluster-gateway: the only path from hub to spoke; probe, discovery, Application dispatch" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="380" width="320" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_pull" value="&lt;b&gt;4 status pull (slice 3)&lt;/b&gt;: the connect probe also reads Cluster.status on the spoke and projects it as SpokeCluster.status.spoke (phases, plane health, validation verdict)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;strokeColor=#6c8ebf;dashed=1;" vertex="1" parent="hub">
+          <mxGeometry x="360" y="380" width="320" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="h_versions" value="Mixed versions (slice 6): the vela chart version and image tag are plane parameters; two spokes on two versions receive the same bundle; a spoke too old reports Incompatible (minEngineVersion) instead of rendering" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="hub">
+          <mxGeometry x="20" y="470" width="660" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="eh1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="h_sc" target="h_infra" parent="hub"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eh2" value="Connected" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="h_infra" target="h_boot" parent="hub"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eh3" value="Bootstrapped" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="h_boot" target="h_dispatch" parent="hub"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="eh4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="h_dispatch" target="h_gw" parent="hub"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="spoke" value="Spoke (self-sufficient: everything below runs with the hub unreachable)" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;html=1;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="230" width="540" height="860" as="geometry"/>
+        </mxCell>
+        <mxCell id="s_rt" value="&lt;b&gt;Runtime from stage 0&lt;/b&gt;: Flux (source and helm controllers), vela-core, vela-cluster-core (spoke role), cluster-gateway" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="45" width="500" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="s_bundle" value="&lt;b&gt;Bundle received&lt;/b&gt;: Cluster CR names a ClusterBlueprintRevision; ClusterPlaneRevisions carry full plane content; immutable, restored by the hub if tampered" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="130" width="500" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="s_render" value="&lt;b&gt;vela-cluster-core (spoke role)&lt;/b&gt; watches clusters.core.oam.dev, resolves blueprint to plane revisions, renders one Application per plane named cluster-&amp;lt;plane&amp;gt;; plane dependsOn becomes depends-on-app steps; no apply-once, so drift self-heals" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="215" width="500" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="p_policy" value="clusterInit: foundation-policy (Kyverno + baseline ClusterPolicies)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="340" width="240" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p_certs" value="clusterInit: foundation-certs (cert-manager)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="280" y="340" width="240" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="p_obs" value="planeProvisioning: observability (kube-prometheus-stack, Loki + Promtail, ServiceMonitor for vela-core)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="440" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p_db" value="planeProvisioning: database (CloudNativePG operator, then a 2-instance Postgres cluster; intra-plane dependsOn)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="280" y="440" width="240" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p_val" value="healthValidation: validation plane (smoke Job: Prometheus up, Postgres connect; PrometheusRule for vela-core) writes the verdict" style="rounded=1;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="550" width="500" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="s_status" value="&lt;b&gt;Cluster.status&lt;/b&gt;: phase Ready when every plane Application is healthy and validation passes; read by the hub on demand, never pushed" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="650" width="500" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="s_tree" value="Tree topology (slice 7): a spoke that carries a provisioner (CAPI, Crossplane or ACK as a plane) becomes a hub for its own SpokeClusters; vela in every cluster, same CRDs" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f5f5f5;strokeColor=#666666;dashed=1;" vertex="1" parent="spoke">
+          <mxGeometry x="20" y="750" width="500" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="es1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s_bundle" target="s_render" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s_render" target="p_policy" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="s_render" target="p_certs" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es4" value="dependsOn" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="p_policy" target="p_obs" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es5" value="dependsOn" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="p_certs" target="p_db" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="p_obs" target="p_val" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="p_db" target="p_val" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="es8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="p_val" target="s_status" parent="spoke"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_mgmt_hub" value="manages the hub like a spoke" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="mgmt" target="hub" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_contract_infra" value="any substrate behind the same contract" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" source="contract" target="h_infra" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_gw_spoke" value="push: bootstrap and bundle; pull: probe and Cluster.status" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;" edge="1" source="h_gw" target="s_bundle" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e_status_pull" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;" edge="1" source="s_status" target="h_pull" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram id="p6-lifecycle" name="06 Vision: lifecycle phases">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="t" value="&lt;b&gt;The four lifecycle phases of a provisioned spoke, who runs each one, and where the POC stands&lt;/b&gt;" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;" vertex="1" parent="1">
+          <mxGeometry x="40" y="0" width="1400" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="ph1" value="&lt;b&gt;1 infraProvisioning&lt;/b&gt;&lt;br&gt;&lt;br&gt;Runs on: the hub (vela-core renders the substrate ComponentDefinition)&lt;br&gt;Objects: SpokeCluster, ClusterBlueprint, ClusterPlane, Application sc-&amp;lt;spoke&amp;gt;-infra-&amp;lt;uid8&amp;gt;[-n], substrate CRs, the cluster itself&lt;br&gt;Ends with: InfraProvisioned True, hand-over to connect (credential, gateway Secret, probe, discovery), Connected True&lt;br&gt;Modes: provision creates, adopt claims, connect skips the phase; release returns to connect&lt;br&gt;&lt;br&gt;&lt;b&gt;Status: proven (CAPI); Crossplane and ACK pending&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="360" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="ph2" value="&lt;b&gt;2 clusterInit&lt;/b&gt;&lt;br&gt;&lt;br&gt;Stage 0, hub push: Application sc-&amp;lt;spoke&amp;gt;-bootstrap from plane foundation-runtime (namespaces, Flux, vela-core via helm-flux); Bootstrapped True; repaired and upgraded from the hub&lt;br&gt;Stage 1, spoke-reconciled from the bundle: foundation-policy (Kyverno), foundation-certs (cert-manager)&lt;br&gt;Why: nothing on a fresh cluster can reconcile a plane until vela is there; later planes run under policy and need issuers&lt;br&gt;&lt;br&gt;&lt;b&gt;Status: stage 0 proven (slice 2a); stage 1 next (slice 2b)&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="460" y="60" width="360" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="ph3" value="&lt;b&gt;3 planeProvisioning&lt;/b&gt;&lt;br&gt;&lt;br&gt;Runs on: the spoke (vela-cluster-core spoke role renders one Application per plane from the ClusterPlaneRevisions in the bundle)&lt;br&gt;Planes: observability (kube-prometheus-stack, Loki), database (CloudNativePG operator and instance); plane-level dependsOn becomes depends-on-app workflow steps&lt;br&gt;Drift control: no apply-once on the spoke, vela-core self-heals the workloads&lt;br&gt;Versions: chart versions pinned per blueprint revision&lt;br&gt;&lt;br&gt;&lt;b&gt;Status: slice 3&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="880" y="60" width="360" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="ph4" value="&lt;b&gt;4 healthValidation&lt;/b&gt;&lt;br&gt;&lt;br&gt;Runs on: the spoke (validation plane: smoke-test Job and PrometheusRule)&lt;br&gt;Result: Cluster.status.phase Ready when every plane Application is healthy and the validation passes&lt;br&gt;Hub side: the connect probe reads Cluster.status on demand and projects SpokeCluster.status.spoke; nothing is pushed back&lt;br&gt;&lt;br&gt;&lt;b&gt;Status: slice 3&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="60" width="360" height="300" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" value="Connected" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;" edge="1" source="ph1" target="ph2" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e23" value="Bootstrapped, bundle dispatched" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;" edge="1" source="ph2" target="ph3" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e34" value="planes healthy" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeWidth=2;" edge="1" source="ph3" target="ph4" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="who" value="&lt;b&gt;Who pushes, who pulls&lt;/b&gt;&lt;br&gt;Hub pushes exactly three things through the gateway: the substrate Application (on the hub itself), the bootstrap Application, the dispatch bundle. Everything else is reconciled on the spoke. The hub pulls status through the probe. A hub outage, a weekly nuke of the hub or a nightly scale-to-zero leaves the spoke running; re-adoption or re-bootstrap from a rebuilt hub restores management without touching workloads." style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f5f5f5;strokeColor=#666666;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="400" width="800" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="claims" value="&lt;b&gt;The five claims the POC must prove&lt;/b&gt;&lt;br&gt;1 four lifecycle phases: 1 proven, 2 half, 3 and 4 pending&lt;br&gt;2 spoke self-sufficiency via Applications: runtime proven, planes pending (2b, 3)&lt;br&gt;3 substrate agnosticism: contract proven with CAPI; Crossplane (4), ACK (5), Terraform later&lt;br&gt;4 mixed vela versions per spoke: mechanism proven (plane parameter, upgrade and roll-back under a minute); two spokes at once pending (6)&lt;br&gt;5 tree topology: pending (7)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#f5f5f5;strokeColor=#666666;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="880" y="400" width="780" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="lessons" value="&lt;b&gt;Lessons that shaped the design (all hit live)&lt;/b&gt;&lt;br&gt;Per-incarnation Application names (vela-core skips objects with stale revision markers) · namespaces in their own plane component (dry run per component) · Pod Identity for Flux on EKS (no IMDS from pods) · a gateway on every spoke (cluster-core waits for it) · gc never resources need the stale-revision re-apply in both vela-core gates · same-VPC hubs need a control plane ingress rule · retain must be a policy, never a default delete" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="40" y="560" width="1620" height="100" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
