@@ -137,6 +137,13 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 	status := sc.Status.DeepCopy()
 	status.ObservedGeneration = sc.Generation
 
+	// Before anything that can fail: a spoke whose spec.bootstrap was removed must drop its
+	// bootstrap Application and projection whether or not this pass can reach it, or a
+	// spoke that is down would keep a stale Bootstrapped=True until it came back.
+	if sc.Spec.Bootstrap == nil {
+		r.forgetBootstrap(ctx, sc, status)
+	}
+
 	// Re-check admission rules even when the validating webhook is Ignore (job-patch
 	// bootstrap window) or disabled. A stored adopt, local or azure object must not
 	// register a gateway Secret; a provision or adopt object reaches this point only after
@@ -303,8 +310,9 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 		observeInventory(sc, info)
 	}
 
-	// Every failure path above returned already, so this runs only on a pass that observed
-	// the spoke Connected: the runtime is rendered at a spoke the hub can reach, never ahead.
+	// Every failure path above returned already, so the render arm runs only on a pass that
+	// observed the spoke Connected: the runtime is rendered at a spoke the hub can reach,
+	// never ahead. The forget arm ran at the top of this function instead.
 	r.reconcileBootstrap(ctx, sc, status)
 
 	return r.finish(ctx, sc, status, nextRequeue(sc, materialized), nil)

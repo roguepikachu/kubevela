@@ -46,6 +46,15 @@ func bootstrapSpoke(name string) *v1beta1.SpokeCluster {
 	return sc
 }
 
+// bootstrappedSpoke is a spoke an earlier pass left Bootstrapped: projection set and the
+// condition True. Callers decide whether spec.bootstrap is still present.
+func bootstrappedSpoke(name string) *v1beta1.SpokeCluster {
+	sc := bootstrapSpoke(name)
+	sc.Status.Bootstrap = &v1beta1.ProvisioningStatus{ApplicationName: bootstrapAppName(sc), Phase: "running", Healthy: true, Message: "2/2 components healthy"}
+	setCondition(&sc.Status, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionTrue, reasonBootstrapped, "2/2 components healthy")
+	return sc
+}
+
 // bootstrapPlane is the two-component runtime plane: Flux first, then vela-core through
 // a Flux HelmRelease that depends on it.
 func bootstrapPlane(ns string) *v1beta1.ClusterPlane {
@@ -85,9 +94,9 @@ func bootstrapAppExists(r *Reconciler, sc *v1beta1.SpokeCluster) bool {
 	return true
 }
 
-// ownedBootstrapApp is a bootstrap Application as an earlier pass would have left it:
-// owned by the spoke, with both runtime components reported healthy and running.
-func ownedBootstrapApp(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Application {
+// bootstrapAppOwnedBy is a bootstrap Application named for sc but controlled by owner,
+// with both runtime components reported healthy and running.
+func bootstrapAppOwnedBy(t GinkgoTInterface, sc, owner *v1beta1.SpokeCluster) *v1beta1.Application {
 	t.Helper()
 	app := &v1beta1.Application{
 		ObjectMeta: metav1.ObjectMeta{Name: bootstrapAppName(sc), Namespace: sc.Namespace},
@@ -103,10 +112,35 @@ func ownedBootstrapApp(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Ap
 			},
 		},
 	}
-	if err := controllerutil.SetControllerReference(sc, app, testScheme(t)); err != nil {
+	if err := controllerutil.SetControllerReference(owner, app, testScheme(t)); err != nil {
 		t.Fatalf("failed to set controller reference: %v", err)
 	}
 	return app
+}
+
+// ownedBootstrapApp is a bootstrap Application as an earlier pass would have left it.
+func ownedBootstrapApp(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Application {
+	t.Helper()
+	return bootstrapAppOwnedBy(t, sc, sc)
+}
+
+// foreignBootstrapApp is a same-named Application another SpokeCluster controls.
+func foreignBootstrapApp(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Application {
+	t.Helper()
+	other := spokeIn("other", sc.Namespace, v1beta1.SpokeDeletionPolicyDetach)
+	return bootstrapAppOwnedBy(t, sc, other)
+}
+
+func failingProbe(context.Context, *v1beta1.SpokeCluster) (time.Duration, error) {
+	return 0, errors.New("dial tcp: i/o timeout")
+}
+
+func eventReasons(rec *recordingRecorder) []string {
+	reasons := make([]string, 0, len(rec.events))
+	for _, e := range rec.events {
+		reasons = append(reasons, string(e.Reason))
+	}
+	return reasons
 }
 
 var _ = DescribeTable("BootstrapAppNameIsDeterministic", func(spokeName, want, wantSuffix string) {
@@ -163,7 +197,7 @@ var _ = It("BootstrapRendersPlaneIntoGatewayTargetedApplication", func() {
 	Expect(app.Spec.Policies[1].Type).To(Equal("garbage-collect"))
 	Expect(string(app.Spec.Policies[1].Properties.Raw)).To(MatchJSON(`{"rules":[{"selector":{"componentNames":["flux","vela"]},"strategy":"never"}]}`))
 	for _, p := range app.Spec.Policies {
-		Expect(p.Type).NotTo(BeElementOf("apply-once", "take-over"), "the runtime is repaired, not applied once or adopted")
+		Expect(p.Type).NotTo(BeElementOf("apply-once", "take-over"), "the runtime is re-applied, not applied once or adopted")
 	}
 
 	latest := readSpoke(t, r, sc)
@@ -210,10 +244,12 @@ var _ = DescribeTable("BootstrapProjectsApplicationHealth", func(tc bootstrapHea
 		bootstrapHealthCase{phase: common.ApplicationWorkflowFailed, velaHealth: false, wantStatus: metav1.ConditionFalse, wantReason: reasonBootstrapFailed}),
 )
 
+// A plane that disappears after a successful bootstrap must not leave the projection
+// claiming healthy under a False condition.
 var _ = It("BootstrapMissingPlaneNeverStopsProbing", func() {
 	t := GinkgoT()
-	sc := bootstrapSpoke("cpspoke1")
-	r := connectedReconciler(t, sc)
+	sc := bootstrappedSpoke("cpspoke1")
+	r := connectedReconciler(t, sc, ownedBootstrapApp(t, sc))
 
 	_, err := reconcileOnce(t, r, sc)
 	Expect(err).NotTo(HaveOccurred(), "bootstrap problems are state to report, not a controller fault")
@@ -224,7 +260,11 @@ var _ = It("BootstrapMissingPlaneNeverStopsProbing", func() {
 	cond := meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
 	Expect(cond.Message).To(ContainSubstring("reading ClusterPlane " + sc.Namespace + "/" + bootstrapPlaneName))
 	Expect(cond.Message).To(ContainSubstring("not found"))
-	Expect(bootstrapAppExists(r, sc)).To(BeFalse(), "nothing is rendered without a plane")
+	Expect(latest.Status.Bootstrap).NotTo(BeNil())
+	Expect(latest.Status.Bootstrap.ApplicationName).To(Equal("sc-cpspoke1-bootstrap"), "the known Application name is kept")
+	Expect(latest.Status.Bootstrap.Healthy).To(BeFalse(), "no stale healthy under a False condition")
+	Expect(latest.Status.Bootstrap.Message).To(Equal(cond.Message))
+	Expect(bootstrapAppExists(r, sc)).To(BeTrue(), "an unresolved plane does not touch the Application already rendered")
 })
 
 var _ = It("BootstrapEmptyPlaneIsUnresolved", func() {
@@ -241,17 +281,21 @@ var _ = It("BootstrapEmptyPlaneIsUnresolved", func() {
 	wantCondition(t, latest, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionFalse, reasonBootstrapPlaneUnresolved)
 	cond := meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
 	Expect(cond.Message).To(ContainSubstring("has no components"))
+	Expect(latest.Status.Bootstrap).NotTo(BeNil())
+	Expect(latest.Status.Bootstrap.ApplicationName).To(BeEmpty(), "nothing was rendered, so no name is known")
+	Expect(latest.Status.Bootstrap.Healthy).To(BeFalse())
+	Expect(latest.Status.Bootstrap.Message).To(Equal(cond.Message))
 	Expect(bootstrapAppExists(r, sc)).To(BeFalse())
 })
 
 var _ = It("BootstrapRemovedFromSpecDeletesApplication", func() {
 	t := GinkgoT()
-	sc := bootstrapSpoke("cpspoke1")
+	sc := bootstrappedSpoke("cpspoke1")
 	app := ownedBootstrapApp(t, sc)
 	sc.Spec.Bootstrap = nil
-	sc.Status.Bootstrap = &v1beta1.ProvisioningStatus{ApplicationName: app.Name, Phase: "running", Healthy: true}
-	setCondition(&sc.Status, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionTrue, reasonBootstrapped, "2/2 components healthy")
 	r := connectedReconciler(t, sc, bootstrapPlane(sc.Namespace), app)
+	rec := &recordingRecorder{}
+	r.record = rec
 
 	_, err := reconcileOnce(t, r, sc)
 	Expect(err).NotTo(HaveOccurred())
@@ -261,6 +305,95 @@ var _ = It("BootstrapRemovedFromSpecDeletesApplication", func() {
 	Expect(meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)).To(BeNil())
 	Expect(latest.Status.Bootstrap).To(BeNil())
 	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
+	Expect(eventReasons(rec)).To(ContainElement(reasonBootstrapReleased))
+})
+
+// Forgetting must not wait for a probe: a spoke that is down when spec.bootstrap is
+// removed would otherwise keep its Application and a stale Bootstrapped=True.
+var _ = It("BootstrapRemovedFromSpecIsForgottenWhileDisconnected", func() {
+	t := GinkgoT()
+	sc := bootstrappedSpoke("cpspoke1")
+	app := ownedBootstrapApp(t, sc)
+	sc.Spec.Bootstrap = nil
+	r := connectedReconciler(t, sc, bootstrapPlane(sc.Namespace), app)
+	r.probeFn = failingProbe
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionFalse, reasonProbeFailed)
+	Expect(bootstrapAppExists(r, sc)).To(BeFalse())
+	Expect(meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)).To(BeNil())
+	Expect(latest.Status.Bootstrap).To(BeNil())
+})
+
+var _ = It("BootstrapForgetLeavesForeignApplicationAlone", func() {
+	t := GinkgoT()
+	sc := bootstrappedSpoke("cpspoke1")
+	app := foreignBootstrapApp(t, sc)
+	sc.Spec.Bootstrap = nil
+	r := connectedReconciler(t, sc, app)
+	rec := &recordingRecorder{}
+	r.record = rec
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	Expect(bootstrapAppExists(r, sc)).To(BeTrue(), "another owner's Application is not this spoke's to delete")
+	latest := readSpoke(t, r, sc)
+	Expect(meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)).To(BeNil())
+	Expect(latest.Status.Bootstrap).To(BeNil(), "the projection is still dropped: this spoke no longer claims a runtime")
+	Expect(eventReasons(rec)).NotTo(ContainElement(reasonBootstrapReleased), "nothing was released")
+})
+
+var _ = It("BootstrapFailsWhenApplicationIsOwnedElsewhere", func() {
+	t := GinkgoT()
+	sc := bootstrapSpoke("cpspoke1")
+	app := foreignBootstrapApp(t, sc)
+	r := connectedReconciler(t, sc, bootstrapPlane(sc.Namespace), app)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionTrue, reasonProbeSucceeded)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionFalse, reasonBootstrapFailed)
+	cond := meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
+	Expect(cond.Message).To(ContainSubstring("already owned"))
+	Expect(latest.Status.Bootstrap).NotTo(BeNil())
+	Expect(latest.Status.Bootstrap.ApplicationName).To(Equal("sc-cpspoke1-bootstrap"), "the name this pass tried to apply")
+	Expect(latest.Status.Bootstrap.Healthy).To(BeFalse())
+	Expect(latest.Status.Bootstrap.Message).To(Equal(cond.Message))
+
+	kept := readBootstrapApp(t, r, sc)
+	Expect(kept.OwnerReferences[0].Name).To(Equal("other"), "the foreign Application is left as it was")
+	Expect(kept.Labels).NotTo(HaveKey(labelSpokeRole))
+})
+
+var _ = It("BootstrapWaitsForTerminatingApplication", func() {
+	t := GinkgoT()
+	sc := bootstrappedSpoke("cpspoke1")
+	app := ownedBootstrapApp(t, sc)
+	now := metav1.Now()
+	app.DeletionTimestamp = &now
+	app.Finalizers = []string{"test.kubevela.io/hold"}
+	r := connectedReconciler(t, sc, bootstrapPlane(sc.Namespace), app)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionFalse, reasonBootstrapping)
+	cond := meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
+	Expect(cond.Message).To(Equal("previous bootstrap Application is terminating"))
+	Expect(latest.Status.Bootstrap).NotTo(BeNil())
+	Expect(latest.Status.Bootstrap.ApplicationName).To(Equal("sc-cpspoke1-bootstrap"))
+	Expect(latest.Status.Bootstrap.Healthy).To(BeFalse())
+
+	untouched := readBootstrapApp(t, r, sc)
+	Expect(untouched.ResourceVersion).To(Equal(app.ResourceVersion), "a terminating Application is not mutated")
+	Expect(untouched.Labels).NotTo(HaveKey(labelSpokeRole))
 })
 
 var _ = It("BootstrapWithoutSpecOrProjectionTouchesNothing", func() {
@@ -277,14 +410,13 @@ var _ = It("BootstrapWithoutSpecOrProjectionTouchesNothing", func() {
 	Expect(bootstrapAppExists(r, sc)).To(BeFalse())
 })
 
-var _ = It("BootstrapSkippedWhenProbeFails", func() {
+// The render arm runs only on a Connected pass: a failed probe renders nothing and leaves
+// whatever Bootstrapped said before in place.
+var _ = It("BootstrapRenderSkippedWhenProbeFails", func() {
 	t := GinkgoT()
-	sc := bootstrapSpoke("cpspoke1")
-	setCondition(&sc.Status, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionTrue, reasonBootstrapped, "2/2 components healthy")
+	sc := bootstrappedSpoke("cpspoke1")
 	r := connectedReconciler(t, sc, bootstrapPlane(sc.Namespace))
-	r.probeFn = func(context.Context, *v1beta1.SpokeCluster) (time.Duration, error) {
-		return 0, errors.New("dial tcp: i/o timeout")
-	}
+	r.probeFn = failingProbe
 
 	_, err := reconcileOnce(t, r, sc)
 	Expect(err).NotTo(HaveOccurred())
@@ -292,6 +424,7 @@ var _ = It("BootstrapSkippedWhenProbeFails", func() {
 	latest := readSpoke(t, r, sc)
 	wantCondition(t, latest, v1beta1.SpokeClusterConditionConnected, metav1.ConditionFalse, reasonProbeFailed)
 	wantCondition(t, latest, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionTrue, reasonBootstrapped)
+	Expect(latest.Status.Bootstrap).To(Equal(sc.Status.Bootstrap), "the projection is left as the last Connected pass wrote it")
 	Expect(bootstrapAppExists(r, sc)).To(BeFalse(), "an unreachable spoke gets no runtime rendered at it")
 })
 
@@ -308,6 +441,7 @@ var _ = It("BootstrapIsReappliedInPlace", func() {
 	Expect(err).NotTo(HaveOccurred())
 	second := readBootstrapApp(t, r, sc)
 	Expect(second.UID).To(Equal(first.UID), "the same Application is updated, never recreated")
+	Expect(second.ResourceVersion).To(Equal(first.ResourceVersion), "an unchanged render issues no Update")
 
 	apps := &v1beta1.ApplicationList{}
 	Expect(r.List(context.Background(), apps, client.InNamespace(sc.Namespace))).To(Succeed())

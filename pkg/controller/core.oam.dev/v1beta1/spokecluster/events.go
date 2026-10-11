@@ -63,6 +63,8 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //   - Bootstrapped True, or False/Bootstrapping (new): Normal Bootstrapped / Bootstrapping
 //   - Bootstrapped False, any other reason (new): Warning BootstrapFailed /
 //     BootstrapPlaneUnresolved
+//   - Bootstrapped removed after spec.bootstrap was dropped: Normal BootstrapReleased,
+//     emitted from forgetBootstrap itself for the same reason as InfraReleased
 //
 // Connection -> Unknown deliberately has no event of its own. It is always the
 // consequence of a credential or registration failure that already emitted, so a second

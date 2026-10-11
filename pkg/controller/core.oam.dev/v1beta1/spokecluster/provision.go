@@ -77,8 +77,7 @@ const (
 // are persisted on the object: the UID by the API server and the counter in status. The
 // counter is omitted from the name while it is zero, so first-incarnation names are
 // unchanged. An object without a UID (built directly in a test) falls back to the plain
-// name. The base is truncated when needed so the whole stays a valid DNS-1123 label with
-// the suffix intact and no hyphen left dangling at the cut.
+// name. See dnsLabel for how a long spoke name is cut.
 func infraAppName(sc *v1beta1.SpokeCluster) string {
 	base := "sc-" + sc.Name + "-infra"
 	uid := string(sc.UID)
@@ -92,6 +91,13 @@ func infraAppName(sc *v1beta1.SpokeCluster) string {
 	if sc.Status.InfraIncarnation != 0 {
 		suffix += "-" + strconv.Itoa(int(sc.Status.InfraIncarnation))
 	}
+	return dnsLabel(base, suffix)
+}
+
+// dnsLabel joins base and suffix into a DNS-1123 label. The suffix is kept whole, because
+// it is what tells same-named Applications apart; the base is truncated when needed, and
+// a hyphen left dangling at the cut is trimmed so the result stays a valid label.
+func dnsLabel(base, suffix string) string {
 	if len(base)+len(suffix) > dnsLabelMaxLen {
 		base = strings.TrimRight(base[:dnsLabelMaxLen-len(suffix)], "-")
 	}
@@ -133,7 +139,7 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		return r.finish(ctx, sc, status, 0, err)
 	}
 
-	healthy, summary := summarizeInfraHealth(app, comps)
+	healthy, summary := summarizeAppHealth(app, comps)
 	status.Provisioning = &v1beta1.ProvisioningStatus{
 		ApplicationName: app.Name,
 		Phase:           string(app.Status.Phase),
@@ -146,13 +152,13 @@ func (r *Reconciler) reconcileProvision(ctx context.Context, sc *v1beta1.SpokeCl
 		// still reports unhealthy, will not recover on its own, so it gets a reason an
 		// operator can alert on without parsing the message.
 		reason, connMsg := reasonProvisioning, "cluster is still being provisioned"
-		if infraAppFailed(app.Status.Phase) {
+		if appPhaseFailed(app.Status.Phase) {
 			reason, connMsg = reasonInfraUnhealthy, "infrastructure Application is unhealthy"
 		}
 		// Provision renders without take-over, so a cluster that already exists outside
 		// any application fails the dispatch dry run. Retrying cannot fix that; naming
 		// the mode that can is the whole value of the distinct reason. Checked on any
-		// phase rather than only after infraAppFailed: the step message is set the moment
+		// phase rather than only after appPhaseFailed: the step message is set the moment
 		// the dry run refuses, while the Application may sit in runningWorkflow for a
 		// while before vela-core gives up on the step.
 		if sc.Spec.Mode == v1beta1.SpokeClusterModeProvision && unmanagedObjectsExist(app) {
@@ -241,25 +247,34 @@ func (r *Reconciler) ensureInfraApplication(ctx context.Context, sc *v1beta1.Spo
 	if err != nil {
 		return nil, err
 	}
-	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: infraAppName(sc), Namespace: sc.Namespace}}
+	return r.ensureOwnedApplication(ctx, sc, infraAppName(sc), roleInfra, comps, policies)
+}
+
+// ensureOwnedApplication creates or updates one Application the SpokeCluster controls:
+// labelled back to the spoke by name, role and UID, carrying exactly comps and policies,
+// with sc as its controller reference. The UID label is what ties an Application back to
+// one SpokeCluster object when the name carries at most a prefix of the UID, or none at
+// all. SetControllerReference refuses an Application another controller already owns, so
+// a same-named foreign Application surfaces as an error rather than being taken over.
+func (r *Reconciler) ensureOwnedApplication(ctx context.Context, sc *v1beta1.SpokeCluster, name, role string,
+	comps []common.ApplicationComponent, policies []v1beta1.AppPolicy) (*v1beta1.Application, error) {
+	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: sc.Namespace}}
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, app, func() error {
 		if app.Labels == nil {
 			app.Labels = map[string]string{}
 		}
 		app.Labels[labelSpokeName] = sc.Name
-		app.Labels[labelSpokeRole] = roleInfra
-		// The UID label is what ties an Application back to one SpokeCluster object once
-		// the name carries only a prefix of the UID.
+		app.Labels[labelSpokeRole] = role
 		app.Labels[labelSpokeUID] = string(sc.UID)
 		app.Spec.Components = comps
 		app.Spec.Policies = policies
 		return controllerutil.SetControllerReference(sc, app, r.Scheme)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("applying infra Application %s/%s: %w", sc.Namespace, infraAppName(sc), err)
+		return nil, fmt.Errorf("applying %s Application %s/%s: %w", role, sc.Namespace, name, err)
 	}
 	if op != controllerutil.OperationResultNone {
-		klog.InfoS("Infra Application reconciled", "spokecluster", klog.KObj(sc), "application", app.Name, "op", op)
+		klog.InfoS("Application reconciled", "spokecluster", klog.KObj(sc), "application", app.Name, "role", role, "op", op)
 	}
 	return app, nil
 }
@@ -300,6 +315,21 @@ func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent
 	if sc.Spec.InfraDeletionPolicy == v1beta1.InfraDeletionPolicyDelete {
 		return policies, nil
 	}
+	retain, err := retainPolicy("retain-infra", comps)
+	if err != nil {
+		return nil, err
+	}
+	return append(policies, retain), nil
+}
+
+// retainPolicy is a garbage-collect policy whose single rule never recycles any of comps:
+// when the Application goes, vela-core strips its labels from the objects those components
+// rendered and deletes nothing. hasRetainRule in release.go is the reader for this shape.
+func retainPolicy(name string, comps []common.ApplicationComponent) (v1beta1.AppPolicy, error) {
+	names := make([]string, 0, len(comps))
+	for _, c := range comps {
+		names = append(names, c.Name)
+	}
 	gc, err := json.Marshal(map[string]any{
 		"rules": []map[string]any{{
 			"selector": map[string]any{"componentNames": names},
@@ -307,11 +337,9 @@ func infraPolicies(sc *v1beta1.SpokeCluster, comps []common.ApplicationComponent
 		}},
 	})
 	if err != nil {
-		return nil, err
+		return v1beta1.AppPolicy{}, err
 	}
-	return append(policies, v1beta1.AppPolicy{
-		Name: "retain-infra", Type: "garbage-collect", Properties: &runtime.RawExtension{Raw: gc},
-	}), nil
+	return v1beta1.AppPolicy{Name: name, Type: "garbage-collect", Properties: &runtime.RawExtension{Raw: gc}}, nil
 }
 
 // unmanagedObjectsExist reports whether vela-core refused the dispatch because the
@@ -336,11 +364,12 @@ func unmanagedObjectsExist(app *v1beta1.Application) bool {
 	return false
 }
 
-// infraAppFailed reports whether the Application has reached a phase it will not leave
+// appPhaseFailed reports whether the Application has reached a phase it will not leave
 // without intervention, as opposed to one it is still working through. workflowSuspending
 // counts as failed because vela-core's EnableSuspendOnFailure gate parks a failed workflow
-// in suspending instead of workflowFailed, and nobody suspends an infra workflow on purpose.
-func infraAppFailed(phase common.ApplicationPhase) bool {
+// in suspending instead of workflowFailed, and nobody suspends an infra or bootstrap
+// workflow on purpose.
+func appPhaseFailed(phase common.ApplicationPhase) bool {
 	switch phase {
 	case common.ApplicationWorkflowFailed, common.ApplicationWorkflowTerminated, common.ApplicationWorkflowSuspending, common.ApplicationUnhealthy:
 		return true
@@ -348,11 +377,11 @@ func infraAppFailed(phase common.ApplicationPhase) bool {
 	return false
 }
 
-// summarizeInfraHealth reports whether every expected component is healthy and the
+// summarizeAppHealth reports whether every expected component is healthy and the
 // Application is running, with a one-line summary for the condition message. Services
 // are matched by the component names this pass rendered, so a stale entry left behind
 // by a component that was since removed from the plane cannot make the count add up.
-func summarizeInfraHealth(app *v1beta1.Application, comps []common.ApplicationComponent) (bool, string) {
+func summarizeAppHealth(app *v1beta1.Application, comps []common.ApplicationComponent) (bool, string) {
 	expected := make(map[string]struct{}, len(comps))
 	for _, c := range comps {
 		expected[c.Name] = struct{}{}

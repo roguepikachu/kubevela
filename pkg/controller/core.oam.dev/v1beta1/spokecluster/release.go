@@ -119,9 +119,10 @@ func (r *Reconciler) releaseInfra(ctx context.Context, sc *v1beta1.SpokeCluster)
 	return r.reconcileConnect(ctx, sc)
 }
 
-// retainPolicy is the shape of a garbage-collect policy's properties that release cares
-// about: which components each rule selects and what it does with their resources.
-type retainPolicy struct {
+// gcPolicyProperties is the shape of a garbage-collect policy's properties that release
+// cares about: which components each rule selects and what it does with their resources.
+// retainPolicy in provision.go is the writer of this shape.
+type gcPolicyProperties struct {
 	Rules []struct {
 		Strategy string `json:"strategy"`
 		Selector struct {
@@ -141,7 +142,7 @@ func hasRetainRule(app *v1beta1.Application) bool {
 		if p.Type != "garbage-collect" || p.Properties == nil {
 			continue
 		}
-		var policy retainPolicy
+		var policy gcPolicyProperties
 		if err := json.Unmarshal(p.Properties.Raw, &policy); err != nil {
 			continue
 		}
