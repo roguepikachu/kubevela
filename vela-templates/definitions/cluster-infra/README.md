@@ -36,6 +36,10 @@ Health and status: `healthPolicy` must default `isHealth` to `false` when the pr
 has no status yet, and `customStatus.message` must be a CUE default so a failure message can
 override it. The CAPI definition shows the pattern.
 
+The parameter contract applies only to infra planes. Components a bootstrap plane carries,
+such as `helm-flux`, are ordinary ComponentDefinitions with whatever parameters their tool
+needs; they share this directory and its health and status conventions, nothing more.
+
 ## Registry
 
 | Definition | Substrate | Primary output | Status |
@@ -44,6 +48,7 @@ override it. The CAPI definition shows the pattern.
 | `component/eks-crossplane.cue` | Crossplane upbound AWS providers | `Cluster.eks.aws.upbound.io` | planned |
 | `component/eks-ack.cue` | AWS Controllers for Kubernetes, EKS controller | `Cluster.eks.services.k8s.aws` | planned |
 | `component/eks-terraform.cue` | tofu-controller with terraform-aws-modules/eks | `Terraform` | planned |
+| `component/helm-flux.cue` | Flux v2 source-controller and helm-controller on the target cluster; installs a chart as a HelmRelease from a HelmRepository (`source.toolkit.fluxcd.io/v1`, `helm.toolkit.fluxcd.io/v2`) | `HelmRelease` (`status.conditions`, type `Ready`) | used by the `foundation-runtime` bootstrap plane |
 
 Adding a substrate: copy the parameter block from `eks-capi.cue` unchanged, render that
 tool's objects, keep the health and status pattern, run `vela def vet`, and add a row here.
