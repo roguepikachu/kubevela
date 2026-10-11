@@ -141,29 +141,48 @@ func (r *Reconciler) reconcileDispatch(ctx context.Context, sc *v1beta1.SpokeClu
 // receiving new revisions. status.health is left to pullSpokeStatus, which keeps
 // reporting whatever Cluster the spoke still has.
 func (r *Reconciler) forgetDispatch(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus) {
-	if status.DispatchedRevision == "" && meta.FindStatusCondition(status.Conditions, v1beta1.SpokeClusterConditionDispatched) == nil {
+	ok := r.forgetOwnedApplication(ctx, sc, dispatchAppName(sc), roleDispatch,
+		func(msg string) {
+			setCondition(status, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse, reasonDispatchFailed, msg)
+		},
+		func() {
+			r.emit(sc, event.Normal(reasonDispatchReleased, "dispatch Application released; the spoke keeps the blueprint it has and receives no new revisions"))
+		})
+	if !ok {
 		return
 	}
-	name := dispatchAppName(sc)
+	status.DispatchedRevision = ""
+	meta.RemoveStatusCondition(&status.Conditions, v1beta1.SpokeClusterConditionDispatched)
+}
+
+// forgetOwnedApplication deletes the Application called name if this SpokeCluster
+// controls it, and reports true when the caller may drop its projection. It does not
+// consult status to decide whether there is anything to delete: a crash between
+// CreateOrUpdate and the status write leaves an owned Application that status knows
+// nothing about, and the cached Get this costs on every pass is what finds it.
+//
+// Only an Application this SpokeCluster created may be deleted on its behalf; a
+// same-named one owned by something else is left alone and the caller still drops its
+// projection, because this spoke no longer claims it. A read or delete failure goes to
+// onFail with the message to report and returns false so the projection stands; a
+// completed delete calls onReleased so the caller can say so in an event.
+func (r *Reconciler) forgetOwnedApplication(ctx context.Context, sc *v1beta1.SpokeCluster, name, role string, onFail func(msg string), onReleased func()) bool {
 	app := &v1beta1.Application{}
 	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: name}, app)
 	switch {
 	case apierrors.IsNotFound(err):
 	case err != nil:
-		setCondition(status, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse, reasonDispatchFailed,
-			fmt.Sprintf("reading dispatch Application %s/%s for removal: %v", sc.Namespace, name, err))
-		return
+		onFail(fmt.Sprintf("reading %s Application %s/%s for removal: %v", role, sc.Namespace, name, err))
+		return false
 	case metav1.IsControlledBy(app, sc):
 		if err := r.Delete(ctx, app); err != nil && !apierrors.IsNotFound(err) {
-			setCondition(status, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse, reasonDispatchFailed,
-				fmt.Sprintf("deleting dispatch Application %s/%s: %v", sc.Namespace, name, err))
-			return
+			onFail(fmt.Sprintf("deleting %s Application %s/%s: %v", role, sc.Namespace, name, err))
+			return false
 		}
-		klog.InfoS("Dispatch Application deleted because spec.blueprintRef was removed", "spokecluster", klog.KObj(sc), "application", name)
-		r.emit(sc, event.Normal(reasonDispatchReleased, "dispatch Application released; the spoke keeps the blueprint it has and receives no new revisions"))
+		klog.InfoS("Owned Application deleted because its spec block was removed", "spokecluster", klog.KObj(sc), "application", name, "role", role)
+		onReleased()
 	}
-	status.DispatchedRevision = ""
-	meta.RemoveStatusCondition(&status.Conditions, v1beta1.SpokeClusterConditionDispatched)
+	return true
 }
 
 // dispatchComponents renders the bundle as k8s-objects components: the revisions, the

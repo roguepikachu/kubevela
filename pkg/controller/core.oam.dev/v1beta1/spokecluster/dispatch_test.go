@@ -22,16 +22,42 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
+
+// interceptedHubReconciler is connectedReconciler with the hub client rebuilt behind
+// funcs, so a spec can fault individual hub calls.
+func interceptedHubReconciler(t GinkgoTInterface, sc *v1beta1.SpokeCluster, funcs interceptor.Funcs, extra ...client.Object) *Reconciler {
+	t.Helper()
+	r := connectedReconciler(t, sc, extra...)
+	hub := fake.NewClientBuilder().
+		WithScheme(r.Scheme).
+		WithObjects(append([]client.Object{sc}, extra...)...).
+		WithStatusSubresource(&v1beta1.SpokeCluster{}, &v1beta1.Application{}).
+		Build()
+	r.Client = interceptor.NewClient(hub, funcs)
+	return r
+}
+
+func isRevision(obj client.Object) bool {
+	switch obj.(type) {
+	case *v1beta1.ClusterPlaneRevision, *v1beta1.ClusterBlueprintRevision:
+		return true
+	}
+	return false
+}
 
 func componentDefinition(ns, name string) *v1beta1.ComponentDefinition {
 	return &v1beta1.ComponentDefinition{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
@@ -369,3 +395,62 @@ var _ = It("DispatchForgetLeavesForeignApplicationAlone", func() {
 	Expect(meta.FindStatusCondition(latest.Status.Conditions, v1beta1.SpokeClusterConditionDispatched)).To(BeNil())
 	Expect(latest.Status.DispatchedRevision).To(BeEmpty())
 })
+
+// Two hub replicas, or a restart between Create and the status write, can both race a
+// revision to the same name. The loser sees AlreadyExists while its cached client may
+// still say NotFound; the content under that name is identical by construction, so the
+// pass must carry on with its own candidate rather than report a failure.
+var _ = It("DispatchToleratesConcurrentRevisionCreation", func() {
+	resetSpokeMetrics()
+	t := GinkgoT()
+	sc := dispatchSpoke("cpspoke1")
+	r := interceptedHubReconciler(t, sc, interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if isRevision(obj) {
+				return apierrors.NewNotFound(schema.GroupResource{Group: "core.oam.dev", Resource: "revisions"}, key.Name)
+			}
+			return c.Get(ctx, key, obj, opts...)
+		},
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if err := c.Create(ctx, obj, opts...); err != nil || !isRevision(obj) {
+				return err
+			}
+			return apierrors.NewAlreadyExists(schema.GroupResource{Group: "core.oam.dev", Resource: "revisions"}, obj.GetName())
+		},
+	}, dispatchFixtures(sc.Namespace)...)
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	latest := readSpoke(t, r, sc)
+	wantCondition(t, latest, v1beta1.SpokeClusterConditionDispatched, metav1.ConditionFalse, reasonDispatching)
+	Expect(latest.Status.DispatchedRevision).To(MatchRegexp(`^platform-[0-9a-f]{8}$`))
+	Expect(dispatchAppExists(r, sc)).To(BeTrue())
+	Expect(testutil.CollectAndCount(spokeConditionFailures)).To(BeZero(), "a lost race is not a condition failure")
+})
+
+// A crash between CreateOrUpdate and the status write leaves an owned Application with
+// no record of it in status. Forgetting must not trust status to know whether there is
+// anything to delete.
+var _ = DescribeTable("ForgetDeletesOrphanedOwnedApplication", func(orphan func(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Application, released string) {
+	t := GinkgoT()
+	sc := connectableSpoke("cpspoke1")
+	app := orphan(t, sc)
+	r := connectedReconciler(t, sc, app)
+	rec := &recordingRecorder{}
+	r.record = rec
+
+	_, err := reconcileOnce(t, r, sc)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = r.Get(context.Background(), client.ObjectKeyFromObject(app), &v1beta1.Application{})
+	Expect(apierrors.IsNotFound(err)).To(BeTrue(), "the orphan is collected on the first pass")
+	Expect(eventReasons(rec)).To(ContainElement(released))
+},
+	Entry("dispatch", func(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Application {
+		return dispatchAppOwnedBy(t, sc, sc)
+	}, reasonDispatchReleased),
+	Entry("bootstrap", func(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *v1beta1.Application {
+		return ownedBootstrapApp(t, sc)
+	}, reasonBootstrapReleased),
+)

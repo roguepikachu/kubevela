@@ -153,8 +153,8 @@ func knownBootstrapAppName(status *v1beta1.SpokeClusterStatus) string {
 
 // forgetBootstrap is what a spoke without spec.bootstrap does about a runtime it used to
 // manage: delete the bootstrap Application if this SpokeCluster controls it, then drop the
-// projection and the condition. A spoke that never had a bootstrap block has nothing to
-// forget and costs no API call here.
+// projection and the condition. The delete is attempted on every pass whether or not
+// status remembers an Application; see forgetOwnedApplication for why.
 //
 // Deleting the Application here, on a spoke the hub can still reach, means vela-core's
 // garbage collection does reach the spoke: under the Application's never rule it strips
@@ -163,32 +163,17 @@ func knownBootstrapAppName(status *v1beta1.SpokeClusterStatus) string {
 // That is a different path from deleting the whole SpokeCluster, for which see
 // bootstrapPolicies.
 func (r *Reconciler) forgetBootstrap(ctx context.Context, sc *v1beta1.SpokeCluster, status *v1beta1.SpokeClusterStatus) {
-	if status.Bootstrap == nil && meta.FindStatusCondition(status.Conditions, v1beta1.SpokeClusterConditionBootstrapped) == nil {
-		return
-	}
 	name := knownBootstrapAppName(status)
 	if name == "" {
 		name = bootstrapAppName(sc)
 	}
-	app := &v1beta1.Application{}
-	err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: name}, app)
-	switch {
-	case apierrors.IsNotFound(err):
-	case err != nil:
-		projectBootstrapFailure(status, name, reasonBootstrapFailed,
-			fmt.Sprintf("reading bootstrap Application %s/%s for removal: %v", sc.Namespace, name, err))
+	ok := r.forgetOwnedApplication(ctx, sc, name, roleBootstrap,
+		func(msg string) { projectBootstrapFailure(status, name, reasonBootstrapFailed, msg) },
+		func() {
+			r.emit(sc, event.Normal(reasonBootstrapReleased, "bootstrap Application released; the hub no longer manages this spoke's runtime"))
+		})
+	if !ok {
 		return
-	// Only an Application this SpokeCluster created may be deleted on its behalf; a
-	// same-named one owned by something else is left alone and the projection is still
-	// dropped, because this spoke no longer claims it.
-	case metav1.IsControlledBy(app, sc):
-		if err := r.Delete(ctx, app); err != nil && !apierrors.IsNotFound(err) {
-			projectBootstrapFailure(status, name, reasonBootstrapFailed,
-				fmt.Sprintf("deleting bootstrap Application %s/%s: %v", sc.Namespace, name, err))
-			return
-		}
-		klog.InfoS("Bootstrap Application deleted because spec.bootstrap was removed", "spokecluster", klog.KObj(sc), "application", name)
-		r.emit(sc, event.Normal(reasonBootstrapReleased, "bootstrap Application released; the hub no longer manages this spoke's runtime"))
 	}
 	status.Bootstrap = nil
 	meta.RemoveStatusCondition(&status.Conditions, v1beta1.SpokeClusterConditionBootstrapped)

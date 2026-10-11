@@ -201,9 +201,17 @@ var _ = It("EnsureRevisionsPinnedRevisionIsReadNotSnapshotted", func() {
 	sc.Spec.BlueprintRef.Revision = "platform-00000000"
 	_, err = r.ensureRevisions(context.Background(), sc)
 	Expect(errors.Is(err, errBlueprintUnresolved)).To(BeTrue(), "got %v", err)
+
+	By("refusing a pin that belongs to a different blueprint", func() {
+		sc.Spec.BlueprintRef = &v1beta1.BlueprintReference{Name: "someone-else", Revision: first.blueprint.Name}
+		_, err := r.ensureRevisions(context.Background(), sc)
+		Expect(errors.Is(err, errBlueprintUnresolved)).To(BeTrue(), "got %v", err)
+		Expect(err.Error()).To(ContainSubstring("someone-else"))
+		Expect(err.Error()).To(ContainSubstring(dispatchBlueprintName))
+	})
 })
 
-var _ = DescribeTable("EnsureRevisionsUnresolved", func(seed func(ns string) []client.Object, wantKind, wantName string) {
+var _ = DescribeTable("EnsureRevisionsUnresolved", func(seed func(ns string) []client.Object, wantKind, wantName string, wantPlaneRevisions int) {
 	t := GinkgoT()
 	sc := dispatchSpoke("cpspoke1")
 	r := newTestReconciler(t, append([]client.Object{sc}, seed(sc.Namespace)...)...)
@@ -211,11 +219,13 @@ var _ = DescribeTable("EnsureRevisionsUnresolved", func(seed func(ns string) []c
 	_, err := r.ensureRevisions(context.Background(), sc)
 	Expect(errors.Is(err, errBlueprintUnresolved)).To(BeTrue(), "got %v", err)
 	Expect(err.Error()).To(ContainSubstring(wantKind + " " + sc.Namespace + "/" + wantName))
-	Expect(listPlaneRevisions(r, sc.Namespace)).To(BeEmpty())
-	Expect(listBlueprintRevisions(r, sc.Namespace)).To(BeEmpty())
+	Expect(listPlaneRevisions(r, sc.Namespace)).To(HaveLen(wantPlaneRevisions))
+	Expect(listBlueprintRevisions(r, sc.Namespace)).To(BeEmpty(), "no blueprint revision may name a plane revision that does not exist")
 },
-	Entry("a missing blueprint", func(ns string) []client.Object { return dispatchPlanes(ns) }, "ClusterBlueprint", dispatchBlueprintName),
-	Entry("a missing plane", func(ns string) []client.Object { return []client.Object{dispatchBlueprint(ns)} }, "ClusterPlane", cniPlaneName),
+	Entry("a missing blueprint", func(ns string) []client.Object { return dispatchPlanes(ns) }, "ClusterBlueprint", dispatchBlueprintName, 0),
+	Entry("a missing first plane", func(ns string) []client.Object { return []client.Object{dispatchBlueprint(ns)} }, "ClusterPlane", cniPlaneName, 0),
+	Entry("a missing later plane keeps the earlier plane's revision",
+		func(ns string) []client.Object { return []client.Object{dispatchBlueprint(ns), dispatchPlanes(ns)[0]} }, "ClusterPlane", infraPlaneName, 1),
 )
 
 var _ = It("HashSpecIsStableAndContentSensitive", func() {

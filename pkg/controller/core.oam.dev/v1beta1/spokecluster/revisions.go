@@ -83,7 +83,7 @@ func (r *Reconciler) ensureRevisions(ctx context.Context, sc *v1beta1.SpokeClust
 		return nil, fmt.Errorf("%w: spec.blueprintRef.name is empty", errBlueprintUnresolved)
 	}
 	if ref.Revision != "" {
-		return r.readPinnedRevisions(ctx, sc.Namespace, ref.Revision)
+		return r.readPinnedRevisions(ctx, sc.Namespace, ref)
 	}
 	bp := &v1beta1.ClusterBlueprint{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: ref.Name}, bp); err != nil {
@@ -152,6 +152,10 @@ func (r *Reconciler) ensurePlaneRevision(ctx context.Context, ns, planeName stri
 // ensureBlueprintRevision snapshots the blueprint's composition. The hash covers the
 // plane entries, whose planeRevision names already embed each plane's content hash, so a
 // change inside any plane produces a new blueprint revision too.
+//
+// The hash is computed over the spec with Hash still empty, since the field cannot
+// hash itself. A verifier recomputing it from a stored revision must blank spec.hash
+// first and hash the rest.
 func (r *Reconciler) ensureBlueprintRevision(ctx context.Context, bp *v1beta1.ClusterBlueprint, planes []v1beta1.BlueprintPlaneRevision) (*v1beta1.ClusterBlueprintRevision, error) {
 	spec := v1beta1.ClusterBlueprintRevisionSpec{
 		BlueprintName: bp.Name,
@@ -176,8 +180,13 @@ func (r *Reconciler) ensureBlueprintRevision(ctx context.Context, bp *v1beta1.Cl
 // createRevisionIfAbsent makes a revision exist exactly once. An existing object is read
 // back in place of the candidate and never rewritten: the name is the content hash, so
 // whatever is stored under it is by construction the same content, and immutability is
-// what lets a pin mean something. A concurrent create racing to the same name is the
-// same situation and is read back the same way.
+// what lets a pin mean something.
+//
+// A concurrent create racing to the same name (a second hub replica, or a restart
+// between Create and the status write) surfaces as AlreadyExists. The candidate is kept
+// as is rather than re-read: the cached client may still answer NotFound for an object
+// written a moment ago, and nothing downstream needs the stored copy, because the bundle
+// ships only name, namespace, labels and spec, never UID or resourceVersion.
 func (r *Reconciler) createRevisionIfAbsent(ctx context.Context, rev client.Object) error {
 	key := client.ObjectKeyFromObject(rev)
 	switch err := r.Get(ctx, key, rev); {
@@ -191,18 +200,25 @@ func (r *Reconciler) createRevisionIfAbsent(ctx context.Context, rev client.Obje
 		klog.InfoS("Revision created", "revision", key, "type", fmt.Sprintf("%T", rev))
 		return nil
 	case apierrors.IsAlreadyExists(err):
-		return r.Get(ctx, key, rev)
+		klog.V(2).InfoS("Revision was created concurrently; keeping the identical candidate", "revision", key)
+		return nil
 	default:
 		return fmt.Errorf("creating revision %s: %w", key, err)
 	}
 }
 
 // readPinnedRevisions resolves a spec.blueprintRef.revision pin: the named
-// ClusterBlueprintRevision and, in its order, the plane revisions it names.
-func (r *Reconciler) readPinnedRevisions(ctx context.Context, ns, revision string) (*dispatchBundle, error) {
+// ClusterBlueprintRevision, which must belong to the named blueprint, and, in its order,
+// the plane revisions it names.
+func (r *Reconciler) readPinnedRevisions(ctx context.Context, ns string, ref *v1beta1.BlueprintReference) (*dispatchBundle, error) {
+	revision := ref.Revision
 	bpRev := &v1beta1.ClusterBlueprintRevision{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: ns, Name: revision}, bpRev); err != nil {
 		return nil, fmt.Errorf("%w: reading pinned ClusterBlueprintRevision %s/%s: %v", errBlueprintUnresolved, ns, revision, err)
+	}
+	if bpRev.Spec.BlueprintName != ref.Name {
+		return nil, fmt.Errorf("%w: pinned ClusterBlueprintRevision %s/%s belongs to ClusterBlueprint %q, not %q",
+			errBlueprintUnresolved, ns, revision, bpRev.Spec.BlueprintName, ref.Name)
 	}
 	bundle := &dispatchBundle{blueprint: bpRev}
 	for _, p := range bpRev.Spec.Planes {

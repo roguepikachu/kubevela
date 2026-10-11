@@ -59,6 +59,11 @@ func (r *Reconciler) pullSpokeStatus(ctx context.Context, sc *v1beta1.SpokeClust
 			fmt.Sprintf("Cluster %s not found on the spoke", key))
 		return
 	case err != nil:
+		// One Warning per failed pass, by design: the condition is left untouched because
+		// nothing was observed, so there is no transition for emitStatusEvents to report
+		// once. A permanent failure (Forbidden from a spoke whose RBAC lacks the clusters
+		// read) therefore warns every interval; it may deserve a condition reason of its
+		// own later.
 		klog.ErrorS(err, "Spoke Cluster status could not be pulled", "spokecluster", klog.KObj(sc))
 		r.emit(sc, event.Warning(reasonSpokeStatusPullFailed, fmt.Errorf("pulling Cluster %s from the spoke: %w", key, err)))
 		return
