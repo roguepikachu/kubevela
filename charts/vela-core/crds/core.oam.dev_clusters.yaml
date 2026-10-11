@@ -64,6 +64,13 @@ spec:
               ClusterSpec is one blueprint revision per lifecycle stage. Stages run in
               order clusterInit, planeProvisioning, healthValidation; a stage with no ref
               is skipped, but at least one has to be set.
+
+              The hub fills all three refs with the same ClusterBlueprintRevision, the
+              snapshot of the dispatched ClusterBlueprint. Each stage takes the planes of
+              that revision whose phase matches the stage, so the three refs select planes
+              by phase rather than naming three different blueprints. A referenced
+              revision that has no plane for a stage simply renders nothing for that
+              stage.
             properties:
               clusterInit:
                 description: |-
@@ -73,8 +80,10 @@ spec:
                   blueprintRef:
                     description: |-
                       BlueprintRef names the ClusterBlueprintRevision, in the Cluster's
-                      namespace, whose planes this stage renders. Revisions are immutable, so
-                      the name alone pins the content and revision is unused here.
+                      namespace, whose planes this stage renders. Only the planes tagged with
+                      this stage's phase are taken, and a revision with no plane for the stage
+                      renders nothing for it. Revisions are immutable, so the name alone pins
+                      the content and revision is unused here.
                     properties:
                       name:
                         description: Name of the referenced object.
@@ -97,8 +106,10 @@ spec:
                   blueprintRef:
                     description: |-
                       BlueprintRef names the ClusterBlueprintRevision, in the Cluster's
-                      namespace, whose planes this stage renders. Revisions are immutable, so
-                      the name alone pins the content and revision is unused here.
+                      namespace, whose planes this stage renders. Only the planes tagged with
+                      this stage's phase are taken, and a revision with no plane for the stage
+                      renders nothing for it. Revisions are immutable, so the name alone pins
+                      the content and revision is unused here.
                     properties:
                       name:
                         description: Name of the referenced object.
@@ -120,8 +131,10 @@ spec:
                   blueprintRef:
                     description: |-
                       BlueprintRef names the ClusterBlueprintRevision, in the Cluster's
-                      namespace, whose planes this stage renders. Revisions are immutable, so
-                      the name alone pins the content and revision is unused here.
+                      namespace, whose planes this stage renders. Only the planes tagged with
+                      this stage's phase are taken, and a revision with no plane for the stage
+                      renders nothing for it. Revisions are immutable, so the name alone pins
+                      the content and revision is unused here.
                     properties:
                       name:
                         description: Name of the referenced object.
@@ -220,7 +233,9 @@ spec:
                       stage.
                     type: integer
                   status:
-                    description: Status is the aggregate health (Healthy or Degraded).
+                    description: |-
+                      Status is the aggregate health: Healthy, Progressing while the cluster
+                      converges, or Degraded. See the ClusterHealthStatus constants.
                     type: string
                 required:
                 - planesHealthy
@@ -269,6 +284,13 @@ spec:
                       - clusterInit
                       - planeProvisioning
                       - healthValidation
+                      type: string
+                    planeRevision:
+                      description: |-
+                        PlaneRevision is the ClusterPlaneRevision the plane's Application was
+                        rendered from. While that revision is missing on the spoke, the name from
+                        the last successful render is kept, since the Application it produced is
+                        kept too.
                       type: string
                   required:
                   - application

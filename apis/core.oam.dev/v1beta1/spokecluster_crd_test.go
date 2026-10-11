@@ -216,11 +216,12 @@ var _ = It("SpokeClusterCRD AuthColumnFromSpec", func() {
 	r.Equal(".status.provisioning.phase", provisionPath)
 })
 
-// TestSpokeClusterCRD_Phase2Stubs asserts the forward-compatible Phase 2 fields
-// are present in the schema with their intended shape. No Phase 1 controller
-// reconciles them, but they are published now so the dispatch and rollout work
-// in a later phase does not require a breaking CRD change.
-var _ = It("SpokeClusterCRD Phase2Stubs", func() {
+// The dispatch and health fields the hub controller reads and writes:
+// spec.infraProvisioning.blueprintRef is a name/revision reference,
+// status.dispatchedRevision records the last shipped ClusterBlueprintRevision,
+// status.health projects the pulled spoke Cluster status, and
+// status.provisioning mirrors the infra Application.
+var _ = It("SpokeClusterCRD DispatchAndHealthFields", func() {
 	t := GinkgoT()
 	r := require.New(t)
 	schema := v1beta1Schema(t, loadSpokeClusterCRD(t))
@@ -235,8 +236,8 @@ var _ = It("SpokeClusterCRD Phase2Stubs", func() {
 	r.Contains(infraBlueprint.Properties, "revision")
 	r.Equal([]string{"name"}, infraBlueprint.Required)
 
-	// status.dispatchedRevision is the revision the dispatch loop compares against
-	// spec.blueprintRef.revision.
+	// status.dispatchedRevision is the ClusterBlueprintRevision name the dispatch
+	// compares against the snapshot of spec.blueprintRef.
 	r.Contains(status.Properties, "dispatchedRevision")
 	r.Equal("string", status.Properties["dispatchedRevision"].Type)
 

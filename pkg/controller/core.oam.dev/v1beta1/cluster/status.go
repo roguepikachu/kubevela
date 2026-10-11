@@ -26,19 +26,6 @@ import (
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
 )
 
-// Values of status.health.status. They follow the phase: Healthy when Ready, Degraded when
-// Degraded, Progressing for every stage in between (and for a Cluster with no planes yet).
-// Defined here for now; an API follow-up moves them onto the type and documents Progressing.
-const (
-	// HealthStatusHealthy means every plane's Application is running with every
-	// component healthy.
-	HealthStatusHealthy = "Healthy"
-	// HealthStatusProgressing means the planes are still converging and nothing has failed.
-	HealthStatusProgressing = "Progressing"
-	// HealthStatusDegraded means at least one plane's workflow failed.
-	HealthStatusDegraded = "Degraded"
-)
-
 // Condition reasons for BlueprintResolved. They are stable strings an operator can match on.
 const (
 	reasonResolved              = "Resolved"
@@ -59,17 +46,27 @@ var phaseForLifecycle = map[v1beta1.LifecyclePhase]v1beta1.ClusterPhase{
 
 // observePlanes fills status.planes, status.health and status.phase from the planes in
 // render order and the Applications found for them (keyed by plane name, absent when
-// none exists yet). now is stamped as the health check time.
-func observePlanes(status *v1beta1.ClusterStatus, planes []orderedPlane, apps map[string]*v1beta1.Application, now metav1.Time) {
+// none exists yet). revisions maps each plane rendered this pass to the ClusterPlaneRevision
+// it was rendered from; a plane absent from it keeps the revision recorded on the previous
+// status, since its Application was kept too. now is stamped as the health check time.
+func observePlanes(status *v1beta1.ClusterStatus, planes []orderedPlane, apps map[string]*v1beta1.Application, revisions map[string]string, now metav1.Time) {
+	previous := make(map[string]string, len(status.Planes))
+	for _, p := range status.Planes {
+		previous[p.Name] = p.PlaneRevision
+	}
 	status.Planes = make([]v1beta1.PlaneStatus, 0, len(planes))
 	found, healthy, failed := 0, 0, false
 	for _, p := range planes {
 		app := apps[p.Plane.Name]
 		ps := v1beta1.PlaneStatus{
-			Name:        p.Plane.Name,
-			Phase:       p.Plane.Phase,
-			Application: applicationName(p.Plane.Name),
-			Message:     messageApplicationNotFound,
+			Name:          p.Plane.Name,
+			Phase:         p.Plane.Phase,
+			Application:   applicationName(p.Plane.Name),
+			PlaneRevision: revisions[p.Plane.Name],
+			Message:       messageApplicationNotFound,
+		}
+		if ps.PlaneRevision == "" {
+			ps.PlaneRevision = previous[p.Plane.Name]
 		}
 		if app != nil {
 			found++
@@ -98,11 +95,11 @@ func observePlanes(status *v1beta1.ClusterStatus, planes []orderedPlane, apps ma
 func healthStatus(phase v1beta1.ClusterPhase) string {
 	switch phase {
 	case v1beta1.ClusterPhaseReady:
-		return HealthStatusHealthy
+		return v1beta1.ClusterHealthStatusHealthy
 	case v1beta1.ClusterPhaseDegraded:
-		return HealthStatusDegraded
+		return v1beta1.ClusterHealthStatusDegraded
 	default:
-		return HealthStatusProgressing
+		return v1beta1.ClusterHealthStatusProgressing
 	}
 }
 

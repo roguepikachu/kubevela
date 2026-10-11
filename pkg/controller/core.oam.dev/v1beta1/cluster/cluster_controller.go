@@ -101,7 +101,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		// describe a blueprint the spec no longer names, and the hub, which reads this
 		// status, would otherwise map stale plane names onto the new blueprint. The
 		// Applications themselves stay until a resolvable revision replaces them.
-		observePlanes(status, nil, nil, metav1.Now())
+		observePlanes(status, nil, nil, nil, metav1.Now())
 		return r.finish(ctx, cl, status, requeueNotReady)
 	}
 
@@ -109,6 +109,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	unresolved := unresolvedDependencies(planes)
 	var problems []string
 	rendered := make(map[string]*v1beta1.Application, len(planes))
+	revisions := make(map[string]string, len(planes))
 	for _, p := range planes {
 		if deps := unresolved[p.Plane.Name]; len(deps) > 0 {
 			// A wait step on a plane nobody renders would never complete, so the plane is
@@ -133,6 +134,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, err
 		}
 		rendered[p.Plane.Name] = app
+		revisions[p.Plane.Name] = planeRev.Name
 	}
 
 	// The List serves prune only. Status is computed from the objects this pass wrote,
@@ -160,7 +162,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		setCondition(status, v1beta1.ClusterConditionBlueprintResolved, metav1.ConditionTrue, reasonResolved,
 			"every blueprint and plane revision was found")
 	}
-	observePlanes(status, planes, owned, metav1.Now())
+	observePlanes(status, planes, owned, revisions, metav1.Now())
 
 	requeue := requeueNotReady
 	if status.Phase == v1beta1.ClusterPhaseReady && len(problems) == 0 {

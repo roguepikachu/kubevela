@@ -43,21 +43,36 @@ const (
 const (
 	// ClusterConditionBlueprintResolved is true once every phase's
 	// ClusterBlueprintRevision and the ClusterPlaneRevisions it pins were found
-	// on the spoke.
+	// on the spoke (reason Resolved). While false, the reason says what is
+	// missing: BlueprintRevisionMissing when a phase ref names no
+	// ClusterBlueprintRevision on the spoke, PlaneRevisionMissing when a plane's
+	// ClusterPlaneRevision has not arrived yet, and DependencyUnresolved when a
+	// plane depends on a plane the referenced revisions do not render.
 	ClusterConditionBlueprintResolved = "BlueprintResolved"
 )
 
-// PhaseSpec names the blueprint revision one lifecycle stage runs.
+// PhaseSpec names the blueprint revision one lifecycle stage runs. The hub
+// fills every stage with the same ClusterBlueprintRevision; the stage renders
+// only the planes of that revision whose phase matches it.
 type PhaseSpec struct {
 	// BlueprintRef names the ClusterBlueprintRevision, in the Cluster's
-	// namespace, whose planes this stage renders. Revisions are immutable, so
-	// the name alone pins the content and revision is unused here.
+	// namespace, whose planes this stage renders. Only the planes tagged with
+	// this stage's phase are taken, and a revision with no plane for the stage
+	// renders nothing for it. Revisions are immutable, so the name alone pins
+	// the content and revision is unused here.
 	BlueprintRef BlueprintReference `json:"blueprintRef"`
 }
 
 // ClusterSpec is one blueprint revision per lifecycle stage. Stages run in
 // order clusterInit, planeProvisioning, healthValidation; a stage with no ref
 // is skipped, but at least one has to be set.
+//
+// The hub fills all three refs with the same ClusterBlueprintRevision, the
+// snapshot of the dispatched ClusterBlueprint. Each stage takes the planes of
+// that revision whose phase matches the stage, so the three refs select planes
+// by phase rather than naming three different blueprints. A referenced
+// revision that has no plane for a stage simply renders nothing for that
+// stage.
 // +kubebuilder:validation:XValidation:rule="has(self.clusterInit) || has(self.planeProvisioning) || has(self.healthValidation)",message="at least one of clusterInit, planeProvisioning or healthValidation must be set"
 type ClusterSpec struct {
 	// ClusterInit is the stage that prepares the cluster before any plane is
@@ -87,6 +102,13 @@ type PlaneStatus struct {
 	// Application is the Application the spoke rendered the plane into.
 	Application string `json:"application"`
 
+	// PlaneRevision is the ClusterPlaneRevision the plane's Application was
+	// rendered from. While that revision is missing on the spoke, the name from
+	// the last successful render is kept, since the Application it produced is
+	// kept too.
+	// +optional
+	PlaneRevision string `json:"planeRevision,omitempty"`
+
 	// Healthy is true when every component of that Application reports healthy.
 	Healthy bool `json:"healthy"`
 
@@ -95,9 +117,23 @@ type PlaneStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// Values of ClusterHealth.Status. They follow the Cluster phase: Healthy when
+// Ready, Degraded when Degraded, Progressing for every stage in between.
+const (
+	// ClusterHealthStatusHealthy means every plane's Application is running
+	// with every component healthy.
+	ClusterHealthStatusHealthy = "Healthy"
+	// ClusterHealthStatusProgressing means the planes are still converging and
+	// nothing has failed; it also covers a Cluster with no planes yet.
+	ClusterHealthStatusProgressing = "Progressing"
+	// ClusterHealthStatusDegraded means at least one plane's workflow failed.
+	ClusterHealthStatusDegraded = "Degraded"
+)
+
 // ClusterHealth is the aggregate of the per-plane health.
 type ClusterHealth struct {
-	// Status is the aggregate health (Healthy or Degraded).
+	// Status is the aggregate health: Healthy, Progressing while the cluster
+	// converges, or Degraded. See the ClusterHealthStatus constants.
 	Status string `json:"status"`
 
 	// PlanesHealthy is the number of planes reporting healthy.

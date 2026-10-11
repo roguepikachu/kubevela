@@ -447,9 +447,11 @@ type SpokeClusterStatus struct {
 	Bootstrap *ProvisioningStatus `json:"bootstrap,omitempty"`
 
 	// DispatchedRevision is the ClusterBlueprintRevision name the hub last shipped
-	// to the spoke. The dispatch on the hub writes it after the bundle is applied
-	// and advances the spoke when the snapshot of spec.blueprintRef hashes to a
-	// different name.
+	// to the spoke. One ClusterBlueprint snapshots to one ClusterBlueprintRevision
+	// and the dispatched spoke Cluster names that revision in all three of its
+	// phase refs, so one name identifies the whole dispatch. The dispatch on the
+	// hub writes it after the bundle is applied and advances the spoke when the
+	// snapshot of spec.blueprintRef hashes to a different name.
 	// +optional
 	DispatchedRevision string `json:"dispatchedRevision,omitempty"`
 
@@ -484,13 +486,16 @@ type ProvisioningStatus struct {
 // hub: the aggregate, the spoke's lifecycle phase and a per-plane breakdown as
 // of the last pull.
 type SpokeClusterHealth struct {
-	// Status is the aggregate blueprint health of the spoke (for example Healthy
-	// or Degraded).
+	// Status is the aggregate blueprint health of the spoke: Healthy,
+	// Progressing while the spoke converges, or Degraded.
 	// +optional
 	Status string `json:"status,omitempty"`
 
-	// Phase is the spoke Cluster's lifecycle phase (Pending, Initializing,
-	// Provisioning, Validating, Ready, Degraded) at the last pull.
+	// Phase is the spoke Cluster's lifecycle phase at the last pull. It is a
+	// plain string on purpose: the hub copies whatever the spoke reports, so a
+	// spoke running a newer or older vela-cluster-core cannot make the pull fail
+	// on a value the hub does not know. Expected values are Pending,
+	// Initializing, Provisioning, Validating, Ready and Degraded.
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
@@ -516,7 +521,10 @@ type SpokePlaneHealth struct {
 	// Name is the plane's name within the dispatched blueprint.
 	Name string `json:"name"`
 
-	// Phase is the lifecycle stage the plane ran in on the spoke.
+	// Phase is the lifecycle stage the plane ran in on the spoke. A plain string
+	// for the same reason as SpokeClusterHealth.Phase: it is copied from the
+	// spoke across version skew. Expected values are clusterInit,
+	// planeProvisioning and healthValidation.
 	// +optional
 	Phase string `json:"phase,omitempty"`
 

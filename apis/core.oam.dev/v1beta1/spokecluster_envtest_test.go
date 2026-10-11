@@ -397,7 +397,7 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 				Reason: "Resolved", Message: "all revisions found", LastTransitionTime: now,
 			}},
 			Planes: []PlaneStatus{
-				{Name: "network", Phase: LifecyclePhaseClusterInit, Application: "network-abc12345", Healthy: true},
+				{Name: "network", Phase: LifecyclePhaseClusterInit, Application: "network-abc12345", PlaneRevision: "network-abc12345", Healthy: true},
 				{Name: "storage", Phase: LifecyclePhasePlaneProvisioning, Application: "storage-abc12345", Healthy: false, Message: "pvc pending"},
 			},
 			Health: &ClusterHealth{Status: "Degraded", PlanesHealthy: 1, PlanesTotal: 2, LastCheckTime: &now},
@@ -424,9 +424,8 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 	})
 
 	// Blueprints written before phases existed carry no phase; they keep working
-	// as plain plane provisioning. Anything outside the enum is a typo and is
-	// refused.
-	It("BlueprintPlanePhaseDefaultsAndIsClosed", func() {
+	// as plain plane provisioning.
+	It("BlueprintPlanePhaseDefaultsToPlaneProvisioning", func() {
 		r := require.New(GinkgoT())
 		ctx := context.Background()
 
@@ -440,6 +439,12 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 		got := &ClusterBlueprint{}
 		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(blueprint), got))
 		r.Equal(LifecyclePhasePlaneProvisioning, got.Spec.Planes[0].Phase, "a plane without a phase is plane provisioning")
+	})
+
+	// Anything outside the phase enum is a typo and is refused.
+	It("BlueprintPlanePhaseRejectsValueOutsideEnum", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
 
 		err := k8sClient.Create(ctx, &ClusterBlueprint{
 			ObjectMeta: metav1.ObjectMeta{Name: "phase-nonsense", Namespace: "vela-system"},
@@ -451,9 +456,9 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 		r.Contains(err.Error(), "phase", "the rejection has to name the field")
 	})
 
-	// The two revision kinds are what the hub ships to the spoke; both have to
-	// store and read back with their labels and pinned references intact.
-	It("RevisionsRoundTrip", func() {
+	// The revision kinds are what the hub ships to the spoke; each has to store
+	// and read back with its labels and pinned references intact.
+	It("ClusterPlaneRevisionRoundTrips", func() {
 		r := require.New(GinkgoT())
 		ctx := context.Background()
 
@@ -472,6 +477,11 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(planeRev), gotPlane))
 		r.Equal(planeRev.Spec, gotPlane.Spec)
 		r.Equal("network", gotPlane.Labels[LabelPlaneName])
+	})
+
+	It("ClusterBlueprintRevisionRoundTrips", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
 
 		blueprintRev := &ClusterBlueprintRevision{
 			ObjectMeta: metav1.ObjectMeta{
@@ -490,6 +500,15 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 		gotBlueprint := &ClusterBlueprintRevision{}
 		r.NoError(k8sClient.Get(ctx, client.ObjectKeyFromObject(blueprintRev), gotBlueprint))
 		r.Equal(blueprintRev.Spec, gotBlueprint.Spec)
+	})
+
+	// Phase has no omitempty, so a plane left without one serializes as the
+	// empty string, which the enum refuses. That is what keeps a snapshot from
+	// leaving a plane's stage blank; the field being required never comes into
+	// play here.
+	It("ClusterBlueprintRevisionRejectsEmptyPlanePhase", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
 
 		err := k8sClient.Create(ctx, &ClusterBlueprintRevision{
 			ObjectMeta: metav1.ObjectMeta{Name: "base-nophase", Namespace: "vela-system"},
@@ -498,7 +517,25 @@ var _ = Describe("SpokeClusterCRD envtest", Ordered, ContinueOnFailure, func() {
 				Planes: []BlueprintPlaneRevision{{Name: "network", PlaneRevision: "network-abc12345"}},
 			},
 		})
-		r.Error(err, "a snapshot has to record each plane's phase explicitly")
+		r.Error(err, "the phase enum must refuse the empty string a plane without a phase serializes to")
 		r.Contains(err.Error(), "phase")
+	})
+
+	// The plane name becomes the spoke Application name, so the snapshot refuses
+	// anything that is not a DNS-1123 label even though the source blueprint
+	// already checked it.
+	It("ClusterBlueprintRevisionRejectsNonDNSPlaneName", func() {
+		r := require.New(GinkgoT())
+		ctx := context.Background()
+
+		err := k8sClient.Create(ctx, &ClusterBlueprintRevision{
+			ObjectMeta: metav1.ObjectMeta{Name: "base-badname", Namespace: "vela-system"},
+			Spec: ClusterBlueprintRevisionSpec{
+				BlueprintName: "base", Hash: "badname0",
+				Planes: []BlueprintPlaneRevision{{Name: "Net_Work", Phase: LifecyclePhaseClusterInit, PlaneRevision: "network-abc12345"}},
+			},
+		})
+		r.Error(err, "the API server must refuse a plane name that is not a DNS-1123 label")
+		r.Contains(err.Error(), "name")
 	})
 })

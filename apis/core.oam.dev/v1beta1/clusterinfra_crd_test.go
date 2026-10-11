@@ -208,6 +208,9 @@ var _ = It("ClusterBlueprintRevisionCRD PinsPlanesToPlaneRevisions", func() {
 	r.NotContains(plane.Required, "dependsOn")
 	assertLifecyclePhaseEnum(t, plane.Properties["phase"])
 	r.Equal("string", plane.Properties["planeRevision"].Type)
+	r.Equal(dns1123LabelPattern, plane.Properties["name"].Pattern,
+		"the plane name becomes the spoke Application name cluster-<name>, so it has to be a DNS-1123 label")
+	r.Nil(plane.Properties["name"].MaxLength, "the 31-character cap was enforced on the source ClusterBlueprint")
 
 	defaultCols, _ := printColumnNames(t, crd)
 	for _, name := range []string{"BLUEPRINT", "HASH", "AGE"} {
@@ -261,6 +264,9 @@ var _ = It("ClusterCRD OneBlueprintRefPerPhaseWithStatus", func() {
 	planeStatus := status.Properties["planes"].Items.Schema
 	r.ElementsMatch([]string{"name", "phase", "application", "healthy"}, planeStatus.Required)
 	assertLifecyclePhaseEnum(t, planeStatus.Properties["phase"])
+	r.Contains(planeStatus.Properties, "planeRevision", "status records which ClusterPlaneRevision each plane was rendered from")
+	r.Equal("string", planeStatus.Properties["planeRevision"].Type)
+	r.NotContains(planeStatus.Required, "planeRevision", "a plane whose revision never arrived has none to report")
 	health := status.Properties["health"]
 	r.ElementsMatch([]string{"status", "planesHealthy", "planesTotal"}, health.Required)
 	r.Contains(health.Properties, "lastCheckTime")

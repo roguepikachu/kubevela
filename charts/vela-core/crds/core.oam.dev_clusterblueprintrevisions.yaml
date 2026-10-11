@@ -90,9 +90,12 @@ spec:
                         type: string
                       type: array
                     name:
-                      description: Name is the plane's name within the blueprint,
-                        unchanged from the source.
+                      description: |-
+                        Name is the plane's name within the blueprint, unchanged from the source.
+                        The 31-character cap was enforced on the source ClusterBlueprint; on the
+                        spoke the plane renders into the Application "cluster-<name>".
                       minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     phase:
                       description: |-

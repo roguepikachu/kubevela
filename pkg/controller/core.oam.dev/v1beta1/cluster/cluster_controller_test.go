@@ -365,16 +365,17 @@ var _ = Describe("Cluster controller", func() {
 			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhaseReady))
 			Expect(cl.Status.Planes).To(HaveLen(3))
 			Expect(cl.Status.Planes[0]).To(MatchFields(IgnoreExtras, Fields{
-				"Name":        Equal("init"),
-				"Phase":       Equal(v1beta1.LifecyclePhaseClusterInit),
-				"Application": Equal(initApp),
-				"Healthy":     BeTrue(),
-				"Message":     ContainSubstring("main status"),
+				"Name":          Equal("init"),
+				"Phase":         Equal(v1beta1.LifecyclePhaseClusterInit),
+				"Application":   Equal(initApp),
+				"PlaneRevision": Equal("init-rev"),
+				"Healthy":       BeTrue(),
+				"Message":       ContainSubstring("main status"),
 			}))
 			Expect(cl.Status.Planes[1].Application).To(Equal(infraApp))
 			Expect(cl.Status.Planes[2].Application).To(Equal(checkApp))
 			Expect(cl.Status.Health).NotTo(BeNil())
-			Expect(cl.Status.Health.Status).To(Equal(HealthStatusHealthy))
+			Expect(cl.Status.Health.Status).To(Equal(v1beta1.ClusterHealthStatusHealthy))
 			Expect(cl.Status.Health.PlanesHealthy).To(Equal(3))
 			Expect(cl.Status.Health.PlanesTotal).To(Equal(3))
 			Expect(cl.Status.Health.LastCheckTime).NotTo(BeNil())
@@ -391,7 +392,7 @@ var _ = Describe("Cluster controller", func() {
 			Expect(res.RequeueAfter).To(Equal(30 * time.Second))
 			cl := getCluster(r)
 			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhaseInitializing))
-			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.Status).To(Equal(v1beta1.ClusterHealthStatusProgressing))
 			Expect(cl.Status.Health.PlanesHealthy).To(Equal(2))
 		})
 
@@ -418,7 +419,7 @@ var _ = Describe("Cluster controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			cl := getCluster(r)
 			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhaseDegraded))
-			Expect(cl.Status.Health.Status).To(Equal(HealthStatusDegraded))
+			Expect(cl.Status.Health.Status).To(Equal(v1beta1.ClusterHealthStatusDegraded))
 		})
 
 		It("reports Progressing with 0/0 when the referenced phases render no planes", func() {
@@ -438,7 +439,7 @@ var _ = Describe("Cluster controller", func() {
 			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhasePending))
 			Expect(cl.Status.Planes).To(BeEmpty())
 			Expect(cl.Status.Health).NotTo(BeNil())
-			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.Status).To(Equal(v1beta1.ClusterHealthStatusProgressing))
 			Expect(cl.Status.Health.PlanesHealthy).To(Equal(0))
 			Expect(cl.Status.Health.PlanesTotal).To(Equal(0))
 			Expect(listApps(r0)).To(BeEmpty())
@@ -507,7 +508,7 @@ var _ = Describe("Cluster controller", func() {
 			Expect(listApps(r)).To(BeEmpty())
 			Expect(cl.Status.Planes).To(BeEmpty())
 			Expect(cl.Status.Health).NotTo(BeNil())
-			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.Status).To(Equal(v1beta1.ClusterHealthStatusProgressing))
 			Expect(cl.Status.Health.PlanesTotal).To(Equal(0))
 		})
 
@@ -534,7 +535,7 @@ var _ = Describe("Cluster controller", func() {
 			cl = getCluster(r)
 			Expect(cl.Status.Phase).To(Equal(v1beta1.ClusterPhasePending))
 			Expect(cl.Status.Planes).To(BeEmpty())
-			Expect(cl.Status.Health.Status).To(Equal(HealthStatusProgressing))
+			Expect(cl.Status.Health.Status).To(Equal(v1beta1.ClusterHealthStatusProgressing))
 			Expect(cl.Status.Health.PlanesTotal).To(Equal(0))
 			Expect(listApps(r)).To(HaveLen(1), "the previous revision's Application is kept until a resolvable revision replaces it")
 		})
@@ -568,6 +569,8 @@ var _ = Describe("Cluster controller", func() {
 			Expect(cl.Status.Planes).To(HaveLen(2))
 			Expect(cl.Status.Planes[1].Name).To(Equal("policy"))
 			Expect(cl.Status.Planes[1].Application).To(Equal("cluster-policy"))
+			Expect(cl.Status.Planes[1].PlaneRevision).To(Equal("policy-rev"),
+				"the revision the kept Application was rendered from stays in status while the hub re-pushes it")
 		})
 	})
 

@@ -34,7 +34,10 @@ const (
 // ClusterPlaneRevision that holds its content.
 type BlueprintPlaneRevision struct {
 	// Name is the plane's name within the blueprint, unchanged from the source.
+	// The 31-character cap was enforced on the source ClusterBlueprint; on the
+	// spoke the plane renders into the Application "cluster-<name>".
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
 
 	// Phase is the lifecycle stage the plane belongs to on the spoke. It is
