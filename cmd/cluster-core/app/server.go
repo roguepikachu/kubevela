@@ -35,6 +35,7 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/types"
 	oamcontroller "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev"
+	clusterctrl "github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1/cluster"
 	"github.com/oam-dev/kubevela/pkg/controller/core.oam.dev/v1beta1/spokecluster"
 	"github.com/oam-dev/kubevela/pkg/features"
 	"github.com/oam-dev/kubevela/pkg/multicluster"
@@ -239,6 +240,13 @@ func run(o *options) error {
 	// healthy and silently reconciles nothing.
 	if err := spokecluster.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles}, o.credentialCacheTTL); err != nil {
 		klog.ErrorS(err, "Unable to register the SpokeCluster controller")
+		return err
+	}
+
+	// Same gate as SpokeCluster. On a spoke this is the controller that renders the planes
+	// the hub pushed; on a hub it simply has no Cluster objects to act on.
+	if err := clusterctrl.Setup(mgr, oamcontroller.Args{ConcurrentReconciles: o.concurrentReconciles}); err != nil {
+		klog.ErrorS(err, "Unable to register the Cluster controller")
 		return err
 	}
 
