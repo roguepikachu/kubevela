@@ -61,13 +61,13 @@ template: {
 	}
 
 	readDefinitions: {
-		for name in parameter.definitions {
-			"\(name)": kube.#Read & {
+		for _defName in parameter.definitions {
+			"\(_defName)": kube.#Read & {
 				$params: value: {
 					apiVersion: "core.oam.dev/v1beta1"
 					kind:       "ComponentDefinition"
 					metadata: {
-						name:      name
+						name:      _defName
 						namespace: parameter.namespace
 					}
 				}
