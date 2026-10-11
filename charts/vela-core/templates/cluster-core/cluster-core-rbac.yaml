@@ -43,6 +43,11 @@ rules:
   - apiGroups: ["core.oam.dev"]
     resources: ["applications"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Migration from the per-role Applications: their ResourceTrackers are read to strip
+  # the application markers from every object they applied before they are deleted.
+  - apiGroups: ["core.oam.dev"]
+    resources: ["resourcetrackers"]
+    verbs: ["get", "list"]
   - apiGroups: ["core.oam.dev"]
     resources: ["clusterblueprints", "clusterplanes"]
     verbs: ["get", "list", "watch"]

@@ -37,6 +37,9 @@ import (
 
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/common"
 	"github.com/oam-dev/kubevela/apis/core.oam.dev/v1beta1"
+	"github.com/oam-dev/kubevela/pkg/multicluster"
+	"github.com/oam-dev/kubevela/pkg/oam"
+	"github.com/oam-dev/kubevela/pkg/resourcetracker"
 )
 
 // Labels the SpokeCluster controller puts on the Application it owns. The UID label is
@@ -384,6 +387,9 @@ func (r *Reconciler) deleteLegacyApplications(ctx context.Context, sc *v1beta1.S
 		if !app.DeletionTimestamp.IsZero() {
 			continue
 		}
+		if err := r.releaseLegacyResources(ctx, app); err != nil {
+			return true, fmt.Errorf("releasing objects of legacy Application %s/%s: %w", app.Namespace, app.Name, err)
+		}
 		if err := r.Delete(ctx, app); err != nil && !apierrors.IsNotFound(err) {
 			return true, fmt.Errorf("deleting legacy Application %s/%s: %w", app.Namespace, app.Name, err)
 		}
@@ -391,6 +397,82 @@ func (r *Reconciler) deleteLegacyApplications(ctx context.Context, sc *v1beta1.S
 			"spokecluster", klog.KObj(sc), "application", app.Name)
 	}
 	return pending, nil
+}
+
+// legacyLabels and legacyAnnotations are what a legacy Application leaves on every object
+// it applied. The name and namespace labels are what makes take-over refuse the object as
+// managed by another application; the appRevision label and the last-applied annotation
+// are what would make vela-core skip it as already applied under the new Application.
+var (
+	legacyLabels      = []string{oam.LabelAppName, oam.LabelAppNamespace, oam.LabelAppRevision}
+	legacyAnnotations = []string{oam.AnnotationLastAppliedConfig}
+)
+
+// releaseLegacyResources strips the application markers from every object a legacy
+// Application still tracks, on the hub and on the spoke, before the Application is
+// deleted. It walks the root and versioned ResourceTrackers (the component-revision
+// tracker holds no applied objects) through the multicluster client, which reaches a
+// spoke-side object through the gateway when the managed resource names a cluster and
+// the hub otherwise. vela-core's own garbage collection under the never rule strips the
+// name and namespace labels too, but only where it can still reach, and never the
+// revision markers; doing it here makes the hand-over independent of that.
+func (r *Reconciler) releaseLegacyResources(ctx context.Context, app *v1beta1.Application) error {
+	rootRT, currentRT, historyRTs, _, err := resourcetracker.ListApplicationResourceTrackers(ctx, r.SpokeReader, app)
+	if err != nil {
+		return err
+	}
+	rts := append([]*v1beta1.ResourceTracker{rootRT, currentRT}, historyRTs...)
+	for _, rt := range rts {
+		if rt == nil {
+			continue
+		}
+		for _, mr := range rt.Spec.ManagedResources {
+			if mr.Deleted {
+				continue
+			}
+			obj := mr.ToUnstructured()
+			cctx := multicluster.ContextWithClusterName(ctx, mr.Cluster)
+			switch err := r.SpokeReader.Get(cctx, client.ObjectKeyFromObject(obj), obj); {
+			case apierrors.IsNotFound(err):
+				continue
+			case err != nil:
+				return fmt.Errorf("reading %s: %w", mr.DisplayName(), err)
+			}
+			if !stripLegacyMarkers(obj) {
+				continue
+			}
+			if err := r.SpokeReader.Update(cctx, obj); err != nil {
+				return fmt.Errorf("stripping application markers from %s: %w", mr.DisplayName(), err)
+			}
+			klog.V(2).InfoS("Application markers stripped from legacy object", "application", klog.KObj(app), "object", mr.DisplayName())
+		}
+	}
+	return nil
+}
+
+// stripLegacyMarkers removes legacyLabels and legacyAnnotations from obj and reports
+// whether anything changed.
+func stripLegacyMarkers(obj client.Object) bool {
+	changed := false
+	labels := obj.GetLabels()
+	for _, k := range legacyLabels {
+		if _, ok := labels[k]; ok {
+			delete(labels, k)
+			changed = true
+		}
+	}
+	annotations := obj.GetAnnotations()
+	for _, k := range legacyAnnotations {
+		if _, ok := annotations[k]; ok {
+			delete(annotations, k)
+			changed = true
+		}
+	}
+	if changed {
+		obj.SetLabels(labels)
+		obj.SetAnnotations(annotations)
+	}
+	return changed
 }
 
 // forgetApplication is what a connect spoke with nothing left to render does about an
