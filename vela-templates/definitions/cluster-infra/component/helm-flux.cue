@@ -22,9 +22,20 @@
 			healthPolicy: #"""
 				isHealth: *false | bool
 				if context.output.status != _|_ if context.output.status.conditions != _|_ {
-					for c in context.output.status.conditions if c.type == "Ready" && c.status == "True" {
-						isHealth: true
+					_ready: len([for c in context.output.status.conditions if c.type == "Ready" && c.status == "True" {c}]) > 0
+					// A Ready=True carried over from the previous spec is not health mid-upgrade: when
+					// the controller reports observedGeneration it must match metadata.generation.
+					_current: bool
+					if context.output.status.observedGeneration == _|_ {
+						_current: true
 					}
+					if context.output.metadata.generation == _|_ {
+						_current: true
+					}
+					if context.output.status.observedGeneration != _|_ if context.output.metadata.generation != _|_ {
+						_current: context.output.status.observedGeneration == context.output.metadata.generation
+					}
+					isHealth: _ready && _current
 				}
 				"""#
 		}
@@ -97,17 +108,20 @@ template: {
 	}
 
 	parameter: {
-		// +usage=Helm repository URL: https:// for an index-based repository, oci:// for an OCI registry
+		// +usage=Helm repository URL: https:// for an index-based repository, oci:// for an OCI registry (required when repoType is oci)
 		url: string
+		if repoType == "oci" {
+			url: =~"^oci://"
+		}
 		// +usage=Repository type; oci sets HelmRepository spec.type so Flux pulls the chart from a registry
 		repoType: *"helm" | "oci"
-		// +usage=Flux OIDC provider for registry authentication without a secret; aws uses the node or pod identity
+		// +usage=Flux OIDC provider for authentication without a secret; matters for oci and cloud-authenticated repositories, aws uses the node or pod identity
 		provider?: "generic" | "aws" | "azure" | "gcp"
 		// +usage=Name of a Secret in the same namespace holding repository credentials
 		secretRef?: string
 		// +usage=Chart name in the repository
 		chart: string
-		// +usage=Chart version or semver range, default any
+		// +usage=Chart version as a semver range, default any; pre-releases such as 0.1.0-cp.<sha> need an exact version
 		version: *"*" | string
 		// +usage=Helm release name, default the component name
 		releaseName?: string
@@ -117,7 +131,7 @@ template: {
 		values?: #nestedmap
 		// +usage=Interval at which Flux reconciles the release, default 1m
 		interval: *"1m" | string
-		// +usage=Interval at which Flux checks the repository and the chart for updates, default 5m
+		// +usage=Chart update check interval; also the index refresh interval for https repositories (source-controller does not use the HelmRepository interval for type oci), default 5m
 		pullInterval: *"5m" | string
 		// +usage=Timeout for the helm install and upgrade operations, default 10m
 		installTimeout: *"10m" | string
