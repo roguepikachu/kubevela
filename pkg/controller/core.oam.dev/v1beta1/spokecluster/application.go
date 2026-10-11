@@ -430,10 +430,17 @@ func (r *Reconciler) releaseLegacyResources(ctx context.Context, app *v1beta1.Ap
 			if mr.Deleted {
 				continue
 			}
+			// Best-effort per object. cluster-core holds no RBAC on substrate kinds, and
+			// nothing cloud- or tool-specific may be hard-coded into the chart, so a
+			// Forbidden on a hub-side CAPI object is expected: vela-core's garbage
+			// collection under the never rule strips the name and namespace labels,
+			// which is all take-over checks, and the appRevision marker left behind is
+			// cosmetic. A NotFound object has nothing to strip. Anything else is retried.
 			obj := mr.ToUnstructured()
 			cctx := multicluster.ContextWithClusterName(ctx, mr.Cluster)
 			switch err := r.SpokeReader.Get(cctx, client.ObjectKeyFromObject(obj), obj); {
-			case apierrors.IsNotFound(err):
+			case apierrors.IsNotFound(err), apierrors.IsForbidden(err):
+				klog.V(2).InfoS("Legacy object skipped", "application", klog.KObj(app), "gvk", mr.GroupVersionKind().String(), "object", mr.DisplayName(), "reason", err.Error())
 				continue
 			case err != nil:
 				return fmt.Errorf("reading %s: %w", mr.DisplayName(), err)
@@ -441,7 +448,11 @@ func (r *Reconciler) releaseLegacyResources(ctx context.Context, app *v1beta1.Ap
 			if !stripLegacyMarkers(obj) {
 				continue
 			}
-			if err := r.SpokeReader.Update(cctx, obj); err != nil {
+			switch err := r.SpokeReader.Update(cctx, obj); {
+			case apierrors.IsNotFound(err), apierrors.IsForbidden(err):
+				klog.V(2).InfoS("Legacy object skipped", "application", klog.KObj(app), "gvk", mr.GroupVersionKind().String(), "object", mr.DisplayName(), "reason", err.Error())
+				continue
+			case err != nil:
 				return fmt.Errorf("stripping application markers from %s: %w", mr.DisplayName(), err)
 			}
 			klog.V(2).InfoS("Application markers stripped from legacy object", "application", klog.KObj(app), "object", mr.DisplayName())
