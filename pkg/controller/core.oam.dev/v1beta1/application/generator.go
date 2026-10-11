@@ -18,6 +18,7 @@ package application
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -299,8 +300,43 @@ func (h *AppHandler) checkComponentHealth(appParser *appfile.Parser, af *appfile
 			return false, nil, nil, nil, err
 		}
 
+		// The deploy step skips the apply for every component whose health check passes.
+		// A resource recorded in the root ResourceTracker (garbage-collect strategy never or
+		// onAppDelete) stays "contained" across Application revisions, so a healthy live object
+		// left behind by the previous revision would otherwise keep a new revision from ever
+		// reaching the cluster. Treat such an object as not yet applied. Re-applying an object
+		// whose render hash did not change is a no-op (apply.NotUpdateRenderHashEqual), so the
+		// extra apply is cheap.
+		if isHealth {
+			liveObjects := append([]*unstructured.Unstructured{output}, outputs...)
+			if stale, found := appliedByOtherRevision(h.currentAppRev.Name, liveObjects...); found {
+				isHealth = false
+				status.Healthy = false
+				status.Message = fmt.Sprintf("%s %s applied by revision %s, current revision is %s; pending re-apply",
+					stale.GetKind(), stale.GetName(), stale.GetLabels()[oam.LabelAppRevision], h.currentAppRev.Name)
+			}
+		}
+
 		return isHealth, status, output, outputs, err
 	}
+}
+
+// appliedByOtherRevision returns the first live object whose app.oam.dev/appRevision label is set
+// and names a revision other than currentRev. Objects without the label (for example adopted via
+// take-over) are ignored, as is an empty currentRev.
+func appliedByOtherRevision(currentRev string, liveObjects ...*unstructured.Unstructured) (*unstructured.Unstructured, bool) {
+	if currentRev == "" {
+		return nil, false
+	}
+	for _, obj := range liveObjects {
+		if obj == nil {
+			continue
+		}
+		if rev := obj.GetLabels()[oam.LabelAppRevision]; rev != "" && rev != currentRev {
+			return obj, true
+		}
+	}
+	return nil, false
 }
 
 func (h *AppHandler) applyComponentFunc(appParser *appfile.Parser, af *appfile.Appfile) oamprovidertypes.ComponentApply {
