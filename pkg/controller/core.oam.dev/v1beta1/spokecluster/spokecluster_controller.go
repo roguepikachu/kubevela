@@ -303,6 +303,10 @@ func (r *Reconciler) reconcileConnect(ctx context.Context, sc *v1beta1.SpokeClus
 		observeInventory(sc, info)
 	}
 
+	// Every failure path above returned already, so this runs only on a pass that observed
+	// the spoke Connected: the runtime is rendered at a spoke the hub can reach, never ahead.
+	r.reconcileBootstrap(ctx, sc, status)
+
 	return r.finish(ctx, sc, status, nextRequeue(sc, materialized), nil)
 }
 

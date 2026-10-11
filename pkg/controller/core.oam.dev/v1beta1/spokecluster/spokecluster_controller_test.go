@@ -109,9 +109,10 @@ func connectableSpoke(name string) *v1beta1.SpokeCluster {
 
 // connectedReconciler wires a spoke that materializes, registers, probes and discovers
 // cleanly. The probe and discovery seams keep the test off any live spoke or rest.Config.
-func connectedReconciler(t GinkgoTInterface, sc *v1beta1.SpokeCluster) *Reconciler {
+// extra objects (a ClusterPlane, a pre-existing Application) are seeded beside the spoke.
+func connectedReconciler(t GinkgoTInterface, sc *v1beta1.SpokeCluster, extra ...client.Object) *Reconciler {
 	t.Helper()
-	r := newTestReconciler(t, sc)
+	r := newTestReconciler(t, append([]client.Object{sc}, extra...)...)
 	r.Providers = kubeconfigRegistry(tokenCredential(), nil)
 	r.probeFn = func(_ context.Context, _ *v1beta1.SpokeCluster) (time.Duration, error) {
 		return 7 * time.Millisecond, nil

@@ -60,6 +60,9 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //     SpecInvalid
 //   - InfraProvisioned removed after a release: Normal InfraReleased, emitted from
 //     releaseInfra itself because there is no condition left to compare
+//   - Bootstrapped True, or False/Bootstrapping (new): Normal Bootstrapped / Bootstrapping
+//   - Bootstrapped False, any other reason (new): Warning BootstrapFailed /
+//     BootstrapPlaneUnresolved
 //
 // Connection -> Unknown deliberately has no event of its own. It is always the
 // consequence of a credential or registration failure that already emitted, so a second
@@ -88,6 +91,33 @@ func (r *Reconciler) emitStatusEvents(sc *v1beta1.SpokeCluster, prev, next *v1be
 	emitWarningOnConditionFalse(r, sc, prev, next, v1beta1.SpokeClusterConditionRegistered)
 	emitWarningOnConditionFalse(r, sc, prev, next, v1beta1.SpokeClusterConditionInfoSynced)
 	emitInfraProvisionedEvent(r, sc, prev, next)
+	emitBootstrappedEvent(r, sc, prev, next)
+}
+
+// emitBootstrappedEvent reports runtime installation progress and failures, on the same
+// model as emitInfraProvisionedEvent: Bootstrapping is the normal in-flight state and
+// reaching True is progress, both Normal; BootstrapFailed and BootstrapPlaneUnresolved
+// are Warnings and count as condition failures. Each transition reports once, so a
+// runtime stuck installing on a 30s probe interval does not flood the Events API.
+func emitBootstrappedEvent(r *Reconciler, sc *v1beta1.SpokeCluster, prev, next *v1beta1.SpokeClusterStatus) {
+	nextCond := meta.FindStatusCondition(next.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
+	if nextCond == nil {
+		return
+	}
+	var prevCond *metav1.Condition
+	if prev != nil {
+		prevCond = meta.FindStatusCondition(prev.Conditions, v1beta1.SpokeClusterConditionBootstrapped)
+	}
+	if prevCond != nil && prevCond.Status == nextCond.Status && prevCond.Reason == nextCond.Reason {
+		return
+	}
+	switch {
+	case nextCond.Status == metav1.ConditionTrue, nextCond.Reason == reasonBootstrapping:
+		r.emit(sc, event.Normal(event.Reason(nextCond.Reason), nextCond.Message))
+	default:
+		r.emit(sc, event.Warning(event.Reason(nextCond.Reason), fmt.Errorf("%s", nextCond.Message)))
+		spokeConditionFailures.WithLabelValues(sc.Namespace, sc.Name, v1beta1.SpokeClusterConditionBootstrapped, nextCond.Reason).Inc()
+	}
 }
 
 // emitInfraProvisionedEvent reports provisioning progress and failures. Provisioning

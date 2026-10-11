@@ -176,3 +176,56 @@ var _ = It("EmitStatusEventsInfraProvisioned", func() {
 		})
 	})
 })
+
+// Bootstrapped follows the InfraProvisioned model: reaching True and the in-flight
+// Bootstrapping reason are progress, every other False reason is a fault.
+var _ = It("EmitStatusEventsBootstrapped", func() {
+	resetSpokeMetrics()
+	rec := &recordingRecorder{}
+	r := &Reconciler{record: rec}
+	sc := metricSpoke("tenant-a", "spoke-bootstrap")
+	connected := &v1beta1.SpokeClusterStatus{Connection: v1beta1.ConnectionStateConnected}
+
+	By("warning once when the plane cannot be resolved", func() {
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionFalse,
+			reasonBootstrapPlaneUnresolved, "reading ClusterPlane tenant-a/spoke-runtime: not found")
+		r.emitStatusEvents(sc, connected, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeWarning))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonBootstrapPlaneUnresolved))
+		Expect(rec.events[0].Message).To(ContainSubstring("spoke-runtime"))
+
+		rec.events = nil
+		r.emitStatusEvents(sc, next, next)
+		Expect(rec.events).To(BeEmpty(), "a persistent misconfiguration reports once")
+	})
+
+	By("reporting Bootstrapped when the runtime comes up", func() {
+		prev := connected.DeepCopy()
+		setCondition(prev, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionFalse,
+			reasonBootstrapping, "1/2 components healthy")
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionTrue,
+			reasonBootstrapped, "2/2 components healthy")
+		rec.events = nil
+		r.emitStatusEvents(sc, prev, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeNormal))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonBootstrapped))
+	})
+
+	By("warning when a healthy runtime falls over", func() {
+		prev := connected.DeepCopy()
+		setCondition(prev, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionTrue,
+			reasonBootstrapped, "2/2 components healthy")
+		next := connected.DeepCopy()
+		setCondition(next, v1beta1.SpokeClusterConditionBootstrapped, metav1.ConditionFalse,
+			reasonBootstrapFailed, "0/2 components healthy, application phase \"workflowFailed\"")
+		rec.events = nil
+		r.emitStatusEvents(sc, prev, next)
+		Expect(rec.events).To(HaveLen(1))
+		Expect(rec.events[0].Type).To(Equal(event.TypeWarning))
+		Expect(string(rec.events[0].Reason)).To(Equal(reasonBootstrapFailed))
+	})
+})

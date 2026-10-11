@@ -204,22 +204,33 @@ func (r *Reconciler) resolveInfraComponents(ctx context.Context, sc *v1beta1.Spo
 		if err := r.Get(ctx, client.ObjectKey{Namespace: sc.Namespace, Name: p.Ref.Name}, plane); err != nil {
 			return nil, fmt.Errorf("reading ClusterPlane %s/%s for plane %q: %w", sc.Namespace, p.Ref.Name, p.Name, err)
 		}
-		for _, c := range plane.Spec.Components {
-			comp := common.ApplicationComponent{
-				Name:       p.Name + "-" + c.Name,
-				Type:       c.Type,
-				Properties: c.Properties.DeepCopy(),
-			}
-			for _, d := range c.DependsOn {
-				comp.DependsOn = append(comp.DependsOn, p.Name+"-"+d)
-			}
-			comps = append(comps, comp)
-		}
+		comps = append(comps, planeComponents(plane, p.Name+"-")...)
 	}
 	if len(comps) == 0 {
 		return nil, fmt.Errorf("ClusterBlueprint %s resolves to no components", bp.Name)
 	}
 	return comps, nil
+}
+
+// planeComponents lifts a plane's components into Application components. prefix is
+// put in front of every component name and every dependsOn entry, so plane-local names
+// stay consistent with each other: the infra renderer passes "<plane>-" to keep two
+// planes' components apart, the bootstrap renderer passes "" because it renders one
+// plane and keeps the plane's own names.
+func planeComponents(plane *v1beta1.ClusterPlane, prefix string) []common.ApplicationComponent {
+	comps := make([]common.ApplicationComponent, 0, len(plane.Spec.Components))
+	for _, c := range plane.Spec.Components {
+		comp := common.ApplicationComponent{
+			Name:       prefix + c.Name,
+			Type:       c.Type,
+			Properties: c.Properties.DeepCopy(),
+		}
+		for _, d := range c.DependsOn {
+			comp.DependsOn = append(comp.DependsOn, prefix+d)
+		}
+		comps = append(comps, comp)
+	}
+	return comps
 }
 
 // ensureInfraApplication creates or updates the owner-referenced infra Application. The
