@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/crossplane/crossplane-runtime/pkg/event"
 	wfTypesv1alpha1 "github.com/kubevela/pkg/apis/oam/v1alpha1"
@@ -360,6 +361,7 @@ func (r *Reconciler) ensureApplication(ctx context.Context, sc *v1beta1.SpokeClu
 		return nil, errApplicationTerminating
 	}
 
+	version, restart := publishVersion(existing, spec, time.Now())
 	app := &v1beta1.Application{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: sc.Namespace}}
 	op, err := controllerutil.CreateOrUpdate(ctx, r.Client, app, func() error {
 		if app.Labels == nil {
@@ -367,6 +369,10 @@ func (r *Reconciler) ensureApplication(ctx context.Context, sc *v1beta1.SpokeClu
 		}
 		app.Labels[labelSpokeName] = sc.Name
 		app.Labels[labelSpokeUID] = string(sc.UID)
+		if app.Annotations == nil {
+			app.Annotations = map[string]string{}
+		}
+		app.Annotations[oam.AnnotationPublishVersion] = version
 		app.Spec.Components = spec.Components
 		app.Spec.Policies = spec.Policies
 		app.Spec.Workflow = spec.Workflow
@@ -378,7 +384,61 @@ func (r *Reconciler) ensureApplication(ctx context.Context, sc *v1beta1.SpokeClu
 	if op != controllerutil.OperationResultNone {
 		klog.InfoS("Application reconciled", "spokecluster", klog.KObj(sc), "application", app.Name, "op", op)
 	}
+	if restart {
+		msg := fmt.Sprintf("workflow of Application %s restarted after it failed with a retriable error (publishVersion %s)", app.Name, version)
+		klog.InfoS("Application workflow restarted", "spokecluster", klog.KObj(sc), "application", app.Name, "publishVersion", version)
+		r.emit(sc, event.Normal(reasonWorkflowRestarted, msg))
+	}
 	return app, nil
+}
+
+// reasonWorkflowRestarted is event-only: it marks the pass that bumped the Application's
+// publishVersion to rerun a workflow that failed on a retriable error.
+const reasonWorkflowRestarted = "WorkflowRestarted"
+
+// workflowRestartAfter is how long a failed workflow is left alone before it is rerun,
+// and the width of the retry bucket, so a workflow that keeps failing restarts at most
+// once per bucket rather than on every pass.
+const workflowRestartAfter = 2 * time.Minute
+
+// publishVersion is the app.oam.dev/publishVersion annotation the Application should
+// carry, and whether setting it restarts a failed workflow.
+//
+// vela-core treats a change of that annotation as the workflow rerun trigger, and once the
+// annotation is present it also stops rerunning on spec changes alone (the pinned
+// revision is what the parser reads). So the annotation always carries the hash of the
+// rendered spec: an unchanged spec keeps it and the Application is not re-revisioned, a
+// changed spec moves it and vela-core reruns the workflow as before.
+//
+// A workflow that failed or terminated on a retriable error, and has been finished for
+// longer than workflowRestartAfter, gets the hash suffixed with "-retry-<bucket>", where
+// the bucket is the current time in workflowRestartAfter units; a later pass in the same
+// bucket leaves it alone. Nothing else restarts a failed workflow: vela-core exhausts its
+// own retries and parks the Application in workflowFailed, which skips every later step.
+// The one non-retriable failure is a provision dry run that found substrate objects
+// belonging to no application; retrying cannot fix that and the condition names mode
+// adopt as the fix.
+func publishVersion(existing *v1beta1.Application, spec v1beta1.ApplicationSpec, now time.Time) (string, bool) {
+	base := hashSpec(spec)
+	if existing == nil || existing.Name == "" {
+		return base, false
+	}
+	current := existing.Annotations[oam.AnnotationPublishVersion]
+	if !strings.HasPrefix(current, base) {
+		// First render under this spec: a changed spec is its own rerun trigger.
+		return base, false
+	}
+	wf := existing.Status.Workflow
+	switch existing.Status.Phase {
+	case common.ApplicationWorkflowFailed, common.ApplicationWorkflowTerminated:
+	default:
+		return current, false
+	}
+	if wf == nil || wf.EndTime.IsZero() || now.Sub(wf.EndTime.Time) < workflowRestartAfter || unmanagedObjectsExist(existing) {
+		return current, false
+	}
+	next := fmt.Sprintf("%s-retry-%d", base, now.Unix()/int64(workflowRestartAfter/time.Second))
+	return next, next != current
 }
 
 // deleteLegacyApplications removes the per-role Applications an earlier controller

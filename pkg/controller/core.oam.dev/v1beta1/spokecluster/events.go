@@ -69,6 +69,8 @@ func (r *Reconciler) emit(obj runtime.Object, e event.Event) {
 //   - Bootstrapped and Dispatched removed together once a connect spoke has neither
 //     spec.bootstrap nor spec.blueprintRef: Normal ApplicationReleased, emitted from
 //     forgetApplication itself for the same reason as InfraReleased
+//   - A failed Application workflow rerun by bumping publishVersion: Normal
+//     WorkflowRestarted, emitted from ensureApplication on the pass that bumped it
 //   - SpokeReady -> True: Normal SpokeReady. Its False reasons are silent: not-ready is
 //     the normal state of a spoke still provisioning, and ClusterAbsent is the steady
 //     state of every connect-only spoke
